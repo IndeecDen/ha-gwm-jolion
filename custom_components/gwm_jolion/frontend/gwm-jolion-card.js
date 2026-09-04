@@ -1125,6 +1125,13 @@
         );
       }
 
+      if (action === "windows") {
+        if (!this._confirm("Закрыть все окна?")) return;
+        return this._runBusy(action, () =>
+          this._hass.callService(INTEGRATION, "close_windows", {})
+        );
+      }
+
       if (action === "refresh") {
         const entityId = this._entities.refresh;
         if (!entityId) {
