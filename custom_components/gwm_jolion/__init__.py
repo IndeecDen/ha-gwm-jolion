@@ -26,7 +26,7 @@ from .coordinator import GwmJolionCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 FRONTEND_FILE = Path(__file__).parent / "frontend" / "gwm-jolion-card.js"
-FRONTEND_URL = "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.7"
+FRONTEND_URL = "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.8"
 FRONTEND_STATIC_URL = "/gwm-jolion/gwm-jolion-card.js"
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
 

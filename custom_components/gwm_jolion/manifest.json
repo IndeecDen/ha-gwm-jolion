@@ -8,5 +8,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/IndeecDen/ha-gwm-jolion/issues",
   "requirements": [],
-  "version": "0.1.0-alpha.7"
+  "version": "0.1.0-alpha.8"
 }

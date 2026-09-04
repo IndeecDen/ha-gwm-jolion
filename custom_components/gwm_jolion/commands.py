@@ -94,6 +94,24 @@ COMMANDS: dict[str, dict] = {
         },
         "experimental": False,
     },
+    "open_windows": {
+        "key": "open_windows",
+        "name": "Открыть все окна (эксперимент)",
+        "expected_remote_type": "0x08",
+        "icon": "mdi:car-door",
+        "instructions": {
+            "0x08": {
+                "switchOrder": "1",
+                "window": {
+                    "leftFront": 10,
+                    "leftBack": 10,
+                    "rightFront": 10,
+                    "rightBack": 10,
+                },
+            }
+        },
+        "experimental": True,
+    },
     "close_sunroof": {
         "key": "close_sunroof",
         "name": "Закрыть люк",

@@ -19,6 +19,7 @@ lock_vehicle: {}
 open_trunk: {}
 close_trunk: {}
 close_windows: {}
+open_windows: {}
 close_sunroof: {}
 open_sunroof: {}
 open_sunshade: {}
