@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "GWM Jolion",
+        "description": "Alpha-версия. Введите данные российского приложения GWM. Для удалённых команд требуется PIN безопасности.",
+        "data": {
+          "phone": "Телефон",
+          "password": "Пароль",
+          "poll_interval": "Интервал опроса, секунд",
+          "enable_remote_controls": "Включить удалённое управление",
+          "security_pin": "PIN безопасности из GWM"
+        }
+      },
+      "reauth": {
+        "title": "GWM Jolion — повторная авторизация",
+        "description": "Введите пароль от аккаунта GWM.",
+        "data": {"password": "Пароль"}
+      }
+    },
+    "error": {
+      "cannot_connect": "Не удалось подключиться к GWM",
+      "invalid_auth": "Неверный телефон или пароль",
+      "unknown": "Неизвестная ошибка"
+    },
+    "abort": {
+      "already_configured": "Этот аккаунт уже настроен",
+      "reauth_successful": "Повторная авторизация выполнена"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Настройки GWM Jolion",
+        "description": "PIN: {pin_status}. Экспериментальные кнопки по умолчанию отключены в реестре сущностей.",
+        "data": {
+          "poll_interval": "Интервал опроса, секунд",
+          "enable_remote_controls": "Включить удалённое управление",
+          "command_cooldown_seconds": "Задержка между командами, секунд",
+          "security_pin": "Новый PIN безопасности",
+          "clear_security_pin": "Удалить сохранённый PIN"
+        }
+      }
+    }
+  }
+}
