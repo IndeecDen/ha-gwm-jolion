@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 DOMAIN = "gwm_jolion"
-VERSION = "0.1.0-alpha.3"
+VERSION = "0.1.0-alpha.4"
 PLATFORMS = ["button", "sensor", "binary_sensor", "device_tracker", "lock", "climate", "number"]
 
 CONF_PHONE = "phone"
@@ -134,7 +134,14 @@ VEHICLE_STATUS_MAP: dict[str, str] = {
 EXTRA_SENSORS: dict[str, SensorDef] = {
     "brand": SensorDef("brand", "Марка", icon="mdi:car"),
     "model": SensorDef("model", "Модель", icon="mdi:car-info"),
+    "fuel_percent": SensorDef("fuel_percent", "Топливо", "%", "mdi:fuel"),
     "color": SensorDef("color", "Цвет", icon="mdi:palette", diagnostic=True),
+    "engine_type": SensorDef("engine_type", "Двигатель", icon="mdi:engine", diagnostic=True),
+    "tank_capacity_l": SensorDef("tank_capacity_l", "Объём топливного бака", "L", "mdi:gas-station", diagnostic=True),
+    "vehicle_config": SensorDef("vehicle_config", "Конфигурация GWM", icon="mdi:car-cog", diagnostic=True),
+    "vehicle_type": SensorDef("vehicle_type", "Тип автомобиля GWM", icon="mdi:car-info", diagnostic=True),
+    "telematics_platform": SensorDef("telematics_platform", "Телематическая платформа", icon="mdi:cloud-outline", diagnostic=True),
+    "model_code_raw": SensorDef("model_code_raw", "Код модели GWM (raw)", icon="mdi:identifier", diagnostic=True),
     "oil_qty": SensorDef("oil_qty", "Уровень масла (raw)", icon="mdi:oil", diagnostic=True),
     "service_status": SensorDef("service_status", "Статус обслуживания (raw)", icon="mdi:car-connected", diagnostic=True),
     "tbox_status": SensorDef("tbox_status", "Статус T-Box (raw)", icon="mdi:access-point-network", diagnostic=True),
