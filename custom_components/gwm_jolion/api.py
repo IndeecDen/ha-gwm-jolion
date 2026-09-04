@@ -41,12 +41,17 @@ from .const import (
     TERMINAL,
 )
 from .helpers import build_state, normalize_phone, redact_vehicle, vehicle_basics_snapshot
+from .vehicle_data import calculate_fuel_percent, describe_structure, normalize_vehicle_metadata
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class GwmJolionApiError(HomeAssistantError):
     """Raised when the GWM cloud returns an error."""
+
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class GwmJolionApiClient:
@@ -119,9 +124,34 @@ class GwmJolionApiClient:
                 _LOGGER.debug("findStatus unavailable: %s", err)
 
         basics: dict[str, Any] = {}
+        basics_diagnostics: dict[str, Any] = {
+            "status": "not_requested",
+            "response_code": None,
+            "description": None,
+            "response_structure": None,
+        }
         try:
-            basics = await self._get_vehicle_basics_info(vin)
+            basics_payload = await self._get_vehicle_basics_payload(vin)
+            raw_data = basics_payload.get("data")
+            basics = raw_data if isinstance(raw_data, dict) else {}
+            has_data = raw_data not in (None, {}, [])
+            basics_diagnostics = {
+                "status": "success_with_data" if has_data else "success_empty",
+                "response_code": str(basics_payload.get("code") or ""),
+                "description": basics_payload.get("description") or basics_payload.get("message"),
+                "data_type": type(raw_data).__name__,
+                "response_structure": describe_structure(basics_payload),
+            }
         except GwmJolionApiError as err:
+            text = str(err)
+            lowered = text.lower()
+            unsupported_markers = ("unsupported", "not support", "not supported", "не поддерж")
+            basics_diagnostics = {
+                "status": "unsupported" if any(marker in lowered for marker in unsupported_markers) else "error",
+                "response_code": err.code,
+                "description": text,
+                "response_structure": None,
+            }
             _LOGGER.debug("vehicleBasicsInfo unavailable: %s", err)
 
         state = build_state(status, tbox, basics)
@@ -132,11 +162,11 @@ class GwmJolionApiClient:
         }
         vehicle_name = car.get("vehicleName") or car.get("modelName") or "Haval Jolion"
         car_data = redact_vehicle(car)
-        model_name = car_data.get("modelName") or ""
-        name_parts = model_name.split(maxsplit=1)
-        state["brand"] = car_data.get("brandName") or (name_parts[0] if name_parts else "Haval")
-        state["model"] = model_name or car_data.get("model") or "Jolion"
-        state["color"] = car_data.get("color")
+        normalized = normalize_vehicle_metadata(car_data)
+        state.update(normalized)
+        fuel_percent = calculate_fuel_percent(state.get("fuel_liters"), state.get("tank_capacity_l"))
+        if fuel_percent is not None:
+            state["fuel_percent"] = fuel_percent
 
         return {
             "vin": vin,
@@ -145,6 +175,7 @@ class GwmJolionApiClient:
             "state": state,
             "location": location,
             "vehicle_basics": vehicle_basics_snapshot(basics),
+            "vehicle_basics_diagnostics": basics_diagnostics,
         }
 
     async def async_check_security_password(self, security_pin: str, check_type: int = 3) -> str:
@@ -287,15 +318,13 @@ class GwmJolionApiClient:
         data = payload.get("data") or {}
         return data if isinstance(data, dict) else {}
 
-    async def _get_vehicle_basics_info(self, vin: str) -> dict[str, Any]:
-        payload = await self._request(
+    async def _get_vehicle_basics_payload(self, vin: str) -> dict[str, Any]:
+        return await self._request(
             "GET",
             ENDPOINT_VEHICLE_BASICS_INFO,
             params={"vin": vin, "flag": "true"},
             vin_header=vin,
         )
-        data = payload.get("data") or {}
-        return data if isinstance(data, dict) else {}
 
     async def _request(
         self,
@@ -347,7 +376,7 @@ class GwmJolionApiClient:
         _LOGGER.debug("GWM error: code=%s description=%s path=%s", code, description, path)
         if not with_token:
             raise ConfigEntryAuthFailed(description)
-        raise GwmJolionApiError(description)
+        raise GwmJolionApiError(description, code=code)
 
     def _headers(
         self,
