@@ -1,1 +1,0 @@
-Brand assets are stored under custom_components/gwm_jolion/brand and docs/.
