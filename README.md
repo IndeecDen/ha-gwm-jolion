@@ -170,7 +170,9 @@ type: custom:gwm-jolion-card
 - последнюю удалённую команду.
 
 **Статус карточки: experimental.** Механизм автоматической регистрации frontend сейчас дорабатывается, поэтому в Alpha возможна ошибка `Custom element doesn't exist: gwm-jolion-card`.
-
+<p align="center">
+  <img src="docs/card.png">
+</p>
 ## 🚧 Что планируется
 
 Полный план находится в [ROADMAP.md](ROADMAP.md).
