@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from uuid import uuid4
 
+from homeassistant.components import frontend
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -19,9 +23,18 @@ from .const import (
 )
 from .coordinator import GwmJolionCoordinator
 
+_LOGGER = logging.getLogger(__name__)
+
+FRONTEND_FILE = Path(__file__).parent / "frontend" / "gwm-jolion-card.js"
+FRONTEND_URL = "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.2"
+FRONTEND_STATIC_URL = "/gwm-jolion/gwm-jolion-card.js"
+DATA_FRONTEND_REGISTERED = "_frontend_registered"
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
+    await _async_register_frontend(hass)
+
     data = dict(entry.data)
     options = dict(entry.options)
     device_id = data.get(CONF_DEVICE_ID) or uuid4().hex
@@ -49,12 +62,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+async def _async_register_frontend(hass: HomeAssistant) -> None:
+    """Serve and load the bundled Lovelace card once per HA process."""
+    if hass.data[DOMAIN].get(DATA_FRONTEND_REGISTERED):
+        return
+
+    if not FRONTEND_FILE.exists():
+        _LOGGER.warning("Bundled GWM Jolion card was not found at %s", FRONTEND_FILE)
+        return
+
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(FRONTEND_STATIC_URL, str(FRONTEND_FILE), False)]
+    )
+    frontend.add_extra_js_url(hass, FRONTEND_URL)
+    hass.data[DOMAIN][DATA_FRONTEND_REGISTERED] = True
+    _LOGGER.debug("Registered bundled GWM Jolion card at %s", FRONTEND_URL)
+
+
+def _coordinators(hass: HomeAssistant) -> list[GwmJolionCoordinator]:
+    return [
+        value
+        for value in (hass.data.get(DOMAIN) or {}).values()
+        if isinstance(value, GwmJolionCoordinator)
+    ]
+
+
 def _register_services(hass: HomeAssistant) -> None:
     async def handle_command(call: ServiceCall) -> None:
-        coordinators = list((hass.data.get(DOMAIN) or {}).values())
+        coordinators = _coordinators(hass)
         if not coordinators:
             return
-        coordinator: GwmJolionCoordinator = coordinators[0]
+        coordinator = coordinators[0]
         operation_time = call.data.get("operation_time")
         await coordinator.async_execute_command(
             call.service,
@@ -70,7 +108,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
-        if not hass.data[DOMAIN]:
+        if not _coordinators(hass):
             for command_key in COMMANDS:
                 if hass.services.has_service(DOMAIN, command_key):
                     hass.services.async_remove(DOMAIN, command_key)
