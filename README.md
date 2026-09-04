@@ -1,148 +1,297 @@
-# GWM Jolion for Home Assistant
+<p align="center">
+  <img src="docs/logo.png" alt="GWM Jolion" width="260">
+</p>
 
-Unofficial Home Assistant integration for **Haval Jolion** using the Russian GWM cloud.
+<h1 align="center">GWM Jolion для Home Assistant</h1>
 
-> **0.1.0-alpha.2** — private test build with the first bundled GWM Jolion dashboard card.
+<p align="center">
+  Неофициальная интеграция Home Assistant для Haval Jolion с российской телематикой GWM Cloud: статусы автомобиля, удалённое управление, климат, диагностика и собственная Lovelace-карточка.
+</p>
 
-## Current alpha features
+> [!WARNING]
+> Проект не связан с Great Wall Motor, HAVAL или официальным приложением GWM. Используется неофициальный облачный API. Текущая версия — **0.1.0-alpha.2**, предназначена для тестирования.
 
-- Russian GWM account login and signed cloud requests
-- Vehicle polling, location and T-Box connectivity
-- Odometer, fuel, range, tyre pressure and tyre temperature
-- Verified Jolion body/status mapping:
-  - engine
-  - central lock
-  - doors
-  - windows summary
-  - trunk
-- Diagnostic raw entities for TPMS states, seat heating, light codes, window learning, GPS and T-Box signal
-- `vehicleBasicsInfo` read attempt (non-fatal when unsupported)
-- Remote engine start/stop (`0x03`)
-- Lock/unlock, trunk, close windows, horn/lights
-- Rear defrost and steering-wheel heat commands inherited from the tested GWM RU protocol
-- Home Assistant `lock` entity
-- Home Assistant `climate` entity
-- Separate **Climate run time** number, 5–30 minutes
-- Experimental front defrost (`0x0B`) and 60-second cabin ventilation (`0x11`), disabled by default
-- Bundled `custom:gwm-jolion-card` dashboard card, loaded automatically by the integration
+## Цель проекта
 
-## Installation
+Сделать готовую HACS-интеграцию для владельцев **Haval Jolion**, которую можно установить в Home Assistant без ручной сборки десятков сенсоров и скриптов.
 
-The repository is currently private. The GitHub account connected to HACS must have access to it.
+Основные цели:
 
-1. HACS → **Custom repositories**
-2. Add this repository as **Integration**
-3. Install **GWM Jolion**
-4. Restart Home Assistant
-5. Settings → Devices & services → Add integration → **GWM Jolion**
-6. Enter the phone and password used in the Russian GWM app.
-7. For remote commands, enable **Remote controls** and enter the vehicle security PIN.
+- максимальное количество доступной телеметрии GWM;
+- безопасное удалённое управление автомобилем;
+- полноценные Home Assistant entities (`lock`, `climate`, `number`, `sensor`, `binary_sensor`, `device_tracker`, `button`);
+- автоматическое определение возможностей конкретной комплектации;
+- собственная красивая карточка уровня StarLine;
+- минимум ручной настройки после установки.
 
-Manual install is also possible by copying:
+## ✅ Подтверждённые функции
 
-```text
-custom_components/gwm_jolion
-```
+Следующие данные и состояния уже подтверждены на реальном **Haval Jolion 2022 Premium** и лежат в основе текущей интеграции.
 
-to:
+### Подключение и телеметрия
 
-```text
-/config/custom_components/gwm_jolion
-```
+- авторизация в российском GWM Cloud;
+- подпись запросов GWM;
+- получение автомобиля из аккаунта;
+- получение `getLastStatus` и `findStatus`;
+- T-Box online/offline;
+- GPS-координаты автомобиля;
+- пробег;
+- количество топлива;
+- запас хода;
+- давление всех четырёх шин;
+- температура всех четырёх шин.
 
-and restarting Home Assistant.
+### Состояния кузова
 
-## Updating from alpha.1 to alpha.2
+Физически проверена расшифровка:
 
-Replace the complete folder:
+- двигатель — выключен / работает;
+- центральный замок — закрыт / открыт;
+- четыре двери;
+- багажник;
+- четыре стекла;
+- общий статус «двери открыты»;
+- общий статус «окна открыты».
 
-```text
-/config/custom_components/gwm_jolion
-```
+### Удалённый запуск двигателя
 
-with the current repository version and **restart Home Assistant completely**. The dashboard card JavaScript is bundled inside the integration and is loaded automatically after restart.
+Подтверждено реальным автомобилем:
 
-A hard browser refresh may be useful after updating (`Ctrl+F5` on desktop).
+- запуск двигателя — T5 `0x03`;
+- остановка двигателя — T5 `0x03`.
 
-## GWM Jolion dashboard card
+## 🟢 Основной функционал текущей Alpha
 
-Alpha 2 adds the first native project card:
+Следующие функции уже реализованы в коде проекта. Часть команд была перенесена из рабочей тестовой интеграции GWM RU и проходит повторное тестирование уже в `gwm_jolion`.
 
-```yaml
-type: custom:gwm-jolion-card
-```
+### Управление автомобилем
 
-For an account with one Jolion, no entity IDs are required. The card discovers the integration entities from Home Assistant's entity and device registries.
+- запуск двигателя;
+- остановка двигателя;
+- закрытие автомобиля;
+- открытие автомобиля;
+- Home Assistant entity `lock` для центрального замка;
+- открытие багажника;
+- закрытие багажника;
+- закрытие всех окон;
+- моргание фарами;
+- звуковой сигнал;
+- фары + звуковой сигнал;
+- принудительное обновление данных.
 
-If several compatible vehicles/devices are present, bind the card to any entity belonging to the desired vehicle:
+### Комфорт
 
-```yaml
-type: custom:gwm-jolion-card
-entity: device_tracker.your_jolion_location
-```
+В коде присутствуют команды:
 
-The card currently displays:
+- обогрев заднего стекла ON/OFF;
+- обогрев руля ON/OFF.
 
-- T-Box online/offline
-- engine and central-lock state
-- climate state and target temperature
-- climate runtime slider, 5–30 min
-- fuel, remaining range and odometer
-- doors, windows and trunk state
-- pressure and temperature for all four tyres
-- T-Box cellular signal and GPS state
-- last remote command when available
+До стабильного релиза они будут дополнительно проверяться на Jolion разных комплектаций.
 
-Controls currently included:
+### Диагностика
 
-- engine start/stop
-- lock/unlock
-- climate on/off
-- climate temperature ±1 °C
-- climate runtime 5–30 min
-- trunk open/close
-- close all windows when reported open
-- force vehicle-data refresh
+Создаются диагностические raw-сущности для исследования протокола:
 
-Remote actions show a confirmation dialog by default. It can be disabled in YAML:
+- TPMS pressure status `2102001–2102004`;
+- TPMS temperature status `2102007–2102010`;
+- обучение стеклоподъёмников `2210010–2210013`;
+- подогрев водительского сиденья `2220001`;
+- подогрев пассажирского сиденья `2220002`;
+- световые состояния `2204007–2204010`;
+- GPS authorization `2310001`;
+- уровень сигнала T-Box `4105008`;
+- результат последней удалённой команды.
 
-```yaml
-type: custom:gwm-jolion-card
-confirm_controls: false
-```
+## 🧪 Экспериментальные функции
 
-The card is registered in `window.customCards`, so after restart it should also appear in the Home Assistant **Add card** dialog as **GWM Jolion**.
+Экспериментальные возможности намеренно не считаются стабильными, пока не пройдут физические тесты на автомобиле.
 
-## Important testing notes
+### Климат `0x04`
 
-- Start with read-only telemetry.
-- Keep the vehicle safely parked in `P`.
-- Remote engine/climate tests should be performed outdoors.
-- GWM T5 commands are serialized with a cooldown.
-- Experimental command buttons are disabled by default in Home Assistant's entity registry.
-- Alpha 0.1 currently supports the first vehicle returned by the GWM account.
+Уже реализовано:
 
-## Climate
+- entity `climate`;
+- выбор температуры;
+- отдельный entity времени работы климата **5–30 минут**;
+- включение климата;
+- выключение климата;
+- попытка сохранить температуру и таймер в GWM Cloud через `modifyVehicleRemoteCtlInfo`.
 
-The alpha exposes:
-
-- `climate.*`
-- `number.*` for **Время работы климата**
-
-The number entity controls the next climate command runtime from 5 to 30 minutes.
-
-For the Russian cloud this build uses:
+Для российского cloud сейчас используется:
 
 ```text
 0x04 / switchOrder=1 → ON
 0x04 / switchOrder=0 → OFF
 ```
 
-and attempts to persist temperature/runtime through `vehicle/modifyVehicleRemoteCtlInfo` before climate start.
+Полный цикл ON → изменение температуры → таймер → OFF ещё проходит финальную проверку.
 
-## Diagnostics to send when testing
+### `vehicleBasicsInfo`
 
-Enable debug logging temporarily:
+Интеграция экспериментально читает расширенную конфигурацию автомобиля. Потенциально оттуда доступны:
+
+- сохранённая температура климата;
+- время работы климата;
+- время автозапуска;
+- настройки подогрева сидений;
+- состояния front/rear defrost;
+- очиститель воздуха;
+- дополнительные comfort-параметры.
+
+Ошибка этого endpoint не должна ломать основное обновление автомобиля.
+
+### Передний Defrost `0x0B`
+
+Реализована экспериментальная команда интенсивного обдува лобового стекла. До подтверждения на Jolion кнопка не считается стабильной.
+
+### Проветривание салона `0x11`
+
+Реализована экспериментальная 60-секундная команда Cabin Clean / проветривания салона.
+
+### Карточка `gwm-jolion-card`
+
+Первая версия собственной Lovelace-карточки уже находится внутри интеграции:
+
+```yaml
+type: custom:gwm-jolion-card
+```
+
+Она должна автоматически находить сущности автомобиля через Device/Entity Registry и отображать:
+
+- двигатель;
+- центральный замок;
+- климат и температуру;
+- таймер климата;
+- топливо, запас хода и пробег;
+- двери, окна и багажник;
+- четыре колеса;
+- T-Box / GSM / GPS;
+- последнюю удалённую команду.
+
+**Статус карточки: experimental.** Механизм автоматической регистрации frontend сейчас дорабатывается, поэтому в Alpha возможна ошибка `Custom element doesn't exist: gwm-jolion-card`.
+
+## 🚧 Что планируется
+
+Полный план находится в [ROADMAP.md](ROADMAP.md).
+
+Основные направления развития:
+
+- стабильная автоматическая загрузка `gwm-jolion-card`;
+- внешний вид карточки уровня StarLine;
+- изображение автомобиля и динамическое отображение открытых дверей/окон;
+- индивидуальные состояния каждой двери и каждого окна;
+- открытие окон;
+- расширенное управление люком и шторкой;
+- уровни подогрева водительского и пассажирского сидений;
+- вентиляция сидений для поддерживаемых комплектаций;
+- реальный статус обогрева руля;
+- передний defrost;
+- задний defrost;
+- электрический обогрев лобового стекла `0x2A`;
+- очиститель воздуха;
+- Cabin Clean;
+- полноценная расшифровка TPMS status-кодов;
+- расшифровка всех доступных световых кодов;
+- температура салона;
+- наружная температура;
+- температура охлаждающей жидкости;
+- поиск реального напряжения / состояния 12V аккумулятора;
+- capability detection по комплектации автомобиля;
+- несколько автомобилей в одном GWM-аккаунте;
+- diagnostics dump без персональных данных;
+- примеры автоматизаций Home Assistant;
+- локализация RU/EN;
+- автоматические тесты и GitHub Actions;
+- стабильные GitHub Releases и установка через HACS.
+
+## Установка
+
+### Через HACS
+
+1. Откройте **HACS**.
+2. Перейдите в меню **⋮ → Custom repositories**.
+3. Добавьте:
+
+```text
+https://github.com/IndeecDen/ha-gwm-jolion
+```
+
+4. Тип репозитория: **Integration**.
+5. Установите **GWM Jolion**.
+6. Полностью перезапустите Home Assistant.
+7. Перейдите:
+
+```text
+Настройки → Устройства и службы → Добавить интеграцию → GWM Jolion
+```
+
+8. Введите телефон и пароль от российского приложения GWM.
+9. Для удалённых команд откройте настройки интеграции, включите удалённое управление и сохраните PIN безопасности автомобиля.
+
+> Пока проект находится в Alpha, ручная установка может быть удобнее для частых тестовых обновлений.
+
+### Ручная установка
+
+Скопируйте каталог:
+
+```text
+custom_components/gwm_jolion
+```
+
+в:
+
+```text
+/config/custom_components/gwm_jolion
+```
+
+Должно получиться:
+
+```text
+/config/custom_components/gwm_jolion/
+├── __init__.py
+├── api.py
+├── binary_sensor.py
+├── button.py
+├── climate.py
+├── commands.py
+├── config_flow.py
+├── const.py
+├── coordinator.py
+├── device_tracker.py
+├── entity.py
+├── helpers.py
+├── lock.py
+├── manifest.json
+├── number.py
+├── sensor.py
+├── strings.json
+├── frontend/
+├── brand/
+└── translations/
+```
+
+После копирования выполните **полный перезапуск Home Assistant**.
+
+## Настройка
+
+После добавления интеграции используются данные официального приложения GWM:
+
+- телефон;
+- пароль;
+- PIN безопасности автомобиля — только если нужны удалённые команды.
+
+Рекомендуемый интервал обычного cloud polling:
+
+```text
+300 секунд
+```
+
+Между удалёнными командами используется cooldown, чтобы не отправлять несколько T5-команд одновременно.
+
+## Отладка
+
+Для тестирования включите debug-log:
 
 ```yaml
 logger:
@@ -150,17 +299,41 @@ logger:
     custom_components.gwm_jolion: debug
 ```
 
-After a test session, attach the relevant Home Assistant log and describe exactly which physical function was changed.
+После изменения конфигурации перезапустите Home Assistant.
 
-## Status
+При отчёте об эксперименте желательно указать:
 
-The project is intentionally Jolion-first. Additional GWM/Haval models may be considered after the Jolion protocol is stable.
+1. модель / год / комплектацию;
+2. что было включено или выключено в машине;
+3. какое действие выполнено в Home Assistant;
+4. соответствующий фрагмент debug-log;
+5. изменилось ли физическое состояние автомобиля.
 
-## Credits
+Не публикуйте VIN, пароль, PIN, access token, IMSI, ICCID и точные координаты автомобиля.
 
-This project builds on protocol research and MIT-licensed work from:
+## Безопасность
 
-- `roblencheg/HAVAL_H3`
-- `moryoav/ha-gwm-ev`
+Удалённые команды могут физически менять состояние автомобиля.
 
-See `THIRD_PARTY_NOTICES.md`.
+- тестируйте двигатель и климат только на безопасно припаркованной машине;
+- автомобиль должен находиться в `P`;
+- запуск двигателя выполняйте только там, где безопасна работа ДВС;
+- учитывайте cooldown команд GWM;
+- экспериментальные команды используйте только если понимаете, что именно проверяется.
+
+## Поддерживаемые автомобили
+
+Главный приоритет проекта — **Haval Jolion с российской телематикой GWM**.
+
+Сначала протокол будет стабилизирован на Jolion. После этого архитектура может быть расширена на другие автомобили HAVAL / GWM, использующие совместимый российский cloud API.
+
+## Лицензия и благодарности
+
+Проект распространяется по лицензии **MIT**.
+
+В исследовании протокола и разработке использованы идеи и MIT-лицензированные наработки открытых проектов сообщества, в том числе:
+
+- `roblencheg/HAVAL_H3`;
+- `moryoav/ha-gwm-ev`.
+
+Подробности — в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
