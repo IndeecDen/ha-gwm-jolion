@@ -34,7 +34,7 @@ async def async_setup_entry(
             GwmJolionSensorDescription(
                 key=defn.key,
                 state_key=defn.key,
-                name=defn.name,
+                name="Уровень топлива" if defn.key == "fuel_percent" else defn.name,
                 native_unit_of_measurement=defn.unit,
                 icon=defn.icon,
                 device_class=defn.device_class,
