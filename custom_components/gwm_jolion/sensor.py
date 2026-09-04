@@ -48,6 +48,7 @@ async def async_setup_entry(
             GwmJolionLastCommandTimeSensor(coordinator),
             GwmJolionLastUpdateSensor(coordinator),
             GwmJolionUnknownSignalsSensor(coordinator),
+            GwmJolionVehicleBasicsStatusSensor(coordinator),
         ]
     )
     async_add_entities(entities)
@@ -139,4 +140,28 @@ class GwmJolionUnknownSignalsSensor(GwmJolionEntity, SensorEntity):
         return {
             "codes": sorted(self.coordinator.unknown_signal_history),
             "seen_signal_count": len(self.coordinator.seen_signal_codes),
+        }
+
+
+class GwmJolionVehicleBasicsStatusSensor(GwmJolionEntity, SensorEntity):
+    _attr_name = "vehicleBasicsInfo"
+    _attr_icon = "mdi:cloud-question"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: GwmJolionCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry_id}_vehicle_basics_status"
+
+    @property
+    def native_value(self) -> str | None:
+        diagnostics = (self.coordinator.data or {}).get("vehicle_basics_diagnostics") or {}
+        return diagnostics.get("status")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        diagnostics = (self.coordinator.data or {}).get("vehicle_basics_diagnostics") or {}
+        return {
+            "response_code": diagnostics.get("response_code"),
+            "description": diagnostics.get("description"),
+            "data_type": diagnostics.get("data_type"),
         }
