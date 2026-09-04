@@ -134,7 +134,7 @@ VEHICLE_STATUS_MAP: dict[str, str] = {
 EXTRA_SENSORS: dict[str, SensorDef] = {
     "brand": SensorDef("brand", "Марка", icon="mdi:car"),
     "model": SensorDef("model", "Модель", icon="mdi:car-info"),
-    "fuel_percent": SensorDef("fuel_percent", "Топливо", "%", "mdi:fuel"),
+    "fuel_percent": SensorDef("fuel_percent", "Уровень топлива", "%", "mdi:fuel"),
     "color": SensorDef("color", "Цвет", icon="mdi:palette", diagnostic=True),
     "engine_type": SensorDef("engine_type", "Двигатель", icon="mdi:engine", diagnostic=True),
     "tank_capacity_l": SensorDef("tank_capacity_l", "Объём топливного бака", "L", "mdi:gas-station", diagnostic=True),
