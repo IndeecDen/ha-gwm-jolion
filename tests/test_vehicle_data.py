@@ -1,11 +1,24 @@
-from custom_components.gwm_jolion.vehicle_data import (
-    calculate_fuel_percent,
-    describe_structure,
-    normalize_vehicle_metadata,
-)
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_vehicle_data():
+    path = ROOT / "custom_components/gwm_jolion/vehicle_data.py"
+    spec = importlib.util.spec_from_file_location("gwm_vehicle_data_test", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["gwm_vehicle_data_test"] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_normalize_jolion_metadata() -> None:
+    vehicle_data = load_vehicle_data()
     vehicle = {
         "brandName": "HAVAL",
         "vtype": "JOLION",
@@ -18,7 +31,7 @@ def test_normalize_jolion_metadata() -> None:
         "color": "Ayers Grey",
     }
 
-    result = normalize_vehicle_metadata(vehicle)
+    result = vehicle_data.normalize_vehicle_metadata(vehicle)
 
     assert result["brand"] == "HAVAL"
     assert result["model"] == "Haval Jolion"
@@ -31,15 +44,17 @@ def test_normalize_jolion_metadata() -> None:
 
 
 def test_calculate_fuel_percent() -> None:
-    assert calculate_fuel_percent(45, 55) == 82
-    assert calculate_fuel_percent("27.5", "55") == 50
-    assert calculate_fuel_percent(60, 55) == 100
-    assert calculate_fuel_percent(-1, 55) == 0
-    assert calculate_fuel_percent(10, 0) is None
-    assert calculate_fuel_percent(None, 55) is None
+    vehicle_data = load_vehicle_data()
+    assert vehicle_data.calculate_fuel_percent(45, 55) == 82
+    assert vehicle_data.calculate_fuel_percent("27.5", "55") == 50
+    assert vehicle_data.calculate_fuel_percent(60, 55) == 100
+    assert vehicle_data.calculate_fuel_percent(-1, 55) == 0
+    assert vehicle_data.calculate_fuel_percent(10, 0) is None
+    assert vehicle_data.calculate_fuel_percent(None, 55) is None
 
 
 def test_describe_structure_does_not_expose_values() -> None:
+    vehicle_data = load_vehicle_data()
     payload = {
         "code": "000000",
         "data": {
@@ -50,7 +65,7 @@ def test_describe_structure_does_not_expose_values() -> None:
         },
     }
 
-    structure = describe_structure(payload)
+    structure = vehicle_data.describe_structure(payload)
     rendered = repr(structure)
 
     assert "vehicleBasicsInfo" in rendered
