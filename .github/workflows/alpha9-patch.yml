@@ -1,0 +1,97 @@
+name: Alpha 9 patch
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/alpha9-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Apply Alpha 9 changes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          card = Path('custom_components/gwm_jolion/frontend/gwm-jolion-card.js')
+          text = card.read_text(encoding='utf-8')
+          text = text.replace('GWM Jolion Card v0.1.0-alpha.8', 'GWM Jolion Card v0.1.0-alpha.9')
+          text = text.replace('const CARD_VERSION = "0.1.0-alpha.8";', 'const CARD_VERSION = "0.1.0-alpha.9";')
+          text = text.replace('title="oilQty: шкала топлива GWM, 0–8 делений"', 'title="oilQty: уровень моторного масла GWM, шкала 0–8"')
+          text = text.replace('${this._icon("mdi:gas-station")}\n                  Топливо GWM ${this._levelBars(this._rawValue("oilQty"), 8, "flat")}', '${this._icon("mdi:oil")}\n                  Масло ${this._levelBars(this._rawValue("oilQty"), 8, "flat")}')
+          card.write_text(text, encoding='utf-8')
+
+          const = Path('custom_components/gwm_jolion/const.py')
+          text = const.read_text(encoding='utf-8')
+          text = text.replace('VERSION = "0.1.0-alpha.8"', 'VERSION = "0.1.0-alpha.9"')
+          text = text.replace('"oil_qty": SensorDef("oil_qty", "Шкала топлива GWM (0–8)", icon="mdi:gas-station", diagnostic=True),', '"oil_qty": SensorDef("oil_qty", "Уровень масла GWM (0–8)", icon="mdi:oil", diagnostic=True),')
+          const.write_text(text, encoding='utf-8')
+
+          init = Path('custom_components/gwm_jolion/__init__.py')
+          text = init.read_text(encoding='utf-8').replace('gwm-jolion-card.js?v=0.1.0-alpha.8', 'gwm-jolion-card.js?v=0.1.0-alpha.9')
+          init.write_text(text, encoding='utf-8')
+
+          manifest_path = Path('custom_components/gwm_jolion/manifest.json')
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          manifest['version'] = '0.1.0-alpha.9'
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          changelog = Path('CHANGELOG.md')
+          old = changelog.read_text(encoding='utf-8')
+          section = '''# Changelog\n\n## 0.1.0-alpha.9\n\nИсправление трактовки поля `oilQty` российского GWM API.\n\n### Исправлено\n\n- `oilQty` больше не трактуется как уровень топлива;\n- диагностическая сущность переименована в `Уровень масла GWM (0–8)`;\n- в карточке блок `Топливо GWM` заменён на `Масло`;\n- уровень масла отображается как 8-сегментная шкала без вычисления процентов;\n- обычный уровень топлива по-прежнему берётся из фактических литров и объёма бака;\n- cache-busting встроенной карточки обновлён до `0.1.0-alpha.9`.\n\n### Обоснование\n\nВ реальных ответах GWM `oilQty` не коррелирует с количеством топлива: при баке около 82–84% поле может иметь значение `4`. Российские реализации GWM также используют `oilQty` как уровень масла. Поэтому в этой версии поле отделено от топливной телеметрии.\n\n'''
+          if old.startswith('# Changelog\n'):
+              old = old[len('# Changelog\n\n'):]
+          changelog.write_text(section + old, encoding='utf-8')
+          PY
+
+      - name: Run checks
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check pytest PyYAML
+          python -m compileall -q custom_components/gwm_jolion
+          node --check custom_components/gwm_jolion/frontend/gwm-jolion-card.js
+          pytest -q tests
+
+      - name: Remove one-time workflow
+        run: rm .github/workflows/alpha9-patch.yml
+
+      - name: Commit Alpha 9
+        id: commit
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "0.1.0-alpha.9 — correct oilQty as engine oil level"
+          git push origin HEAD:main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create Alpha 9 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "0.1.0-alpha.9" >/dev/null 2>&1; then
+            echo "Release already exists"
+          else
+            gh release create "0.1.0-alpha.9" \
+              --target "${{ steps.commit.outputs.sha }}" \
+              --title "0.1.0-alpha.9" \
+              --generate-notes
+          fi
