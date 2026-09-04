@@ -1,0 +1,54 @@
+start_engine:
+  fields:
+    operation_time:
+      required: false
+      example: 15
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 1
+          mode: box
+          unit_of_measurement: min
+stop_engine: {}
+flash_lights: {}
+horn: {}
+flash_and_horn: {}
+unlock_vehicle: {}
+lock_vehicle: {}
+open_trunk: {}
+close_trunk: {}
+close_windows: {}
+close_sunroof: {}
+open_sunroof: {}
+open_sunshade: {}
+close_sunshade: {}
+rear_defrost_on:
+  fields:
+    operation_time:
+      required: false
+      example: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          mode: box
+          unit_of_measurement: min
+rear_defrost_off: {}
+steering_wheel_heat_on:
+  fields:
+    operation_time:
+      required: false
+      example: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          mode: box
+          unit_of_measurement: min
+steering_wheel_heat_off: {}
+front_defrost_on: {}
+front_defrost_off: {}
+cabin_clean: {}

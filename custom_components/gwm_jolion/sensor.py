@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
@@ -22,7 +22,11 @@ class GwmJolionSensorDescription(SensorEntityDescription):
     state_key: str
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
     descriptions: list[GwmJolionSensorDescription] = []
     for defn in list(ITEM_MAP.values()) + list(RAW_SENSOR_MAP.values()) + list(EXTRA_SENSORS.values()):
@@ -38,7 +42,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             )
         )
     entities: list[SensorEntity] = [GwmJolionSensor(coordinator, d) for d in descriptions]
-    entities.extend([GwmJolionLastCommandSensor(coordinator), GwmJolionLastCommandTimeSensor(coordinator)])
+    entities.extend(
+        [
+            GwmJolionLastCommandSensor(coordinator),
+            GwmJolionLastCommandTimeSensor(coordinator),
+            GwmJolionLastUpdateSensor(coordinator),
+            GwmJolionUnknownSignalsSensor(coordinator),
+        ]
+    )
     async_add_entities(entities)
 
 
@@ -76,13 +87,14 @@ class GwmJolionLastCommandSensor(GwmJolionEntity, SensorEntity):
         return {
             "result_code": self.coordinator.last_command_result_code,
             "result_message": self.coordinator.last_command_result_message,
+            "in_progress": self.coordinator.command_in_progress,
         }
 
 
 class GwmJolionLastCommandTimeSensor(GwmJolionEntity, SensorEntity):
     _attr_name = "Время последней команды"
     _attr_icon = "mdi:clock-outline"
-    _attr_device_class = "timestamp"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: GwmJolionCoordinator) -> None:
@@ -92,3 +104,39 @@ class GwmJolionLastCommandTimeSensor(GwmJolionEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         return self.coordinator.last_command_at
+
+
+class GwmJolionLastUpdateSensor(GwmJolionEntity, SensorEntity):
+    _attr_name = "Последнее обновление GWM"
+    _attr_icon = "mdi:cloud-sync"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: GwmJolionCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry_id}_last_successful_update"
+
+    @property
+    def native_value(self) -> datetime | None:
+        return self.coordinator.last_successful_update
+
+
+class GwmJolionUnknownSignalsSensor(GwmJolionEntity, SensorEntity):
+    _attr_name = "Неизвестные GWM-коды"
+    _attr_icon = "mdi:code-braces"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: GwmJolionCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry_id}_unknown_signal_count"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.unknown_signal_history)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "codes": sorted(self.coordinator.unknown_signal_history),
+            "seen_signal_count": len(self.coordinator.seen_signal_codes),
+        }

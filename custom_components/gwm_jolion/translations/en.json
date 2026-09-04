@@ -1,0 +1,69 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "GWM Jolion",
+        "description": "Alpha version. Enter the credentials used by the Russian GWM app. A vehicle security PIN is required for remote commands.",
+        "data": {
+          "phone": "Phone",
+          "password": "Password",
+          "poll_interval": "Polling interval, seconds",
+          "enable_remote_controls": "Enable remote controls",
+          "security_pin": "Vehicle security PIN"
+        }
+      },
+      "reauth": {
+        "title": "GWM Jolion — reauthentication",
+        "description": "Enter the password for the GWM account.",
+        "data": {"password": "Password"}
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to GWM",
+      "invalid_auth": "Invalid phone number or password",
+      "unknown": "Unknown error"
+    },
+    "abort": {
+      "already_configured": "This account is already configured",
+      "reauth_successful": "Reauthentication successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "GWM Jolion settings",
+        "description": "PIN: {pin_status}. Experimental buttons are disabled by default in the entity registry.",
+        "data": {
+          "poll_interval": "Polling interval, seconds",
+          "enable_remote_controls": "Enable remote controls",
+          "command_cooldown_seconds": "Delay between commands, seconds",
+          "security_pin": "New vehicle security PIN",
+          "clear_security_pin": "Remove saved PIN"
+        }
+      }
+    }
+  },
+  "services": {
+    "start_engine": {"name": "Start engine", "description": "Starts the engine remotely through GWM Cloud.", "fields": {"operation_time": {"name": "Runtime", "description": "Requested remote-engine runtime in minutes."}}},
+    "stop_engine": {"name": "Stop engine", "description": "Stops an engine that was started remotely."},
+    "flash_lights": {"name": "Flash lights", "description": "Uses the vehicle lights for remote vehicle search."},
+    "horn": {"name": "Sound horn", "description": "Sounds the vehicle horn remotely."},
+    "flash_and_horn": {"name": "Flash lights and sound horn", "description": "Flashes the lights and sounds the horn together."},
+    "unlock_vehicle": {"name": "Unlock vehicle", "description": "Unlocks the central locking system remotely."},
+    "lock_vehicle": {"name": "Lock vehicle", "description": "Locks the central locking system remotely."},
+    "open_trunk": {"name": "Open trunk", "description": "Sends the remote trunk-open command."},
+    "close_trunk": {"name": "Close trunk", "description": "Sends the remote trunk-close command."},
+    "close_windows": {"name": "Close windows", "description": "Sends the command to close all windows."},
+    "close_sunroof": {"name": "Close sunroof (experimental)", "description": "Experimental sunroof close command."},
+    "open_sunroof": {"name": "Open sunroof (experimental)", "description": "Experimental sunroof open command."},
+    "open_sunshade": {"name": "Open sunshade (experimental)", "description": "Experimental sunshade open command."},
+    "close_sunshade": {"name": "Close sunshade (experimental)", "description": "Experimental sunshade close command."},
+    "rear_defrost_on": {"name": "Turn on rear defrost", "description": "Turns on rear-window heating.", "fields": {"operation_time": {"name": "Runtime", "description": "Requested runtime in minutes."}}},
+    "rear_defrost_off": {"name": "Turn off rear defrost", "description": "Turns off rear-window heating."},
+    "steering_wheel_heat_on": {"name": "Turn on steering-wheel heat", "description": "Turns on steering-wheel heating.", "fields": {"operation_time": {"name": "Runtime", "description": "Requested runtime in minutes."}}},
+    "steering_wheel_heat_off": {"name": "Turn off steering-wheel heat", "description": "Turns off steering-wheel heating."},
+    "front_defrost_on": {"name": "Turn on front defrost (experimental)", "description": "Experimental front-windscreen defrost command."},
+    "front_defrost_off": {"name": "Turn off front defrost (experimental)", "description": "Experimental front-defrost off command."},
+    "cabin_clean": {"name": "Ventilate cabin for 60 seconds (experimental)", "description": "Experimental Cabin Clean / cabin ventilation command."}
+  }
+}

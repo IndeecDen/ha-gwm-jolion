@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 DOMAIN = "gwm_jolion"
+VERSION = "0.1.0-alpha.3"
 PLATFORMS = ["button", "sensor", "binary_sensor", "device_tracker", "lock", "climate", "number"]
 
 CONF_PHONE = "phone"
@@ -56,8 +57,10 @@ ENDPOINT_CHECK_SECURITY_PASSWORD = "/app-api/api/v1.0/userAuth/checkSecurityPass
 
 KPA_TO_BAR = 100.0
 
+
 class Conversion(Enum):
     PRESSURE_KPA_TO_BAR = "pressure_kpa_to_bar"
+
 
 @dataclass(frozen=True)
 class SensorDef:
@@ -69,6 +72,7 @@ class SensorDef:
     code: str | None = None
     convert: Conversion | None = None
     diagnostic: bool = False
+
 
 ITEM_MAP: dict[str, SensorDef] = {
     "2011007": SensorDef("range_km", "Запас хода", "km", "mdi:map-marker-distance", code="2011007"),
@@ -154,6 +158,10 @@ BINARY_SENSOR_DEFS = (
     ("door_front_right_open", "Дверь передняя правая", "door", False),
     ("door_rear_right_open", "Дверь задняя правая", "door", False),
     ("windows_open", "Окна открыты", "window", False),
+    ("window_2210001_open", "Окно 2210001 открыто", "window", True),
+    ("window_2210002_open", "Окно 2210002 открыто", "window", True),
+    ("window_2210003_open", "Окно 2210003 открыто", "window", True),
+    ("window_2210004_open", "Окно 2210004 открыто", "window", True),
     ("trunk_open", "Багажник открыт", "door", False),
     ("vehicle_unlocked", "Автомобиль разблокирован", "lock", False),
     ("climate_on", "Климат работает", "running", False),

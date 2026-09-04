@@ -11,6 +11,25 @@ from .const import ITEM_MAP, KPA_TO_BAR, RAW_SENSOR_MAP, VEHICLE_STATUS_MAP, Con
 
 _LOGGER = logging.getLogger(__name__)
 
+VEHICLE_BASICS_SAFE_KEYS = {
+    "airConditionerTemperature",
+    "airConditionerStatusTime",
+    "airConditionerTime",
+    "engineStatusTime",
+    "seatHeatingControlTime",
+    "seatHeatingType",
+    "leftFrontSeat",
+    "rightFrontSeat",
+    "frontDefrostStatus",
+    "backDefrostStatus",
+    "airPurifierStatus",
+    "purifierTime",
+    "blowingMode",
+    "powerGear",
+    "cabinCleanNum",
+    "cabinCleanTime",
+}
+
 
 def normalize_phone(raw: str) -> str:
     digits = "".join(ch for ch in str(raw) if ch.isdigit())
@@ -53,9 +72,10 @@ def _seconds_to_minutes(value: Any) -> int | float | None:
     return int(minutes) if minutes.is_integer() else round(minutes, 1)
 
 
-def merge_vehicle_basics(state: dict[str, Any], basics: dict[str, Any]) -> None:
+def _flatten_vehicle_basics(basics: dict[str, Any]) -> dict[str, Any]:
+    """Flatten known nesting variants returned by vehicleBasicsInfo."""
     if not isinstance(basics, dict) or not basics:
-        return
+        return {}
     candidates = [basics]
     for key in ("vehicleBasicsInfo", "remoteControlInfo", "remoteControl", "data"):
         nested = basics.get(key)
@@ -64,6 +84,23 @@ def merge_vehicle_basics(state: dict[str, Any], basics: dict[str, Any]) -> None:
     merged: dict[str, Any] = {}
     for candidate in candidates:
         merged.update(candidate)
+    return merged
+
+
+def vehicle_basics_snapshot(basics: dict[str, Any]) -> dict[str, Any]:
+    """Return only non-sensitive vehicleBasicsInfo fields useful for diagnostics."""
+    merged = _flatten_vehicle_basics(basics)
+    return {
+        key: merged[key]
+        for key in sorted(VEHICLE_BASICS_SAFE_KEYS)
+        if key in merged and merged[key] is not None
+    }
+
+
+def merge_vehicle_basics(state: dict[str, Any], basics: dict[str, Any]) -> None:
+    merged = _flatten_vehicle_basics(basics)
+    if not merged:
+        return
     mappings = {
         "airConditionerTemperature": ("climate_saved_temperature", value_to_number),
         "airConditionerStatusTime": ("climate_saved_runtime", _seconds_to_minutes),
@@ -91,22 +128,29 @@ def build_state(status: dict[str, Any], tbox: dict[str, Any], basics: dict[str, 
         "service_status": status.get("serviceStatus"),
         "oil_qty": status.get("oilQty"),
     }
+    seen_signals: dict[str, Any] = {}
+    unknown_signals: dict[str, Any] = {}
+
     for item in status.get("items") or []:
         code = str(item.get("code"))
         raw = item.get("value")
+        value = value_to_number(raw)
+        seen_signals[code] = value
+
         if code in ITEM_MAP:
             defn = ITEM_MAP[code]
-            value = value_to_number(raw)
             if defn.convert == Conversion.PRESSURE_KPA_TO_BAR and isinstance(value, (int, float)):
                 value = round(value / KPA_TO_BAR, 2)
             state[defn.key] = value
             continue
         if code in RAW_SENSOR_MAP:
-            state[RAW_SENSOR_MAP[code].key] = value_to_number(raw)
+            state[RAW_SENSOR_MAP[code].key] = value
             continue
         if code in VEHICLE_STATUS_MAP:
-            state[VEHICLE_STATUS_MAP[code]] = value_to_number(raw)
+            state[VEHICLE_STATUS_MAP[code]] = value
             continue
+
+        unknown_signals[code] = value
         _LOGGER.debug("Unknown vehicle item code: %s = %s", code, raw)
 
     door_keys = ("door_front_left_raw", "door_rear_left_raw", "door_front_right_raw", "door_rear_right_raw")
@@ -117,8 +161,13 @@ def build_state(status: dict[str, Any], tbox: dict[str, Any], basics: dict[str, 
     state["door_front_right_open"] = _bool_from_raw(state, "door_front_right_raw")
     state["door_rear_right_open"] = _bool_from_raw(state, "door_rear_right_raw")
     state["windows_open"] = _any_present_equals(state, window_keys, 0)
+    state["window_2210001_open"] = _bool_from_raw(state, "window_2210001_raw", 0)
+    state["window_2210002_open"] = _bool_from_raw(state, "window_2210002_raw", 0)
+    state["window_2210003_open"] = _bool_from_raw(state, "window_2210003_raw", 0)
+    state["window_2210004_open"] = _bool_from_raw(state, "window_2210004_raw", 0)
     state["trunk_open"] = _bool_from_raw(state, "trunk_raw")
     state["vehicle_unlocked"] = _bool_from_raw(state, "central_lock_raw")
+
     engine_raw = state.get("engine_state_raw")
     state["engine_running"] = None if engine_raw is None else engine_raw == 2
     climate_raw = state.get("climate_raw")
@@ -129,10 +178,15 @@ def build_state(status: dict[str, Any], tbox: dict[str, Any], basics: dict[str, 
     state["steering_wheel_heat_on"] = _bool_from_raw(state, "steering_wheel_heat_raw")
     state["front_windscreen_heat_on"] = _bool_from_raw(state, "front_windscreen_heat_raw")
     state["air_circulation_on"] = _bool_from_raw(state, "air_circulation_raw")
+
     tbox_status = tbox.get("status") if isinstance(tbox, dict) else None
     state["tbox_status"] = tbox_status
     state["tbox_online"] = str(tbox_status) == "1" if tbox_status is not None else None
+
     merge_vehicle_basics(state, basics or {})
+    state["_seen_signals"] = seen_signals
+    state["_unknown_signals"] = unknown_signals
+
     _LOGGER.debug("TBOX data keys: %s", list(tbox.keys()) if isinstance(tbox, dict) else "none")
     return state
 
