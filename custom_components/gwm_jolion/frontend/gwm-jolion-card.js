@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-alpha.8 */
+/* GWM Jolion Card v0.1.0-alpha.9 */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.8";
+  const CARD_VERSION = "0.1.0-alpha.9";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -980,9 +980,9 @@
                   ${this._icon("mdi:crosshairs-gps")}
                   GPS ${this._labelBool("gps", "есть", "нет")}
                 </span>
-                <span class="system-item" title="oilQty: шкала топлива GWM, 0–8 делений">
-                  ${this._icon("mdi:gas-station")}
-                  Топливо GWM ${this._levelBars(this._rawValue("oilQty"), 8, "flat")}
+                <span class="system-item" title="oilQty: уровень моторного масла GWM, шкала 0–8">
+                  ${this._icon("mdi:oil")}
+                  Масло ${this._levelBars(this._rawValue("oilQty"), 8, "flat")}
                 </span>
                 ${
                   this._state("lastCommand")

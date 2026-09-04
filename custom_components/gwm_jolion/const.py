@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 DOMAIN = "gwm_jolion"
-VERSION = "0.1.0-alpha.8"
+VERSION = "0.1.0-alpha.9"
 PLATFORMS = ["button", "sensor", "binary_sensor", "device_tracker", "lock", "climate", "number"]
 
 CONF_PHONE = "phone"
@@ -142,7 +142,7 @@ EXTRA_SENSORS: dict[str, SensorDef] = {
     "vehicle_type": SensorDef("vehicle_type", "Тип автомобиля GWM", icon="mdi:car-info", diagnostic=True),
     "telematics_platform": SensorDef("telematics_platform", "Телематическая платформа", icon="mdi:cloud-outline", diagnostic=True),
     "model_code_raw": SensorDef("model_code_raw", "Код модели GWM (raw)", icon="mdi:identifier", diagnostic=True),
-    "oil_qty": SensorDef("oil_qty", "Шкала топлива GWM (0–8)", icon="mdi:gas-station", diagnostic=True),
+    "oil_qty": SensorDef("oil_qty", "Уровень масла GWM (0–8)", icon="mdi:oil", diagnostic=True),
     "service_status": SensorDef("service_status", "Статус обслуживания (raw)", icon="mdi:car-connected", diagnostic=True),
     "tbox_status": SensorDef("tbox_status", "Статус T-Box (raw)", icon="mdi:access-point-network", diagnostic=True),
     "climate_saved_temperature": SensorDef("climate_saved_temperature", "Температура климата GWM", "°C", "mdi:thermometer", "temperature"),

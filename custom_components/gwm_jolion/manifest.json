@@ -1,12 +1,17 @@
 {
   "domain": "gwm_jolion",
   "name": "GWM Jolion",
-  "codeowners": ["@IndeecDen"],
+  "codeowners": [
+    "@IndeecDen"
+  ],
   "config_flow": true,
-  "dependencies": ["frontend", "http"],
+  "dependencies": [
+    "frontend",
+    "http"
+  ],
   "documentation": "https://github.com/IndeecDen/ha-gwm-jolion",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/IndeecDen/ha-gwm-jolion/issues",
   "requirements": [],
-  "version": "0.1.0-alpha.8"
+  "version": "0.1.0-alpha.9"
 }
