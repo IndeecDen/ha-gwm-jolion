@@ -1,0 +1,142 @@
+"""Config flow for GWM Jolion."""
+
+from __future__ import annotations
+
+from typing import Any
+from uuid import uuid4
+
+from homeassistant import config_entries
+from homeassistant.const import CONF_PASSWORD
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers import selector
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+import voluptuous as vol
+
+from .api import GwmJolionApiClient
+from .const import (
+    CONF_COMMAND_COOLDOWN, CONF_COUNTRY, CONF_COUNTRY_CODE, CONF_DEVICE_ID,
+    CONF_ENABLE_REMOTE_CONTROLS, CONF_PHONE, CONF_POLL_INTERVAL, CONF_SECURITY_PIN,
+    DEFAULT_COMMAND_COOLDOWN, DEFAULT_COUNTRY, DEFAULT_COUNTRY_CODE,
+    DEFAULT_ENABLE_REMOTE_CONTROLS, DEFAULT_POLL_INTERVAL, DOMAIN,
+)
+from .helpers import normalize_phone
+
+CLEAR_SECURITY_PIN = "clear_security_pin"
+
+STEP_USER_DATA_SCHEMA = vol.Schema({
+    vol.Required(CONF_PHONE): str,
+    vol.Required(CONF_PASSWORD): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
+    vol.Optional(CONF_POLL_INTERVAL, default=DEFAULT_POLL_INTERVAL): vol.All(int, vol.Range(min=30, max=3600)),
+    vol.Optional(CONF_ENABLE_REMOTE_CONTROLS, default=DEFAULT_ENABLE_REMOTE_CONTROLS): bool,
+    vol.Optional(CONF_SECURITY_PIN): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
+})
+
+
+async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+    phone = normalize_phone(data[CONF_PHONE])
+    device_id = uuid4().hex
+    client = GwmJolionApiClient(
+        async_get_clientsession(hass),
+        phone=phone,
+        password=data[CONF_PASSWORD],
+        device_id=device_id,
+        country=DEFAULT_COUNTRY,
+        country_code=DEFAULT_COUNTRY_CODE,
+    )
+    await client.async_login()
+    return {"title": f"Haval Jolion ••••{phone[-4:]}", "phone": phone, "device_id": device_id}
+
+
+class GwmJolionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    VERSION = 1
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None):
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                info = await validate_input(self.hass, user_input)
+            except ConfigEntryAuthFailed:
+                errors["base"] = "invalid_auth"
+            except HomeAssistantError:
+                errors["base"] = "cannot_connect"
+            except Exception:
+                errors["base"] = "unknown"
+            else:
+                await self.async_set_unique_id(info["phone"])
+                self._abort_if_unique_id_configured()
+                options = {
+                    CONF_POLL_INTERVAL: user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
+                    CONF_ENABLE_REMOTE_CONTROLS: user_input.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS),
+                    CONF_COMMAND_COOLDOWN: DEFAULT_COMMAND_COOLDOWN,
+                }
+                if user_input.get(CONF_SECURITY_PIN):
+                    options[CONF_SECURITY_PIN] = user_input[CONF_SECURITY_PIN]
+                return self.async_create_entry(
+                    title=info["title"],
+                    data={
+                        CONF_PHONE: info["phone"],
+                        CONF_PASSWORD: user_input[CONF_PASSWORD],
+                        CONF_COUNTRY: DEFAULT_COUNTRY,
+                        CONF_COUNTRY_CODE: DEFAULT_COUNTRY_CODE,
+                        CONF_DEVICE_ID: info["device_id"],
+                    },
+                    options=options,
+                )
+        return self.async_show_form(step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors)
+
+    async def async_step_reauth(self, user_input: dict[str, Any] | None = None):
+        entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                data = dict(entry.data)
+                data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
+                await validate_input(self.hass, data)
+                self.hass.config_entries.async_update_entry(entry, data=data)
+                await self.hass.config_entries.async_reload(entry.entry_id)
+                return self.async_abort(reason="reauth_successful")
+            except ConfigEntryAuthFailed:
+                errors["base"] = "invalid_auth"
+            except HomeAssistantError:
+                errors["base"] = "cannot_connect"
+            except Exception:
+                errors["base"] = "unknown"
+        return self.async_show_form(
+            step_id="reauth",
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD))}),
+            errors=errors,
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+        return GwmJolionOptionsFlow()
+
+
+class GwmJolionOptionsFlow(config_entries.OptionsFlowWithReload):
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
+        if user_input is not None:
+            options = dict(self.config_entry.options)
+            options[CONF_POLL_INTERVAL] = user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
+            options[CONF_ENABLE_REMOTE_CONTROLS] = user_input.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)
+            options[CONF_COMMAND_COOLDOWN] = user_input.get(CONF_COMMAND_COOLDOWN, DEFAULT_COMMAND_COOLDOWN)
+            if user_input.get(CONF_SECURITY_PIN):
+                options[CONF_SECURITY_PIN] = user_input[CONF_SECURITY_PIN]
+            if user_input.get(CLEAR_SECURITY_PIN):
+                options.pop(CONF_SECURITY_PIN, None)
+            return self.async_create_entry(title="", data=options)
+
+        current = self.config_entry.options
+        has_pin = bool(current.get(CONF_SECURITY_PIN))
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_POLL_INTERVAL, default=current.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)): vol.All(int, vol.Range(min=30, max=3600)),
+                vol.Optional(CONF_ENABLE_REMOTE_CONTROLS, default=current.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)): bool,
+                vol.Optional(CONF_COMMAND_COOLDOWN, default=current.get(CONF_COMMAND_COOLDOWN, DEFAULT_COMMAND_COOLDOWN)): vol.All(int, vol.Range(min=10, max=120)),
+                vol.Optional(CONF_SECURITY_PIN): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
+                vol.Optional(CLEAR_SECURITY_PIN, default=False): bool,
+            }),
+            description_placeholders={"pin_status": "сохранён" if has_pin else "не задан"},
+        )
