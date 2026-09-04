@@ -192,5 +192,14 @@ def build_state(status: dict[str, Any], tbox: dict[str, Any], basics: dict[str, 
 
 
 def redact_vehicle(vehicle: dict[str, Any]) -> dict[str, Any]:
-    hidden = {"vin", "showedVin", "engineNo", "simIccid", "imsi"}
+    hidden = {
+        "vin",
+        "showedVin",
+        "engineNo",
+        "simIccid",
+        "imsi",
+        "vehicleId",
+        "vehicleNumber",
+        "shareId",
+    }
     return {key: ("***REDACTED***" if key in hidden else value) for key, value in vehicle.items()}
