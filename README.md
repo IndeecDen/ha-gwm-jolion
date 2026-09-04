@@ -2,7 +2,7 @@
 
 Unofficial Home Assistant integration for **Haval Jolion** using the Russian GWM cloud.
 
-> **0.1.0-alpha.1** — first private test build. Do not treat experimental remote commands as production-ready.
+> **0.1.0-alpha.2** — private test build with the first bundled GWM Jolion dashboard card.
 
 ## Current alpha features
 
@@ -24,8 +24,9 @@ Unofficial Home Assistant integration for **Haval Jolion** using the Russian GWM
 - Home Assistant `climate` entity
 - Separate **Climate run time** number, 5–30 minutes
 - Experimental front defrost (`0x0B`) and 60-second cabin ventilation (`0x11`), disabled by default
+- Bundled `custom:gwm-jolion-card` dashboard card, loaded automatically by the integration
 
-## Installation for the first test
+## Installation
 
 The repository is currently private. The GitHub account connected to HACS must have access to it.
 
@@ -51,6 +52,67 @@ to:
 
 and restarting Home Assistant.
 
+## Updating from alpha.1 to alpha.2
+
+Replace the complete folder:
+
+```text
+/config/custom_components/gwm_jolion
+```
+
+with the current repository version and **restart Home Assistant completely**. The dashboard card JavaScript is bundled inside the integration and is loaded automatically after restart.
+
+A hard browser refresh may be useful after updating (`Ctrl+F5` on desktop).
+
+## GWM Jolion dashboard card
+
+Alpha 2 adds the first native project card:
+
+```yaml
+type: custom:gwm-jolion-card
+```
+
+For an account with one Jolion, no entity IDs are required. The card discovers the integration entities from Home Assistant's entity and device registries.
+
+If several compatible vehicles/devices are present, bind the card to any entity belonging to the desired vehicle:
+
+```yaml
+type: custom:gwm-jolion-card
+entity: device_tracker.your_jolion_location
+```
+
+The card currently displays:
+
+- T-Box online/offline
+- engine and central-lock state
+- climate state and target temperature
+- climate runtime slider, 5–30 min
+- fuel, remaining range and odometer
+- doors, windows and trunk state
+- pressure and temperature for all four tyres
+- T-Box cellular signal and GPS state
+- last remote command when available
+
+Controls currently included:
+
+- engine start/stop
+- lock/unlock
+- climate on/off
+- climate temperature ±1 °C
+- climate runtime 5–30 min
+- trunk open/close
+- close all windows when reported open
+- force vehicle-data refresh
+
+Remote actions show a confirmation dialog by default. It can be disabled in YAML:
+
+```yaml
+type: custom:gwm-jolion-card
+confirm_controls: false
+```
+
+The card is registered in `window.customCards`, so after restart it should also appear in the Home Assistant **Add card** dialog as **GWM Jolion**.
+
 ## Important testing notes
 
 - Start with read-only telemetry.
@@ -58,14 +120,14 @@ and restarting Home Assistant.
 - Remote engine/climate tests should be performed outdoors.
 - GWM T5 commands are serialized with a cooldown.
 - Experimental command buttons are disabled by default in Home Assistant's entity registry.
-- Alpha 0.1 supports the first vehicle returned by the GWM account.
+- Alpha 0.1 currently supports the first vehicle returned by the GWM account.
 
 ## Climate
 
 The alpha exposes:
 
-- `climate.*_klimat`
-- `number.*_vremia_raboty_klimata`
+- `climate.*`
+- `number.*` for **Время работы климата**
 
 The number entity controls the next climate command runtime from 5 to 30 minutes.
 
