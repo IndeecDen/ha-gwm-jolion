@@ -84,6 +84,7 @@ def _diagnostics_payload(entry: ConfigEntry, coordinator: GwmJolionCoordinator) 
         "vehicle": _redact(data.get("vehicle") or {}),
         "state": _redact(public_state),
         "vehicle_basics": _redact(data.get("vehicle_basics") or {}),
+        "vehicle_basics_diagnostics": _redact(data.get("vehicle_basics_diagnostics") or {}),
         "coordinator": {
             "last_successful_update": last_update.isoformat() if last_update else None,
             "seen_signal_codes": sorted(coordinator.seen_signal_codes),
