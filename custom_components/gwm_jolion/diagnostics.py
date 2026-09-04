@@ -26,9 +26,11 @@ _SENSITIVE_NORMALIZED_KEYS = {
     "phone",
     "securitypassword",
     "securitypin",
+    "shareid",
     "showedvin",
     "token",
     "vehicleid",
+    "vehiclenumber",
     "vin",
 }
 
@@ -99,6 +101,7 @@ def _diagnostics_payload(entry: ConfigEntry, coordinator: GwmJolionCoordinator) 
         "privacy": {
             "location_included": False,
             "vin_included": False,
+            "vehicle_number_included": False,
             "credentials_included": False,
         },
     }
