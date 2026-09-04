@@ -17,6 +17,7 @@ from .api import GwmJolionApiClient
 from .capabilities import capability_report
 from .commands import COMMANDS
 from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN
+from .protocol import SIGNALS, VerificationStatus
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -68,12 +69,21 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         now = datetime.now(timezone.utc)
         state = data.get("state") or {}
         seen = state.get("_seen_signals") or {}
-        unknown = state.get("_unknown_signals") or {}
+        raw_unknown = state.get("_unknown_signals") or {}
+        unknown_for_history: dict[str, Any] = (
+            dict(raw_unknown) if isinstance(raw_unknown, dict) else {}
+        )
 
         if isinstance(seen, dict):
             self.seen_signal_codes.update(str(code) for code in seen)
-        if isinstance(unknown, dict):
-            self._track_unknown_signals(unknown, now)
+            for raw_code, value in seen.items():
+                code = str(raw_code)
+                info = SIGNALS.get(code)
+                if info is not None and info.status == VerificationStatus.UNKNOWN:
+                    unknown_for_history.setdefault(code, value)
+
+        if unknown_for_history:
+            self._track_unknown_signals(unknown_for_history, now)
 
         self.last_successful_update = now
         return data
