@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-alpha.4 */
+/* GWM Jolion Card v0.1.0-alpha.6 */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.4";
+  const CARD_VERSION = "0.1.0-alpha.6";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -20,6 +20,7 @@
     fuelPercent: "_fuel_percent",
     range: "_range_km",
     mileage: "_mileage_total",
+    modelCode: "_model_code_raw",
     tireFlP: "_tire_fl_pressure",
     tireFrP: "_tire_fr_pressure",
     tireRlP: "_tire_rl_pressure",
@@ -61,7 +62,7 @@
     static getGridOptions() {
       return {
         columns: 12,
-        rows: 10,
+        rows: 11,
         min_columns: 6,
         min_rows: 6,
       };
@@ -86,24 +87,30 @@
     set hass(hass) {
       this._hass = hass;
       const key = `${this._config.device_id || ""}|${this._config.entity || ""}`;
-      if (this._resolvedKey !== key && !this._resolving) this._resolveEntities();
+      if (this._resolvedKey !== key && !this._resolving) {
+        this._resolveEntities();
+      }
       this._render();
     }
 
     getCardSize() {
-      return 10;
+      return 11;
     }
 
     async _resolveEntities() {
       if (!this._hass || this._resolving) return;
       this._resolving = true;
       try {
-        const registry = await this._hass.callWS({ type: "config/entity_registry/list" });
+        const registry = await this._hass.callWS({
+          type: "config/entity_registry/list",
+        });
         this._entityRegistry = Array.isArray(registry) ? registry : [];
 
         let deviceId = this._config.device_id || null;
         if (!deviceId && this._config.entity) {
-          const selected = this._entityRegistry.find((entry) => entry.entity_id === this._config.entity);
+          const selected = this._entityRegistry.find(
+            (entry) => entry.entity_id === this._config.entity
+          );
           deviceId = selected?.device_id || null;
         }
 
@@ -121,7 +128,9 @@
           ? gwmEntries.filter((entry) => entry.device_id === deviceId)
           : gwmEntries;
 
-        const devices = await this._hass.callWS({ type: "config/device_registry/list" });
+        const devices = await this._hass.callWS({
+          type: "config/device_registry/list",
+        });
         this._device = Array.isArray(devices)
           ? devices.find((device) => device.id === deviceId) || null
           : null;
@@ -135,9 +144,13 @@
         }
 
         this._entities.climate ||=
-          vehicleEntries.find((entry) => entry.entity_id.startsWith("climate."))?.entity_id;
+          vehicleEntries.find((entry) =>
+            entry.entity_id.startsWith("climate.")
+          )?.entity_id;
         this._entities.lock ||=
-          vehicleEntries.find((entry) => entry.entity_id.startsWith("lock."))?.entity_id;
+          vehicleEntries.find((entry) =>
+            entry.entity_id.startsWith("lock.")
+          )?.entity_id;
         this._entities.refresh ||=
           vehicleEntries.find(
             (entry) =>
@@ -189,16 +202,45 @@
       return `${stateObj.state}${unit ? ` ${unit}` : ""}`;
     }
 
-    _seatValue(key) {
+    _rawValue(key) {
       const stateObj = this._state(key);
       if (!stateObj || ["unknown", "unavailable", ""].includes(stateObj.state)) {
-        return "Нет данных";
-      }
-      const value = Number(stateObj.state);
-      if (Number.isFinite(value)) {
-        return value === 0 ? "Выключен" : `Уровень ${value}`;
+        return null;
       }
       return String(stateObj.state);
+    }
+
+    _seatValue(key) {
+      const raw = this._rawValue(key);
+      if (raw === null) return "Нет данных · только статус";
+      const value = Number(raw);
+      if (Number.isFinite(value)) {
+        return value === 0
+          ? "Выключен · только статус"
+          : `Уровень ${value} · только статус`;
+      }
+      return `${raw} · только статус`;
+    }
+
+    _drivetrain() {
+      if (this._config.drivetrain) {
+        return String(this._config.drivetrain).toUpperCase();
+      }
+
+      const raw = (this._rawValue("modelCode") || "").toUpperCase();
+      if (!raw) return null;
+
+      // Russian Jolion type approval:
+      // CC7150BA00B / CC7150BA01B = 4x2 front-wheel drive
+      // CC7150BA24C = 4x4 all-wheel drive
+      if (raw.includes("CC7150BA24C")) return "4WD";
+      if (
+        raw.includes("CC7150BA00B") ||
+        raw.includes("CC7150BA01B")
+      ) {
+        return "2WD";
+      }
+      return null;
     }
 
     _labelBool(key, onLabel, offLabel, unknownLabel = "—") {
@@ -248,8 +290,18 @@
     }
 
     _readOnlyComfort(key, icon, title, value) {
-      const suffix = this._state(key) ? value : "Нет данных";
-      return this._control(`readonly-${key}`, icon, title, suffix, "readonly", true);
+      return this._control(
+        `readonly-${key}`,
+        icon,
+        title,
+        value,
+        "readonly",
+        true
+      );
+    }
+
+    _roofButton(id, icon, title, subtitle) {
+      return this._control(id, icon, title, subtitle, "experimental");
     }
 
     _tire(label, pKey, tKey) {
@@ -271,7 +323,9 @@
 
       const climate = this._state("climate");
       const targetTemp = Number(
-        climate?.attributes?.temperature ?? climate?.attributes?.target_temp ?? 22
+        climate?.attributes?.temperature ??
+          climate?.attributes?.target_temp ??
+          22
       );
       const runtime = Number(
         this._state("climateRuntime")?.state ??
@@ -287,6 +341,8 @@
         this._device?.name ||
         "Haval Jolion";
       const model = this._device?.model || "GWM Cloud";
+      const drivetrain = this._drivetrain();
+
       const engineOn = this._isOn("engine");
       const unlocked = this._isOn("unlocked");
       const climateOn =
@@ -308,6 +364,13 @@
           : "",
       ].filter(Boolean);
 
+      const windscreenStatus = this._labelBool(
+        "windscreenHeat",
+        "Включен · только статус",
+        "Выключен · только статус",
+        "Нет данных · только статус"
+      );
+
       this.shadowRoot.innerHTML = `
         <style>
           :host { display:block; }
@@ -325,11 +388,29 @@
             gap:12px;
           }
           .title { min-width:0; }
+          .title-line {
+            display:flex;
+            align-items:center;
+            gap:9px;
+            flex-wrap:wrap;
+          }
           .title h2 {
             margin:0;
             font-size:22px;
             font-weight:700;
             line-height:1.15;
+          }
+          .drive-badge {
+            display:inline-flex;
+            align-items:center;
+            min-height:24px;
+            padding:3px 8px;
+            border-radius:999px;
+            font-size:11px;
+            font-weight:800;
+            letter-spacing:.04em;
+            color:var(--primary-color);
+            background:color-mix(in srgb,var(--primary-color) 11%,transparent);
           }
           .title p {
             margin:5px 0 0;
@@ -427,7 +508,9 @@
             color:var(--secondary-text-color);
             text-transform:uppercase;
           }
-          .controls {
+          .controls,
+          .roof-controls,
+          .comfort {
             display:grid;
             grid-template-columns:repeat(3,minmax(0,1fr));
             gap:8px;
@@ -467,13 +550,14 @@
           }
           .control.active ha-icon { color:var(--warning-color,#f9a825); }
           .control.danger ha-icon { color:var(--error-color,#d32f2f); }
+          .control.experimental ha-icon { color:var(--warning-color,#f9a825); }
           .control.busy {
             opacity:.55;
             pointer-events:none;
           }
           .control.disabled {
             cursor:default;
-            opacity:.78;
+            opacity:.58;
           }
           .control.disabled:hover {
             background:color-mix(
@@ -497,17 +581,27 @@
           .control-copy small {
             font-size:10px;
             color:var(--secondary-text-color);
-            white-space:nowrap;
-            overflow:hidden;
-            text-overflow:ellipsis;
+            line-height:1.25;
           }
           .timer-panel,
-          .climate-panel {
+          .climate-panel,
+          .roof-panel {
             border-radius:16px;
             background:color-mix(in srgb,var(--primary-color) 6%,transparent);
             padding:14px;
           }
-          .timer-panel { margin-top:9px; }
+          .timer-panel,
+          .roof-panel { margin-top:9px; }
+          .subpanel-title {
+            display:flex;
+            align-items:center;
+            gap:7px;
+            margin:0 0 10px;
+            color:var(--secondary-text-color);
+            font-size:12px;
+            font-weight:600;
+          }
+          .subpanel-title ha-icon { --mdc-icon-size:18px; }
           .timer-head {
             display:flex;
             align-items:center;
@@ -566,12 +660,7 @@
             color:var(--secondary-text-color);
             margin-top:2px;
           }
-          .comfort {
-            display:grid;
-            grid-template-columns:repeat(3,minmax(0,1fr));
-            gap:8px;
-            margin-top:10px;
-          }
+          .comfort { margin-top:10px; }
           .tires {
             display:grid;
             grid-template-columns:repeat(4,1fr);
@@ -619,6 +708,7 @@
           @media (max-width:600px) {
             .wrap { padding:14px; }
             .controls,
+            .roof-controls,
             .comfort {
               grid-template-columns:repeat(2,minmax(0,1fr));
             }
@@ -645,7 +735,10 @@
           <div class="wrap">
             <div class="header">
               <div class="title">
-                <h2>${this._escape(carName)}</h2>
+                <div class="title-line">
+                  <h2>${this._escape(carName)}</h2>
+                  ${drivetrain ? `<span class="drive-badge">${this._escape(drivetrain)}</span>` : ""}
+                </div>
                 <p>${this._escape(model)}</p>
               </div>
               <div class="online">
@@ -715,7 +808,8 @@
                   "mdi:car-door",
                   "Окна",
                   windowsOpen ? "Закрыть все" : "Закрыты",
-                  windowsOpen ? "danger" : ""
+                  windowsOpen ? "danger" : "",
+                  !windowsOpen
                 )}
                 ${this._control(
                   "refresh",
@@ -741,6 +835,38 @@
                     ${engineOn ? "disabled" : ""}
                   >
                   <b>${engineRuntime} мин</b>
+                </div>
+              </div>
+
+              <div class="roof-panel">
+                <div class="subpanel-title">
+                  ${this._icon("mdi:car-select")}Панорама и шторка · эксперимент
+                </div>
+                <div class="roof-controls">
+                  ${this._roofButton(
+                    "sunroof-open",
+                    "mdi:car-select",
+                    "Панорама",
+                    "Открыть"
+                  )}
+                  ${this._roofButton(
+                    "sunroof-close",
+                    "mdi:car-select",
+                    "Панорама",
+                    "Закрыть"
+                  )}
+                  ${this._roofButton(
+                    "shade-open",
+                    "mdi:blinds-open",
+                    "Шторка",
+                    "Открыть"
+                  )}
+                  ${this._roofButton(
+                    "shade-close",
+                    "mdi:blinds-vertical-closed",
+                    "Шторка",
+                    "Закрыть"
+                  )}
                 </div>
               </div>
             </div>
@@ -816,12 +942,7 @@
                     "windscreenHeat",
                     "mdi:car-defrost-front",
                     "Обогрев лобового",
-                    this._labelBool(
-                      "windscreenHeat",
-                      "Включен",
-                      "Выключен",
-                      "Нет данных"
-                    )
+                    windscreenStatus
                   )}
                 </div>
               </div>
@@ -926,7 +1047,6 @@
         this._isOn("climateOn") ||
         this._state("climate")?.state === "heat_cool";
       const trunkOpen = this._isOn("trunk");
-      const windowsOpen = this._isOn("windows");
 
       if (action === "engine") {
         const runtime = Math.min(
@@ -1005,14 +1125,6 @@
         );
       }
 
-      if (action === "windows") {
-        if (!windowsOpen) return;
-        if (!this._confirm("Закрыть все окна?")) return;
-        return this._runBusy(action, () =>
-          this._hass.callService(INTEGRATION, "close_windows", {})
-        );
-      }
-
       if (action === "refresh") {
         const entityId = this._entities.refresh;
         if (!entityId) {
@@ -1020,6 +1132,20 @@
         }
         return this._runBusy(action, () =>
           this._hass.callService("button", "press", { entity_id: entityId })
+        );
+      }
+
+      const roofServices = {
+        "sunroof-open": ["open_sunroof", "Открыть панораму? Экспериментальная команда."],
+        "sunroof-close": ["close_sunroof", "Закрыть панораму? Экспериментальная команда."],
+        "shade-open": ["open_sunshade", "Открыть шторку панорамы? Экспериментальная команда."],
+        "shade-close": ["close_sunshade", "Закрыть шторку панорамы? Экспериментальная команда."],
+      };
+      if (roofServices[action]) {
+        const [service, message] = roofServices[action];
+        if (!this._confirm(message)) return;
+        return this._runBusy(action, () =>
+          this._hass.callService(INTEGRATION, service, {})
         );
       }
 
@@ -1057,11 +1183,7 @@
     async _toggleComfort(action, key, onService, offService, label) {
       const isOn = this._featureOn(key);
       const nextOn = !isOn;
-      if (
-        !this._confirm(
-          `${nextOn ? "Включить" : "Выключить"} ${label}?`
-        )
-      ) {
+      if (!this._confirm(`${nextOn ? "Включить" : "Выключить"} ${label}?`)) {
         return;
       }
 
