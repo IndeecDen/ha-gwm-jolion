@@ -10,11 +10,12 @@ import time
 from typing import Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .api import GwmJolionApiClient
+from .api import GwmJolionApiClient, GwmJolionApiError
 from .capabilities import capability_report
+from .command_safety import remote_start_block_reason
 from .commands import COMMANDS
 from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN
 from .protocol import SIGNALS, VerificationStatus
@@ -30,6 +31,17 @@ def _set_nested(data: dict[str, Any], path: tuple[str, ...], value: Any) -> None
             raise HomeAssistantError(f"Invalid command template path: {path}")
         node = child
     node[path[-1]] = value
+
+
+def _friendly_remote_error(err: Exception) -> str:
+    """Return a concise user-facing command error without hiding GWM details."""
+    if isinstance(err, GwmJolionApiError):
+        if err.code == "timeout":
+            return "GWM не подтвердил выполнение команды за 300 секунд"
+        if err.code:
+            return f"{err} (код GWM {err.code})"
+    text = str(err).strip()
+    return text or "Неизвестная ошибка удалённой команды"
 
 
 class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -57,6 +69,7 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.climate_target_temperature = DEFAULT_CLIMATE_TEMPERATURE
         self.climate_operation_time = DEFAULT_CLIMATE_RUNTIME
         self.last_command_name: str | None = None
+        self.last_command_status: str | None = None
         self.last_command_result_code: str | None = None
         self.last_command_result_message: str | None = None
         self.last_command_at: datetime | None = None
@@ -123,16 +136,16 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _ensure_remote_ready(self) -> str:
         if not self.enable_remote_controls:
-            raise HomeAssistantError("Remote controls are disabled in GWM Jolion options")
+            raise HomeAssistantError("Удалённое управление отключено в настройках GWM Jolion")
         if not self.security_pin:
-            raise HomeAssistantError("Security PIN is required in GWM Jolion options")
-        elapsed = time.time() - self._last_command_time
+            raise HomeAssistantError("Для удалённой команды требуется PIN безопасности GWM")
+        elapsed = time.monotonic() - self._last_command_time
         if elapsed < self.command_cooldown:
             remaining = max(1, int(self.command_cooldown - elapsed))
-            raise HomeAssistantError(f"Command cooldown active. Wait {remaining} seconds.")
+            raise HomeAssistantError(f"Подождите ещё {remaining} сек. перед следующей командой")
         vin = (self.data or {}).get("vin")
         if not vin:
-            raise HomeAssistantError("Vehicle VIN is not available")
+            raise HomeAssistantError("VIN автомобиля пока недоступен. Обновите данные GWM")
         return str(vin)
 
     async def async_send_custom_t5(
@@ -141,16 +154,27 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         name: str,
         instructions: dict[str, Any],
         expected_remote_type: str,
+        command_key: str | None = None,
     ) -> dict[str, Any]:
         if self._command_lock.locked():
-            raise HomeAssistantError("Another GWM remote command is already in progress")
+            raise HomeAssistantError("Другая удалённая команда GWM уже выполняется")
 
         async with self._command_lock:
+            if command_key == "start_engine":
+                # Use fresh cloud telemetry for the conservative start guard.
+                await self.async_request_refresh()
+                reason = remote_start_block_reason((self.data or {}).get("state") or {})
+                if reason:
+                    raise HomeAssistantError(
+                        f"Удалённый запуск отменён: {reason}. Обновите состояние автомобиля, если оно изменилось"
+                    )
+
             vin = self._ensure_remote_ready()
-            self._last_command_time = time.time()
+            self._last_command_time = time.monotonic()
             self.last_command_name = name
-            self.last_command_result_code = "pending"
-            self.last_command_result_message = ""
+            self.last_command_status = "pending"
+            self.last_command_result_code = None
+            self.last_command_result_message = "Команда отправлена в GWM"
             self.last_command_at = datetime.now(timezone.utc)
             self.async_update_listeners()
             try:
@@ -161,15 +185,23 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     security_pin=self.security_pin,
                 )
             except Exception as err:
-                self.last_command_result_code = "error"
-                self.last_command_result_message = str(err)
+                self.last_command_status = "error"
+                error_code = getattr(err, "code", None)
+                self.last_command_result_code = str(error_code) if error_code else "error"
+                self.last_command_result_message = _friendly_remote_error(err)
                 self.async_update_listeners()
                 raise
 
+            self.last_command_status = "success"
             self.last_command_result_code = str(result.get("resultCode", ""))
-            self.last_command_result_message = str(result.get("resultMsg") or "")
+            self.last_command_result_message = str(result.get("resultMsg") or "Команда выполнена")
             self.async_update_listeners()
-            await self.async_request_refresh()
+            try:
+                await self.async_request_refresh()
+            except ConfigEntryAuthFailed:
+                raise
+            except Exception as err:
+                _LOGGER.debug("Post-command refresh failed after successful command: %s", err)
             return result
 
     async def async_execute_command(self, command_key: str, *, operation_time: int | None = None) -> dict[str, Any]:
@@ -180,10 +212,11 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         path = command.get("operation_time_path")
         if operation_time is not None and path:
             if not 1 <= int(operation_time) <= 30:
-                raise HomeAssistantError("operation_time must be between 1 and 30")
+                raise HomeAssistantError("Время работы команды должно быть от 1 до 30 минут")
             _set_nested(instructions, tuple(path), str(int(operation_time)))
         return await self.async_send_custom_t5(
             name=command["name"],
             instructions=instructions,
             expected_remote_type=command["expected_remote_type"],
+            command_key=command_key,
         )

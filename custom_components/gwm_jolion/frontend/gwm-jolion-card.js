@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-alpha.9 */
+/* GWM Jolion Card v0.1.0-alpha.10 */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.9";
+  const CARD_VERSION = "0.1.0-alpha.10";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -188,6 +188,17 @@
       return !state || state === "unknown" || state === "unavailable";
     }
 
+    _remoteCommandInProgress() {
+      const state = this._state("lastCommand");
+      return Boolean(
+        state?.attributes?.in_progress || state?.attributes?.status === "pending"
+      );
+    }
+
+    _isRemoteAction(id) {
+      return id !== "refresh" && !String(id).startsWith("readonly-");
+    }
+
     _featureOn(key) {
       if (!this._isUnavailable(key)) return this._isOn(key);
       return Boolean(this._assumed[key]);
@@ -323,16 +334,23 @@
     }
 
     _control(id, icon, title, subtitle, tone = "", disabled = false) {
+      const remoteBusy =
+        this._remoteCommandInProgress() && this._isRemoteAction(id);
+      const effectiveDisabled = disabled || remoteBusy;
+      const busy = this._busy.has(id) || remoteBusy;
+      const visibleSubtitle = remoteBusy
+        ? "Выполняется удалённая команда…"
+        : subtitle;
       return `
         <button
-          class="control ${tone} ${this._busy.has(id) ? "busy" : ""} ${disabled ? "disabled" : ""}"
-          ${disabled ? "disabled" : `data-action="${id}"`}
+          class="control ${tone} ${busy ? "busy" : ""} ${effectiveDisabled ? "disabled" : ""}"
+          ${effectiveDisabled ? "disabled" : `data-action="${id}"`}
           type="button"
         >
           ${this._icon(icon)}
           <span class="control-copy">
             <strong>${this._escape(title)}</strong>
-            <small>${this._escape(subtitle)}</small>
+            <small>${this._escape(visibleSubtitle)}</small>
           </span>
         </button>`;
     }
@@ -1068,9 +1086,21 @@
           30,
           Math.max(5, Number(this._engineRuntime) || 15)
         );
+        if (!engineOn) {
+          const blockers = [];
+          if (unlocked) blockers.push("автомобиль не закрыт");
+          if (this._isOn("doors")) blockers.push("открыта дверь");
+          if (trunkOpen) blockers.push("открыт багажник");
+          if (blockers.length) {
+            alert(
+              `GWM Jolion: запуск сейчас недоступен — ${blockers.join(", ")}. Обновите данные после изменения состояния автомобиля.`
+            );
+            return;
+          }
+        }
         const message = engineOn
           ? "Остановить двигатель?"
-          : `Запустить двигатель на ${runtime} мин? Машина должна быть закрыта.`;
+          : `Запустить двигатель на ${runtime} мин? Перед отправкой интеграция ещё раз проверит состояние автомобиля.`;
         if (!this._confirm(message)) return;
         return this._runBusy(action, () =>
           this._hass.callService(

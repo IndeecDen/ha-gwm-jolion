@@ -40,6 +40,7 @@ from .const import (
     SYSTEM_TYPE,
     TERMINAL,
 )
+from .command_safety import is_auth_error_code
 from .helpers import build_state, normalize_phone, redact_vehicle, vehicle_basics_snapshot
 from .vehicle_data import calculate_fuel_percent, describe_structure, normalize_vehicle_metadata
 
@@ -284,10 +285,16 @@ class GwmJolionApiClient:
                 last_error_msg,
             )
         if last_error_code:
-            raise HomeAssistantError(
-                f"Command failed: {last_error_msg}" if last_error_msg else f"Error code {last_error_code}"
+            raise GwmJolionApiError(
+                f"Команда GWM завершилась с ошибкой: {last_error_msg}"
+                if last_error_msg
+                else f"Команда GWM завершилась с кодом {last_error_code}",
+                code=last_error_code,
             )
-        raise HomeAssistantError("Command timed out after 300 seconds")
+        raise GwmJolionApiError(
+            "GWM не подтвердил выполнение команды за 300 секунд",
+            code="timeout",
+        )
 
     async def _ensure_login(self) -> None:
         if not self._access_token:
@@ -360,18 +367,21 @@ class GwmJolionApiClient:
         code = str(payload.get("code"))
         if code == "000000":
             return payload
-        if with_token and retry_auth and code in {"401", "401000", "308001", "308002", "308003"}:
-            self._access_token = None
-            await self.async_login()
-            return await self._request(
-                method,
-                path,
-                params=params,
-                body=body,
-                with_token=with_token,
-                vin_header=vin_header,
-                retry_auth=False,
-            )
+        if with_token and is_auth_error_code(code):
+            if retry_auth:
+                self._access_token = None
+                await self.async_login()
+                return await self._request(
+                    method,
+                    path,
+                    params=params,
+                    body=body,
+                    with_token=with_token,
+                    vin_header=vin_header,
+                    retry_auth=False,
+                )
+            description = str(payload.get("description") or payload.get("message") or code)
+            raise ConfigEntryAuthFailed(description)
         description = str(payload.get("description") or payload.get("message") or code)
         _LOGGER.debug("GWM error: code=%s description=%s path=%s", code, description, path)
         if not with_token:

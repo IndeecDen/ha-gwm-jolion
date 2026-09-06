@@ -35,7 +35,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema({
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     phone = normalize_phone(data[CONF_PHONE])
-    device_id = uuid4().hex
+    device_id = str(data.get(CONF_DEVICE_ID) or uuid4().hex)
     client = GwmJolionApiClient(
         async_get_clientsession(hass),
         phone=phone,

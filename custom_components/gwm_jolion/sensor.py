@@ -78,14 +78,21 @@ class GwmJolionLastCommandSensor(GwmJolionEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        if self.coordinator.last_command_name is None:
+        name = self.coordinator.last_command_name
+        if name is None:
             return None
-        code = self.coordinator.last_command_result_code
-        return self.coordinator.last_command_name if not code else f"{self.coordinator.last_command_name} [{code}]"
+        status = self.coordinator.last_command_status
+        suffix = {
+            "pending": "выполняется",
+            "success": "выполнено",
+            "error": "ошибка",
+        }.get(status)
+        return name if not suffix else f"{name} — {suffix}"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
+            "status": self.coordinator.last_command_status,
             "result_code": self.coordinator.last_command_result_code,
             "result_message": self.coordinator.last_command_result_message,
             "in_progress": self.coordinator.command_in_progress,
