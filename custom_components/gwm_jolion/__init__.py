@@ -26,9 +26,19 @@ from .coordinator import GwmJolionCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-FRONTEND_FILE = Path(__file__).parent / "frontend" / "gwm-jolion-card.js"
-FRONTEND_URL = "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.12"
-FRONTEND_STATIC_URL = "/gwm-jolion/gwm-jolion-card.js"
+FRONTEND_DIR = Path(__file__).parent / "frontend"
+FRONTEND_ASSETS = (
+    (
+        FRONTEND_DIR / "gwm-jolion-card.js",
+        "/gwm-jolion/gwm-jolion-card.js",
+        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.12",
+    ),
+    (
+        FRONTEND_DIR / "gwm-jolion-remote-card.js",
+        "/gwm-jolion/gwm-jolion-remote-card.js",
+        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-alpha.13",
+    ),
+)
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
 
 
@@ -65,20 +75,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
-    """Serve and load the bundled Lovelace card once per HA process."""
+    """Serve and load bundled Lovelace cards once per HA process."""
     if hass.data[DOMAIN].get(DATA_FRONTEND_REGISTERED):
         return
 
-    if not FRONTEND_FILE.exists():
-        _LOGGER.warning("Bundled GWM Jolion card was not found at %s", FRONTEND_FILE)
+    available_assets = [asset for asset in FRONTEND_ASSETS if asset[0].exists()]
+    missing_assets = [asset[0] for asset in FRONTEND_ASSETS if not asset[0].exists()]
+    for path in missing_assets:
+        _LOGGER.warning("Bundled GWM Jolion card was not found at %s", path)
+
+    if not available_assets:
         return
 
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(FRONTEND_STATIC_URL, str(FRONTEND_FILE), False)]
+        [StaticPathConfig(static_url, str(path), False) for path, static_url, _ in available_assets]
     )
-    frontend.add_extra_js_url(hass, FRONTEND_URL)
+    for _, _, frontend_url in available_assets:
+        frontend.add_extra_js_url(hass, frontend_url)
+
     hass.data[DOMAIN][DATA_FRONTEND_REGISTERED] = True
-    _LOGGER.debug("Registered bundled GWM Jolion card at %s", FRONTEND_URL)
+    _LOGGER.debug(
+        "Registered bundled GWM Jolion cards: %s",
+        ", ".join(frontend_url for _, _, frontend_url in available_assets),
+    )
 
 
 def _coordinators(hass: HomeAssistant) -> list[GwmJolionCoordinator]:
