@@ -24,7 +24,6 @@ jobs:
 
           version = "0.1.0-alpha.14"
 
-          # Python version and both frontend cache URLs.
           path = Path("custom_components/gwm_jolion/const.py")
           text = path.read_text(encoding="utf-8").replace('VERSION = "0.1.0-alpha.13"', f'VERSION = "{version}"', 1)
           path.write_text(text, encoding="utf-8")
@@ -40,7 +39,6 @@ jobs:
               text = path.read_text(encoding="utf-8").replace(previous, version, 2)
               path.write_text(text, encoding="utf-8")
 
-          # Preserve the user's README layout/screenshots and only update version + reliability notes.
           path = Path("README.md")
           text = path.read_text(encoding="utf-8")
           text = text.replace("Текущая версия — **0.1.0-alpha.13**.", f"Текущая версия — **{version}**.", 1)
@@ -55,34 +53,34 @@ jobs:
               text = text.replace(marker, marker + extra, 1)
           path.write_text(text, encoding="utf-8")
 
-          # Changelog.
           path = Path("CHANGELOG.md")
           text = path.read_text(encoding="utf-8")
-          section = """## 0.1.0-alpha.14
-
-Исправление зависания очереди удалённых команд и отображения неизвестных состояний в карточках.
-
-### Удалённые команды
-
-- конечные ошибки T5 теперь завершают polling сразу вместо ожидания полного 300-секундного timeout;
-- коды `1000`, `2000` и подтверждённый промежуточный код `11` продолжают считаться незавершёнными;
-- после выхода из command lock публикуется отдельное обновление `in_progress=false`, поэтому карточки больше не остаются заблокированными после завершённой/ошибочной команды;
-- карточки ориентируются на фактический `in_progress`, а не на потенциально устаревшее состояние `pending`;
-- новых remote payload автомобиля нет.
-
-### Карточки / статусы
-
-- основная карточка не предлагает действие по замку, двигателю, климату, окнам или багажнику, если соответствующая телеметрия недоступна;
-- карточка-пульт показывает `нет данных` вместо ложных `закрыто`, `выключено`, `offline` для неизвестных основных состояний;
-- информационные плитки GSM/T-Box, GPS и климата также различают реальное отрицательное состояние и отсутствие данных;
-- добавлены unit-тесты классификации T5 result codes.
-
-"""
+          section = "\n".join([
+              "## 0.1.0-alpha.14",
+              "",
+              "Исправление зависания очереди удалённых команд и отображения неизвестных состояний в карточках.",
+              "",
+              "### Удалённые команды",
+              "",
+              "- конечные ошибки T5 теперь завершают polling сразу вместо ожидания полного 300-секундного timeout;",
+              "- коды `1000`, `2000` и подтверждённый промежуточный код `11` продолжают считаться незавершёнными;",
+              "- после выхода из command lock публикуется отдельное обновление `in_progress=false`, поэтому карточки больше не остаются заблокированными после завершённой/ошибочной команды;",
+              "- карточки ориентируются на фактический `in_progress`, а не на потенциально устаревшее состояние `pending`;",
+              "- новых remote payload автомобиля нет.",
+              "",
+              "### Карточки / статусы",
+              "",
+              "- основная карточка не предлагает действие по замку, двигателю, климату, окнам или багажнику, если соответствующая телеметрия недоступна;",
+              "- карточка-пульт показывает `нет данных` вместо ложных `закрыто`, `выключено`, `offline` для неизвестных основных состояний;",
+              "- информационные плитки GSM/T-Box, GPS и климата также различают реальное отрицательное состояние и отсутствие данных;",
+              "- добавлены unit-тесты классификации T5 result codes.",
+              "",
+              "",
+          ])
           if "## 0.1.0-alpha.14" not in text:
               text = text.replace("# Changelog\n\n", "# Changelog\n\n" + section, 1)
           path.write_text(text, encoding="utf-8")
 
-          # Roadmap: mark the concrete reliability work and add the version entry.
           path = Path("ROADMAP.md")
           text = path.read_text(encoding="utf-8")
           marker = "- ✅ отдельная обработка timeout;\n"
@@ -103,11 +101,13 @@ jobs:
               text = text.replace(marker, marker + extra, 1)
 
           version_marker = "## 10. Версии\n\n"
-          version_section = """### `0.1.0-alpha.14` — Command lifecycle / state accuracy
-
-Исправлено зависание управления после ошибочных remote-команд: явные T5-ошибки больше не ждут общий timeout, состояние `in_progress` сбрасывается после освобождения lock, а обе карточки не выдают отсутствие телеметрии за реальное `выключено / закрыто / offline`. Новых GWM payload нет.
-
-"""
+          version_section = "\n".join([
+              "### `0.1.0-alpha.14` — Command lifecycle / state accuracy",
+              "",
+              "Исправлено зависание управления после ошибочных remote-команд: явные T5-ошибки больше не ждут общий timeout, состояние `in_progress` сбрасывается после освобождения lock, а обе карточки не выдают отсутствие телеметрии за реальное `выключено / закрыто / offline`. Новых GWM payload нет.",
+              "",
+              "",
+          ])
           if "### `0.1.0-alpha.14`" not in text:
               if version_marker not in text:
                   raise SystemExit("ROADMAP version marker not found")
