@@ -1,0 +1,67 @@
+name: Alpha 12 card patch
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch bundled card
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("custom_components/gwm_jolion/frontend/gwm-jolion-card.js")
+          text = path.read_text(encoding="utf-8")
+
+          def replace(old: str, new: str) -> None:
+              global text
+              if old not in text:
+                  raise SystemExit(f"Card marker not found: {old[:80]!r}")
+              text = text.replace(old, new, 1)
+
+          replace(
+              '/* GWM Jolion Card v0.1.0-alpha.10 */\n(() => {\n  const CARD_VERSION = "0.1.0-alpha.10";',
+              '/* GWM Jolion Card v0.1.0-alpha.12 */\n(() => {\n  const CARD_VERSION = "0.1.0-alpha.12";',
+          )
+          replace(
+              '    lastCommand: "_last_command",\n    steeringHeat:',
+              '    lastCommand: "_last_command",\n    featureFlags: "_feature_flags",\n    steeringHeat:',
+          )
+          replace(
+              '''    _seatValue(key) {\n      const raw = this._rawValue(key);''',
+              '''    _featureEnabled(capability) {\n      const flags = this._state("featureFlags");\n      if (!flags?.attributes || !(capability in flags.attributes)) return true;\n      return flags.attributes[capability] !== false;\n    }\n\n    _seatValue(key) {\n      const raw = this._rawValue(key);''',
+          )
+          replace(
+              '''                ${this._roofControl(\n                  "sunroof",\n                  "sunroofOpen",\n                  "mdi:car-select",\n                  "Панорама"\n                )}\n                ${this._roofControl(\n                  "sunshade",\n                  "sunshadeOpen",\n                  "mdi:blinds",\n                  "Шторка"\n                )}''',
+              '''                ${this._featureEnabled("sunroof") ? this._roofControl(\n                  "sunroof",\n                  "sunroofOpen",\n                  "mdi:car-select",\n                  "Панорама"\n                ) : ""}\n                ${this._featureEnabled("sunshade") ? this._roofControl(\n                  "sunshade",\n                  "sunshadeOpen",\n                  "mdi:blinds",\n                  "Шторка"\n                ) : ""}''',
+          )
+          replace(
+              '''                  ${this._comfortControl(\n                    "steering-heat",\n                    "steeringHeat",\n                    "mdi:steering",\n                    "Обогрев руля"\n                  )}\n                  ${this._readOnlyComfort(\n                    "seatDriver",\n                    "mdi:car-seat-heater",\n                    "Сиденье водителя",\n                    this._seatValue("seatDriver")\n                  )}\n                  ${this._readOnlyComfort(\n                    "seatPassenger",\n                    "mdi:car-seat-heater",\n                    "Сиденье пассажира",\n                    this._seatValue("seatPassenger")\n                  )}\n                  ${this._comfortControl(\n                    "rear-defrost",\n                    "rearDefrost",\n                    "mdi:car-defrost-rear",\n                    "Обогрев заднего стекла"\n                  )}\n                  ${this._comfortControl(\n                    "front-defrost",\n                    "frontDefrost",\n                    "mdi:car-defrost-front",\n                    "Обдув лобового",\n                    { experimental: true }\n                  )}\n                  ${this._readOnlyComfort(\n                    "windscreenHeat",\n                    "mdi:car-defrost-front",\n                    "Обогрев лобового",\n                    windscreenStatus\n                  )}''',
+              '''                  ${this._featureEnabled("steering_wheel_heat") ? this._comfortControl(\n                    "steering-heat",\n                    "steeringHeat",\n                    "mdi:steering",\n                    "Обогрев руля"\n                  ) : ""}\n                  ${this._featureEnabled("seat_heat_driver") ? this._readOnlyComfort(\n                    "seatDriver",\n                    "mdi:car-seat-heater",\n                    "Сиденье водителя",\n                    this._seatValue("seatDriver")\n                  ) : ""}\n                  ${this._featureEnabled("seat_heat_passenger") ? this._readOnlyComfort(\n                    "seatPassenger",\n                    "mdi:car-seat-heater",\n                    "Сиденье пассажира",\n                    this._seatValue("seatPassenger")\n                  ) : ""}\n                  ${this._featureEnabled("rear_defrost") ? this._comfortControl(\n                    "rear-defrost",\n                    "rearDefrost",\n                    "mdi:car-defrost-rear",\n                    "Обогрев заднего стекла"\n                  ) : ""}\n                  ${this._featureEnabled("front_defrost") ? this._comfortControl(\n                    "front-defrost",\n                    "frontDefrost",\n                    "mdi:car-defrost-front",\n                    "Обдув лобового",\n                    { experimental: true }\n                  ) : ""}\n                  ${this._featureEnabled("front_windscreen_heat") ? this._readOnlyComfort(\n                    "windscreenHeat",\n                    "mdi:car-defrost-front",\n                    "Обогрев лобового",\n                    windscreenStatus\n                  ) : ""}''',
+          )
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Commit card patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/alpha12-card-patch.yml
+          git add custom_components/gwm_jolion/frontend/gwm-jolion-card.js
+          git commit -m "Prepare alpha.12 capability-aware card"
+          git push
