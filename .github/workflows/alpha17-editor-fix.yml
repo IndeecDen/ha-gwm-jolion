@@ -158,3 +158,5 @@ jobs:
           git add -A
           git commit -m "Prepare 0.1.0-alpha.17 editor fix"
           git push
+
+# second commit activates this newly-added workflow
