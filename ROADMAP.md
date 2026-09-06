@@ -66,7 +66,11 @@
 - ✅ различение источника capture-записи: `poll`, `manual_button`, `remote_command`, `remote_start_guard`;
 - ✅ пользовательские маркеры этапов теста без изменения telemetry baseline;
 - ✅ диагностический сенсор состояния Protocol Capture;
-- ✅ экспорт текущей capture-сессии внутри стандартной диагностики Home Assistant: первый baseline + до 5000 самых свежих корректных записей; полный JSONL не обрезается.
+- ✅ экспорт текущей capture-сессии внутри стандартной диагностики Home Assistant: первый baseline + до 5000 самых свежих корректных записей; полный JSONL не обрезается;
+- ✅ Protocol Capture schema 2 сохраняет `items[].unit`, набор реально увиденных item-ключей и безопасные top-level значения `getLastStatus`;
+- ✅ `status_structure`, `vehicle_basics_structure` и `tbox_structure` показывают неизвестные поля/типы без сохранения потенциально чувствительных значений;
+- ✅ `status_meta_changes` и `tbox_meta_changes` позволяют сопоставлять изменения верхнеуровневых GWM/T-Box полей с физическими тестами;
+- 🟢 `percentageOfOil` и `charge` собираются как raw top-level диагностические кандидаты без предположения об их физическом смысле.
 
 ### Нужно найти / подтвердить
 
@@ -77,7 +81,9 @@
 - ⏳ температура охлаждающей жидкости;
 - ⏳ дополнительные предупреждения автомобиля;
 - ⏳ точная расшифровка шкалы GSM;
-- ⏳ точная физическая интерпретация делений `oilQty`.
+- ⏳ точная физическая интерпретация делений `oilQty`;
+- ⏳ физическая интерпретация `percentageOfOil`, если Jolion возвращает ненулевое значение;
+- ⏳ физическая интерпретация top-level `charge`, если поле используется на Jolion.
 
 ## 2. Удалённое управление
 
@@ -231,6 +237,8 @@
 - ✅ `binary_sensor`;
 - ✅ `button`;
 - ✅ `device_tracker`;
+- ✅ GPS `device_tracker` совместим со стандартной карточкой Home Assistant `map`;
+- ✅ GPS-координаты трекера приводятся к числам, трекер использует автомобильную иконку;
 - ✅ `lock`;
 - ✅ `climate`;
 - ✅ `number`;
@@ -258,10 +266,12 @@
 - ✅ диагностическое скрытие VIN, номера автомобиля, токенов, IMSI/ICCID, координат и других чувствительных полей;
 - ✅ bounded history изменений тестовых raw-сигналов без координат и идентификаторов;
 - ✅ JSONL capture не пишет автоматические VIN, координаты, аккаунт, credentials и device identifiers;
+- ✅ неизвестные поля `getLastStatus` / `findStatus` / `vehicleBasicsInfo` можно обнаружить по безопасной structure-инвентаризации без сохранения их значений;
 - ✅ capture-ошибки не прерывают основной polling автомобиля;
 - ✅ unit tests для protocol / capabilities / vehicle data / command safety;
 - ✅ unit tests ручных capability-настроек и сопоставления команд/сущностей;
 - ✅ unit tests JSONL baseline/diff/marker/diagnostics export, включая сохранение первого baseline + последних записей;
+- ✅ unit tests Protocol Capture schema 2 для units, safe top-level metadata и structure inventory;
 - ⏳ дополнительные тесты auth refresh / API outage;
 - ⏳ расширенные тесты timeout и неожиданных ответов GWM.
 
@@ -283,6 +293,10 @@
 - ⏳ заявка в default repositories HACS после стабилизации.
 
 ## 10. Версии
+
+### `0.1.0-alpha.19.2` — Extended diagnostic capture / map-ready GPS
+
+Перед физическими тестами Protocol Capture расширен до schema 2: сохраняются единицы измерения `items[].unit`, безопасные top-level поля `getLastStatus` (`percentageOfOil`, `oilQty`, `charge`, времена обновления и др.), их изменения, а также безопасные structure-инвентаризации `getLastStatus`, `vehicleBasicsInfo` и `findStatus`. Неизвестные потенциально чувствительные значения не сохраняются. GPS `device_tracker` приведён к числовым координатам и готов для стандартной карты Home Assistant. Новых GWM remote payload или telemetry mappings нет.
 
 ### `0.1.0-alpha.19.1` — Baseline-preserving diagnostics export
 
