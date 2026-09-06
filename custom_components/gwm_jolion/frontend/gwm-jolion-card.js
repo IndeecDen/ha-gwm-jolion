@@ -191,9 +191,7 @@
 
     _remoteCommandInProgress() {
       const state = this._state("lastCommand");
-      return Boolean(
-        state?.attributes?.in_progress || state?.attributes?.status === "pending"
-      );
+      return state?.attributes?.in_progress === true;
     }
 
     _isRemoteAction(id) {
@@ -444,14 +442,20 @@
         ? this._engineRuntime
         : 15;
 
-      const engineOn = this._isOn("engine");
-      const unlocked = this._isOn("unlocked");
+      const engineKnown = !this._isUnavailable("engine");
+      const lockKnown = !this._isUnavailable("unlocked");
+      const trunkKnown = !this._isUnavailable("trunk");
+      const windowsKnown = !this._isUnavailable("windows");
+      const climateKnown = !this._isUnavailable("climateOn") || (climate && !["unknown", "unavailable"].includes(climate.state));
+      const onlineKnown = !this._isUnavailable("tbox");
+      const engineOn = engineKnown && this._isOn("engine");
+      const unlocked = lockKnown && this._isOn("unlocked");
       const climateOn =
         this._isOn("climateOn") || climate?.state === "heat_cool";
-      const trunkOpen = this._isOn("trunk");
-      const windowsOpen = this._isOn("windows");
+      const trunkOpen = trunkKnown && this._isOn("trunk");
+      const windowsOpen = windowsKnown && this._isOn("windows");
       const doorsOpen = this._isOn("doors");
-      const online = this._isOn("tbox");
+      const online = onlineKnown && this._isOn("tbox");
 
       const alerts = [
         doorsOpen
@@ -804,7 +808,7 @@
               </div>
               <div class="online">
                 <span class="dot ${online ? "on" : ""}"></span>
-                ${online ? "Online" : "Offline"}
+                ${onlineKnown ? (online ? "Online" : "Offline") : "Нет данных"}
               </div>
             </div>
 
@@ -840,29 +844,33 @@
                   "engine",
                   engineOn ? "mdi:engine-off" : "mdi:engine",
                   "Двигатель",
-                  engineOn ? "Остановить" : `Запустить · ${engineRuntime} мин`,
-                  engineOn ? "active" : ""
+                  engineKnown ? (engineOn ? "Остановить" : `Запустить · ${engineRuntime} мин`) : "Нет данных",
+                  engineOn ? "active" : "",
+                  !engineKnown
                 )}
                 ${this._control(
                   "lock",
                   unlocked ? "mdi:lock" : "mdi:lock-open-variant",
                   "Замок",
-                  unlocked ? "Закрыть" : "Открыть",
-                  unlocked ? "active" : ""
+                  lockKnown ? (unlocked ? "Закрыть" : "Открыть") : "Нет данных",
+                  unlocked ? "active" : "",
+                  !lockKnown
                 )}
                 ${this._control(
                   "trunk",
                   "mdi:car-back",
                   "Багажник",
-                  trunkOpen ? "Закрыть" : "Открыть",
-                  trunkOpen ? "danger" : ""
+                  trunkKnown ? (trunkOpen ? "Закрыть" : "Открыть") : "Нет данных",
+                  trunkOpen ? "danger" : "",
+                  !trunkKnown
                 )}
                 ${this._control(
                   "windows",
                   "mdi:car-door",
                   "Окна",
                   this._windowSubtitle(),
-                  windowsOpen ? "danger" : ""
+                  windowsOpen ? "danger" : "",
+                  !windowsKnown
                 )}
                 ${this._featureEnabled("sunroof") ? this._roofControl(
                   "sunroof",
@@ -897,7 +905,7 @@
                     max="30"
                     step="1"
                     value="${engineRuntime}"
-                    ${engineOn ? "disabled" : ""}
+                    ${engineOn || !engineKnown ? "disabled" : ""}
                   >
                   <b>${engineRuntime} мин</b>
                 </div>
@@ -912,8 +920,9 @@
                     "climate",
                     "mdi:air-conditioner",
                     "Кондиционер",
-                    climateOn ? "Выключить" : "Включить",
-                    climateOn ? "active" : ""
+                    climateKnown ? (climateOn ? "Выключить" : "Включить") : "Нет данных",
+                    climateOn ? "active" : "",
+                    !climateKnown
                   )}
                 </div>
 

@@ -40,7 +40,7 @@ from .const import (
     SYSTEM_TYPE,
     TERMINAL,
 )
-from .command_safety import is_auth_error_code
+from .command_safety import classify_t5_result_code, is_auth_error_code
 from .helpers import build_state, normalize_phone, redact_vehicle, vehicle_basics_snapshot
 from .vehicle_data import calculate_fuel_percent, describe_structure, normalize_vehicle_metadata
 
@@ -241,11 +241,7 @@ class GwmJolionApiClient:
         timeout: int = 300,
         interval: int = 1,
     ) -> dict[str, Any]:
-        success_codes = {"0", "6", "10"}
-        pending_codes = {"1000", "2000"}
         deadline = time.time() + timeout
-        last_error_code: str | None = None
-        last_error_msg: str | None = None
         while time.time() < deadline:
             await asyncio.sleep(interval)
             try:
@@ -257,15 +253,21 @@ class GwmJolionApiClient:
                 )
             except GwmJolionApiError:
                 continue
+
             data = payload.get("data")
             if not isinstance(data, list):
                 continue
-            matched = [item for item in data if str(item.get("remoteType") or "") == expected_remote_type]
+            matched = [
+                item
+                for item in data
+                if str(item.get("remoteType") or "") == expected_remote_type
+            ]
             if not matched:
                 continue
+
             for item in matched:
                 result_code = str(item.get("resultCode", ""))
-                if result_code in success_codes:
+                if classify_t5_result_code(result_code) == "success":
                     _LOGGER.debug(
                         "T5 command succeeded: remoteType=%s code=%s msg=%s",
                         expected_remote_type,
@@ -273,24 +275,35 @@ class GwmJolionApiClient:
                         item.get("resultMsg") or "",
                     )
                     return item
-            if any(str(item.get("resultCode", "")) in pending_codes for item in matched):
-                continue
-            for item in matched:
-                last_error_code = str(item.get("resultCode", ""))
-                last_error_msg = str(item.get("resultMsg") or "")
+
+            terminal_errors = [
+                item
+                for item in matched
+                if classify_t5_result_code(item.get("resultCode")) == "error"
+            ]
+            if terminal_errors:
+                item = terminal_errors[-1]
+                result_code = str(item.get("resultCode", ""))
+                result_msg = str(item.get("resultMsg") or "")
+                _LOGGER.debug(
+                    "T5 terminal error: remoteType=%s code=%s msg=%s",
+                    expected_remote_type,
+                    result_code,
+                    result_msg,
+                )
+                raise GwmJolionApiError(
+                    f"Команда GWM завершилась с ошибкой: {result_msg}"
+                    if result_msg
+                    else f"Команда GWM завершилась с кодом {result_code}",
+                    code=result_code or "error",
+                )
+
             _LOGGER.debug(
-                "T5 non-final result: remoteType=%s code=%s msg=%s",
+                "T5 command still pending: remoteType=%s codes=%s",
                 expected_remote_type,
-                last_error_code,
-                last_error_msg,
+                [str(item.get("resultCode", "")) for item in matched],
             )
-        if last_error_code:
-            raise GwmJolionApiError(
-                f"Команда GWM завершилась с ошибкой: {last_error_msg}"
-                if last_error_msg
-                else f"Команда GWM завершилась с кодом {last_error_code}",
-                code=last_error_code,
-            )
+
         raise GwmJolionApiError(
             "GWM не подтвердил выполнение команды за 300 секунд",
             code="timeout",

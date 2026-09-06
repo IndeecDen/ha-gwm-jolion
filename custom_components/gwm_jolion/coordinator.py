@@ -170,49 +170,63 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._command_lock.locked():
             raise HomeAssistantError("Другая удалённая команда GWM уже выполняется")
 
-        async with self._command_lock:
-            if command_key == "start_engine":
-                await self.async_request_refresh()
-                reason = remote_start_block_reason((self.data or {}).get("state") or {})
-                if reason:
-                    raise HomeAssistantError(
-                        f"Удалённый запуск отменён: {reason}. Обновите состояние автомобиля, если оно изменилось"
-                    )
+        command_started = False
+        result: dict[str, Any] | None = None
+        try:
+            async with self._command_lock:
+                if command_key == "start_engine":
+                    await self.async_request_refresh()
+                    reason = remote_start_block_reason((self.data or {}).get("state") or {})
+                    if reason:
+                        raise HomeAssistantError(
+                            f"Удалённый запуск отменён: {reason}. Обновите состояние автомобиля, если оно изменилось"
+                        )
 
-            vin = self._ensure_remote_ready()
-            self._last_command_time = time.monotonic()
-            self.last_command_name = name
-            self.last_command_status = "pending"
-            self.last_command_result_code = None
-            self.last_command_result_message = "Команда отправлена в GWM"
-            self.last_command_at = datetime.now(timezone.utc)
-            self.async_update_listeners()
-            try:
-                result = await self.client.async_send_t5_command(
-                    vin,
-                    instructions,
-                    expected_remote_type,
-                    security_pin=self.security_pin,
-                )
-            except Exception as err:
-                self.last_command_status = "error"
-                error_code = getattr(err, "code", None)
-                self.last_command_result_code = str(error_code) if error_code else "error"
-                self.last_command_result_message = _friendly_remote_error(err)
+                vin = self._ensure_remote_ready()
+                self._last_command_time = time.monotonic()
+                self.last_command_name = name
+                self.last_command_status = "pending"
+                self.last_command_result_code = None
+                self.last_command_result_message = "Команда отправлена в GWM"
+                self.last_command_at = datetime.now(timezone.utc)
+                command_started = True
                 self.async_update_listeners()
-                raise
 
-            self.last_command_status = "success"
-            self.last_command_result_code = str(result.get("resultCode", ""))
-            self.last_command_result_message = str(result.get("resultMsg") or "Команда выполнена")
-            self.async_update_listeners()
-            try:
-                await self.async_request_refresh()
-            except ConfigEntryAuthFailed:
-                raise
-            except Exception as err:
-                _LOGGER.debug("Post-command refresh failed after successful command: %s", err)
-            return result
+                try:
+                    result = await self.client.async_send_t5_command(
+                        vin,
+                        instructions,
+                        expected_remote_type,
+                        security_pin=self.security_pin,
+                    )
+                except Exception as err:
+                    self.last_command_status = "error"
+                    error_code = getattr(err, "code", None)
+                    self.last_command_result_code = str(error_code) if error_code else "error"
+                    self.last_command_result_message = _friendly_remote_error(err)
+                    self.async_update_listeners()
+                    raise
+
+                self.last_command_status = "success"
+                self.last_command_result_code = str(result.get("resultCode", ""))
+                self.last_command_result_message = str(result.get("resultMsg") or "Команда выполнена")
+                self.async_update_listeners()
+        finally:
+            # The lock is already released here. Publish one more state update so
+            # last_command.in_progress cannot remain stuck at true in Lovelace.
+            if command_started:
+                self.async_update_listeners()
+
+        if result is None:
+            raise HomeAssistantError("GWM не вернул результат удалённой команды")
+
+        try:
+            await self.async_request_refresh()
+        except ConfigEntryAuthFailed:
+            raise
+        except Exception as err:
+            _LOGGER.debug("Post-command refresh failed after successful command: %s", err)
+        return result
 
     async def async_execute_command(self, command_key: str, *, operation_time: int | None = None) -> dict[str, Any]:
         command = COMMANDS.get(command_key)

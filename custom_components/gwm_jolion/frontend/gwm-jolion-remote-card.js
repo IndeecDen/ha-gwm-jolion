@@ -372,7 +372,7 @@
 
     _remoteCommandInProgress() {
       const state = this._state("lastCommand");
-      return Boolean(state?.attributes?.in_progress || state?.attributes?.status === "pending");
+      return state?.attributes?.in_progress === true;
     }
 
     _drivetrain() {
@@ -490,23 +490,27 @@
     }
 
     _statusMeta(id) {
+      const unknown = (key) => this._isUnavailable(key);
+      const noData = (label, position, icon = "mdi:help-circle-outline") =>
+        [icon, `${label}: нет данных`, "muted", position];
       const unlocked = this._isOn("unlocked");
       const engine = this._isOn("engine");
       const doors = this._isOn("doors");
       const windows = this._isOn("windows");
       const trunk = this._isOn("trunk");
+      const climateKnown = !unknown("climateOn") || !unknown("climate");
       const climate = this._isOn("climateOn") || this._state("climate")?.state === "heat_cool";
       const online = this._isOn("tbox");
       const gps = this._isOn("gps");
       return {
-        lock: [unlocked ? "mdi:lock-open-variant" : "mdi:lock", unlocked ? "Открыт" : "Закрыт", unlocked ? "warn" : "ok", "s-lock"],
-        engine: ["mdi:engine", engine ? "Двигатель работает" : "Двигатель выключен", engine ? "active" : "muted", "s-engine"],
-        doors: [doors ? "mdi:car-door-open" : "mdi:car-door", doors ? "Дверь открыта" : "Двери закрыты", doors ? "warn" : "ok", "s-doors"],
-        windows: ["mdi:car-door", windows ? `Окна: ${this._openWindows().join(", ") || "открыты"}` : "Окна закрыты", windows ? "warn" : "ok", "s-windows"],
-        trunk: ["mdi:car-back", trunk ? "Багажник открыт" : "Багажник закрыт", trunk ? "warn" : "ok", "s-trunk"],
-        climate: ["mdi:air-conditioner", climate ? "Климат работает" : "Климат выключен", climate ? "active" : "muted", "s-climate"],
-        online: [online ? "mdi:cloud-check" : "mdi:cloud-off-outline", online ? "T-Box online" : "T-Box offline", online ? "ok" : "warn", "s-online"],
-        gps: ["mdi:crosshairs-gps", gps ? "GPS доступен" : "GPS недоступен", gps ? "ok" : "muted", "s-gps"],
+        lock: unknown("unlocked") ? noData("Замок", "s-lock", "mdi:lock-question") : [unlocked ? "mdi:lock-open-variant" : "mdi:lock", unlocked ? "Открыт" : "Закрыт", unlocked ? "warn" : "ok", "s-lock"],
+        engine: unknown("engine") ? noData("Двигатель", "s-engine", "mdi:engine-outline") : ["mdi:engine", engine ? "Двигатель работает" : "Двигатель выключен", engine ? "active" : "muted", "s-engine"],
+        doors: unknown("doors") ? noData("Двери", "s-doors", "mdi:car-door") : [doors ? "mdi:car-door-open" : "mdi:car-door", doors ? "Дверь открыта" : "Двери закрыты", doors ? "warn" : "ok", "s-doors"],
+        windows: unknown("windows") ? noData("Окна", "s-windows", "mdi:car-door") : ["mdi:car-door", windows ? `Окна: ${this._openWindows().join(", ") || "открыты"}` : "Окна закрыты", windows ? "warn" : "ok", "s-windows"],
+        trunk: unknown("trunk") ? noData("Багажник", "s-trunk", "mdi:car-back") : ["mdi:car-back", trunk ? "Багажник открыт" : "Багажник закрыт", trunk ? "warn" : "ok", "s-trunk"],
+        climate: !climateKnown ? noData("Климат", "s-climate", "mdi:air-conditioner") : ["mdi:air-conditioner", climate ? "Климат работает" : "Климат выключен", climate ? "active" : "muted", "s-climate"],
+        online: unknown("tbox") ? noData("T-Box", "s-online", "mdi:cloud-question") : [online ? "mdi:cloud-check" : "mdi:cloud-off-outline", online ? "T-Box online" : "T-Box offline", online ? "ok" : "warn", "s-online"],
+        gps: unknown("gps") ? noData("GPS", "s-gps", "mdi:crosshairs-question") : ["mdi:crosshairs-gps", gps ? "GPS доступен" : "GPS недоступен", gps ? "ok" : "muted", "s-gps"],
       }[id];
     }
 
@@ -560,6 +564,11 @@
     _controlMeta(id) {
       const feature = FEATURE_BY_CONTROL[id];
       if (feature && !this._featureEnabled(feature)) return null;
+      const unlockedKnown = !this._isUnavailable("unlocked");
+      const engineKnown = !this._isUnavailable("engine");
+      const climateKnown = !this._isUnavailable("climateOn") || !this._isUnavailable("climate");
+      const trunkKnown = !this._isUnavailable("trunk");
+      const windowsKnown = !this._isUnavailable("windows");
       const unlocked = this._isOn("unlocked");
       const engine = this._isOn("engine");
       const climate = this._isOn("climateOn") || this._state("climate")?.state === "heat_cool";
@@ -569,17 +578,17 @@
       const rearDefrost = !this._isUnavailable("rearDefrost") ? this._isOn("rearDefrost") : Boolean(this._assumed.rearDefrost);
       const frontDefrost = !this._isUnavailable("frontDefrost") ? this._isOn("frontDefrost") : Boolean(this._assumed.frontDefrost);
       return {
-        lock: [unlocked ? "mdi:lock" : "mdi:lock-open-variant", unlocked ? "Закрыть" : "Открыть", unlocked ? "active" : ""],
-        engine: [engine ? "mdi:engine-off" : "mdi:engine", engine ? "Заглушить" : "Запустить", engine ? "active" : ""],
-        climate: ["mdi:air-conditioner", climate ? "Климат выкл." : "Климат вкл.", climate ? "active" : ""],
-        trunk: ["mdi:car-back", trunk ? "Закрыть багажник" : "Открыть багажник", trunk ? "warn" : ""],
-        windows: ["mdi:car-door", windows ? "Закрыть окна" : "Открыть окна", windows ? "warn" : ""],
-        refresh: ["mdi:refresh", "Обновить", ""],
-        steering: ["mdi:steering", steering ? "Руль выкл." : "Руль вкл.", steering ? "active" : ""],
-        rear_defrost: ["mdi:car-defrost-rear", rearDefrost ? "Заднее стекло выкл." : "Заднее стекло вкл.", rearDefrost ? "active" : ""],
-        front_defrost: ["mdi:car-defrost-front", frontDefrost ? "Defrost выкл." : "Defrost вкл.", frontDefrost ? "active" : "experimental"],
-        sunroof: ["mdi:car-select", "Панорама", "experimental"],
-        sunshade: ["mdi:blinds", "Шторка", "experimental"],
+        lock: unlockedKnown ? [unlocked ? "mdi:lock" : "mdi:lock-open-variant", unlocked ? "Закрыть" : "Открыть", unlocked ? "active" : "", false] : ["mdi:lock-question", "Замок · нет данных", "", true],
+        engine: engineKnown ? [engine ? "mdi:engine-off" : "mdi:engine", engine ? "Заглушить" : "Запустить", engine ? "active" : "", false] : ["mdi:engine-outline", "Двигатель · нет данных", "", true],
+        climate: climateKnown ? ["mdi:air-conditioner", climate ? "Климат выкл." : "Климат вкл.", climate ? "active" : "", false] : ["mdi:air-conditioner", "Климат · нет данных", "", true],
+        trunk: trunkKnown ? ["mdi:car-back", trunk ? "Закрыть багажник" : "Открыть багажник", trunk ? "warn" : "", false] : ["mdi:car-back", "Багажник · нет данных", "", true],
+        windows: windowsKnown ? ["mdi:car-door", windows ? "Закрыть окна" : "Открыть окна", windows ? "warn" : "", false] : ["mdi:car-door", "Окна · нет данных", "", true],
+        refresh: ["mdi:refresh", "Обновить", "", false],
+        steering: ["mdi:steering", steering ? "Руль выкл." : "Руль вкл.", steering ? "active" : "", false],
+        rear_defrost: ["mdi:car-defrost-rear", rearDefrost ? "Заднее стекло выкл." : "Заднее стекло вкл.", rearDefrost ? "active" : "", false],
+        front_defrost: ["mdi:car-defrost-front", frontDefrost ? "Defrost выкл." : "Defrost вкл.", frontDefrost ? "active" : "experimental", false],
+        sunroof: ["mdi:car-select", "Панорама", "experimental", false],
+        sunshade: ["mdi:blinds", "Шторка", "experimental", false],
       }[id] || null;
     }
 
@@ -588,10 +597,11 @@
       const controls = selected.map((id) => {
         const meta = this._controlMeta(id);
         if (!meta) return "";
-        const [icon, label, tone] = meta;
+        const [icon, label, tone, disabled = false] = meta;
         const busy = this._busy.has(id) || (id !== "refresh" && this._remoteCommandInProgress());
+        const blocked = disabled || busy;
         return `
-          <button type="button" class="remote-action ${tone} ${busy ? "busy" : ""}" data-action="${id}" ${busy ? "disabled" : ""}>
+          <button type="button" class="remote-action ${tone} ${busy ? "busy" : ""} ${disabled ? "disabled" : ""}" ${blocked ? "disabled" : `data-action="${id}"`}>
             <span class="action-circle">${this._icon(icon)}</span>
             <span>${this._escape(label)}</span>
           </button>`;
@@ -606,7 +616,8 @@
         return;
       }
 
-      const online = this._isOn("tbox");
+      const onlineKnown = !this._isUnavailable("tbox");
+      const online = onlineKnown && this._isOn("tbox");
       const carColor = this._safeColor();
       this.shadowRoot.innerHTML = `
         <style>
@@ -619,6 +630,7 @@
           .connection { display:flex; align-items:center; gap:6px; color:var(--secondary-text-color); font-size:11px; white-space:nowrap; }
           .connection i { width:8px; height:8px; border-radius:50%; background:var(--error-color,#d32f2f); box-shadow:0 0 0 4px color-mix(in srgb,var(--error-color,#d32f2f) 11%,transparent); }
           .connection.online i { background:var(--success-color,#43a047); box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#43a047) 11%,transparent); }
+          .connection.unknown i { background:var(--secondary-text-color); box-shadow:none; }
           .stage { position:relative; min-height:265px; margin-top:6px; border-radius:18px; background:radial-gradient(circle at 50% 42%,color-mix(in srgb,var(--primary-color) 10%,transparent),transparent 58%); overflow:hidden; }
           .jolion { position:absolute; width:min(86%,500px); height:auto; left:50%; top:50%; transform:translate(-50%,-46%); overflow:visible; }
           .shadow { fill:rgba(0,0,0,.18); }
@@ -668,7 +680,7 @@
           .remote-action.active .action-circle ha-icon { color:var(--warning-color,#f9a825); }
           .remote-action.warn .action-circle ha-icon { color:var(--error-color,#d32f2f); }
           .remote-action.experimental .action-circle { border-style:dashed; }
-          .remote-action.busy { opacity:.48; pointer-events:none; }
+          .remote-action.busy, .remote-action.disabled { opacity:.48; pointer-events:none; }
           @media (max-width:600px) {
             .wrap { padding:14px; }
             .stage { min-height:245px; }
@@ -683,7 +695,7 @@
           <div class="wrap">
             <div class="header">
               <h2>${this._escape(this._headerTitle())}</h2>
-              <div class="connection ${online ? "online" : ""}"><i></i>${online ? "Online" : "Offline"}</div>
+              <div class="connection ${onlineKnown ? (online ? "online" : "") : "unknown"}"><i></i>${onlineKnown ? (online ? "Online" : "Offline") : "Нет данных"}</div>
             </div>
             <div class="stage">
               ${this._renderStatuses()}
