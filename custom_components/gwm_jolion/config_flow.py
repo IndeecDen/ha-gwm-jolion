@@ -14,6 +14,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import voluptuous as vol
 
 from .api import GwmJolionApiClient
+from .capabilities import MANUAL_CAPABILITY_OPTIONS, resolve_manual_capabilities
 from .const import (
     CONF_COMMAND_COOLDOWN, CONF_COUNTRY, CONF_COUNTRY_CODE, CONF_DEVICE_ID,
     CONF_ENABLE_REMOTE_CONTROLS, CONF_PHONE, CONF_POLL_INTERVAL, CONF_SECURITY_PIN,
@@ -125,18 +126,25 @@ class GwmJolionOptionsFlow(config_entries.OptionsFlowWithReload):
                 options[CONF_SECURITY_PIN] = user_input[CONF_SECURITY_PIN]
             if user_input.get(CLEAR_SECURITY_PIN):
                 options.pop(CONF_SECURITY_PIN, None)
+            for option_key in MANUAL_CAPABILITY_OPTIONS.values():
+                options[option_key] = bool(user_input.get(option_key, True))
             return self.async_create_entry(title="", data=options)
 
         current = self.config_entry.options
         has_pin = bool(current.get(CONF_SECURITY_PIN))
+        feature_defaults = resolve_manual_capabilities(dict(current))
+        schema: dict[vol.Marker, Any] = {
+            vol.Optional(CONF_POLL_INTERVAL, default=current.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)): vol.All(int, vol.Range(min=30, max=3600)),
+            vol.Optional(CONF_ENABLE_REMOTE_CONTROLS, default=current.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)): bool,
+            vol.Optional(CONF_COMMAND_COOLDOWN, default=current.get(CONF_COMMAND_COOLDOWN, DEFAULT_COMMAND_COOLDOWN)): vol.All(int, vol.Range(min=10, max=120)),
+            vol.Optional(CONF_SECURITY_PIN): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
+            vol.Optional(CLEAR_SECURITY_PIN, default=False): bool,
+        }
+        for capability, option_key in MANUAL_CAPABILITY_OPTIONS.items():
+            schema[vol.Optional(option_key, default=feature_defaults[capability])] = bool
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({
-                vol.Optional(CONF_POLL_INTERVAL, default=current.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)): vol.All(int, vol.Range(min=30, max=3600)),
-                vol.Optional(CONF_ENABLE_REMOTE_CONTROLS, default=current.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)): bool,
-                vol.Optional(CONF_COMMAND_COOLDOWN, default=current.get(CONF_COMMAND_COOLDOWN, DEFAULT_COMMAND_COOLDOWN)): vol.All(int, vol.Range(min=10, max=120)),
-                vol.Optional(CONF_SECURITY_PIN): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
-                vol.Optional(CLEAR_SECURITY_PIN, default=False): bool,
-            }),
+            data_schema=vol.Schema(schema),
+            errors={},
             description_placeholders={"pin_status": "сохранён" if has_pin else "не задан"},
         )
