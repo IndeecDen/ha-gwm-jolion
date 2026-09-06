@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.0-alpha.19.1
+
+Диагностический hotfix Protocol Capture: длинная тестовая сессия больше не может вытеснить исходный telemetry baseline из стандартного экспорта Home Assistant.
+
+### Экспорт Protocol Capture
+
+- лимит свежих записей в `protocol_capture → session_export` увеличен с 2000 до **5000**;
+- первый корректный `type=refresh` с `baseline=true` сохраняется отдельно и **не входит** в лимит 5000;
+- при длинной сессии экспорт содержит **первый baseline + 5000 самых свежих корректных записей**, максимум 5001 запись;
+- короткая сессия экспортируется целиком;
+- полный JSONL-журнал на диске не обрезается и продолжает хранить всю сессию в `/config/gwm_jolion_protocol_capture/`;
+- если baseline отсутствует в повреждённом/старом журнале, экспорт сохраняет до 5000 последних корректных записей и выставляет `baseline_preserved=false`;
+- добавлены поля `valid_records_in_file`, `baseline_preserved`, `recent_records_limit` и `selection=first_baseline_plus_latest`;
+- `truncated` теперь показывает, что часть корректных записей не вошла именно в ограниченную копию диагностики;
+- добавлены unit-тесты сохранения baseline, выбора последних записей, полного экспорта короткой сессии и значения лимита 5000.
+
+### Документация / версия
+
+- обновлены `README.md`, `ROADMAP.md`, `CHANGELOG.md`, `manifest.json` и внутренний `VERSION`;
+- новых GWM remote-команд, payload или telemetry mappings нет;
+- версия интеграции — `0.1.0-alpha.19.1`.
+
 ## 0.1.0-alpha.19
 
 Подготовка Protocol Capture к полевой диагностической сессии без добавления новых GWM remote-команд.
