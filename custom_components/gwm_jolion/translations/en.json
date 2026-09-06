@@ -32,11 +32,12 @@
     "step": {
       "init": {
         "title": "GWM Jolion settings",
-        "description": "PIN: {pin_status}. Disable equipment that is not installed on this vehicle. GWM exposes a generic configuration template, so optional hardware is currently selected manually.",
+        "description": "PIN: {pin_status}. Protocol capture creates a separate JSONL session under /config/gwm_jolion_protocol_capture and records every successful refresh without VIN, exact location, tokens, account data or device identifiers. Optional equipment can also be configured below.",
         "data": {
           "poll_interval": "Polling interval, seconds",
           "enable_remote_controls": "Enable remote controls",
           "command_cooldown_seconds": "Delay between commands, seconds",
+          "protocol_capture_enabled": "GWM protocol capture (JSONL log)",
           "security_pin": "New vehicle security PIN",
           "clear_security_pin": "Remove saved PIN",
           "feature_sunroof": "Panoramic roof / sunroof",
