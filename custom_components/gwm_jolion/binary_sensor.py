@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .capabilities import capability_for_state_key
 from .const import BINARY_SENSOR_DEFS, DOMAIN
 from .coordinator import GwmJolionCoordinator
 from .entity import GwmJolionEntity
@@ -15,10 +16,21 @@ from .entity import GwmJolionEntity
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        GwmJolionBinarySensor(coordinator, key=key, name=name, device_class=device_class, diagnostic=diagnostic)
-        for key, name, device_class, diagnostic in BINARY_SENSOR_DEFS
-    )
+    entities = []
+    for key, name, device_class, diagnostic in BINARY_SENSOR_DEFS:
+        capability = capability_for_state_key(key)
+        if capability is not None and not coordinator.feature_enabled(capability):
+            continue
+        entities.append(
+            GwmJolionBinarySensor(
+                coordinator,
+                key=key,
+                name=name,
+                device_class=device_class,
+                diagnostic=diagnostic,
+            )
+        )
+    async_add_entities(entities)
 
 
 class GwmJolionBinarySensor(GwmJolionEntity, BinarySensorEntity):
