@@ -13,7 +13,7 @@ from .protocol import SIGNALS
 CONF_PROTOCOL_CAPTURE = "protocol_capture_enabled"
 DEFAULT_PROTOCOL_CAPTURE = False
 CAPTURE_DIRECTORY = "gwm_jolion_protocol_capture"
-CAPTURE_SCHEMA_VERSION = 1
+CAPTURE_SCHEMA_VERSION = 2
 MAX_DIAGNOSTICS_RECORDS = 5000
 MAX_MARKER_LENGTH = 80
 
@@ -74,13 +74,30 @@ def build_capture_record(
     vehicle_basics: dict[str, Any],
     previous_vehicle_basics: dict[str, Any],
     baseline: bool,
+    signal_units: dict[str, Any] | None = None,
+    signal_item_seen_keys: list[str] | tuple[str, ...] | None = None,
+    status_meta: dict[str, Any] | None = None,
+    previous_status_meta: dict[str, Any] | None = None,
+    status_structure: dict[str, Any] | None = None,
+    tbox_meta: dict[str, Any] | None = None,
+    previous_tbox_meta: dict[str, Any] | None = None,
+    tbox_structure: dict[str, Any] | None = None,
+    vehicle_basics_seen_keys: list[str] | tuple[str, ...] | None = None,
+    vehicle_basics_structure: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one self-contained, privacy-limited JSONL refresh record."""
     normalized_signals = {str(key): value for key, value in signals.items()}
     normalized_unknown = {str(key): value for key, value in unknown_signals.items()}
     normalized_basics = {str(key): value for key, value in vehicle_basics.items()}
+    normalized_units = {str(key): value for key, value in (signal_units or {}).items()}
+    normalized_status_meta = {str(key): value for key, value in (status_meta or {}).items()}
+    normalized_tbox_meta = {str(key): value for key, value in (tbox_meta or {}).items()}
+
     signal_changes = _mapping_diff(previous_signals, normalized_signals, signal_metadata=True)
     basics_changes = _mapping_diff(previous_vehicle_basics, normalized_basics)
+    status_changes = _mapping_diff(previous_status_meta or {}, normalized_status_meta)
+    tbox_changes = _mapping_diff(previous_tbox_meta or {}, normalized_tbox_meta)
+
     return {
         "schema": CAPTURE_SCHEMA_VERSION,
         "type": "refresh",
@@ -90,18 +107,31 @@ def build_capture_record(
         "source": source,
         "baseline": baseline,
         "signals": normalized_signals,
+        "signal_units": normalized_units,
+        "signal_item_seen_keys": sorted({str(key) for key in (signal_item_seen_keys or [])}),
         "changes": [] if baseline else signal_changes,
         "changes_count": 0 if baseline else len(signal_changes),
         "unknown_signals": normalized_unknown,
+        "status_meta": normalized_status_meta,
+        "status_meta_changes": [] if baseline else status_changes,
+        "status_meta_changes_count": 0 if baseline else len(status_changes),
+        "status_structure": status_structure or {},
         "vehicle_basics": normalized_basics,
+        "vehicle_basics_seen_keys": sorted({str(key) for key in (vehicle_basics_seen_keys or [])}),
+        "vehicle_basics_structure": vehicle_basics_structure or {},
         "vehicle_basics_changes": [] if baseline else basics_changes,
         "vehicle_basics_changes_count": 0 if baseline else len(basics_changes),
+        "tbox_meta": normalized_tbox_meta,
+        "tbox_meta_changes": [] if baseline else tbox_changes,
+        "tbox_meta_changes_count": 0 if baseline else len(tbox_changes),
+        "tbox_structure": tbox_structure or {},
         "privacy": {
             "contains_vin": False,
             "contains_credentials": False,
             "contains_account": False,
             "contains_exact_location": False,
             "contains_device_identifiers": False,
+            "structure_descriptions_contain_values": False,
         },
     }
 
