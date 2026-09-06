@@ -14,7 +14,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .api import GwmJolionApiClient, GwmJolionApiError
-from .capabilities import capability_report
+from .capabilities import CAPABILITIES, capability_for_command, capability_report
 from .command_safety import remote_start_block_reason
 from .commands import COMMANDS
 from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN
@@ -57,6 +57,7 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         enable_remote_controls: bool,
         command_cooldown: int,
         security_pin: str | None,
+        feature_flags: dict[str, bool] | None = None,
     ) -> None:
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=poll_interval))
         self.client = client
@@ -64,6 +65,7 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.enable_remote_controls = enable_remote_controls
         self.command_cooldown = command_cooldown
         self.security_pin = security_pin
+        self.feature_flags = dict(feature_flags or {})
         self._last_command_time = 0.0
         self._command_lock = asyncio.Lock()
         self.climate_target_temperature = DEFAULT_CLIMATE_TEMPERATURE
@@ -127,8 +129,17 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @property
     def capability_report(self) -> dict[str, dict[str, object]]:
-        """Return informational capability metadata for diagnostics."""
-        return capability_report(self.seen_signal_codes)
+        """Return capability metadata for diagnostics."""
+        return capability_report(self.seen_signal_codes, self.feature_flags)
+
+    def feature_enabled(self, capability: str) -> bool:
+        """Return whether optional equipment is enabled by the user."""
+        return self.feature_flags.get(capability, True)
+
+    def command_enabled(self, command_key: str) -> bool:
+        """Return whether a remote command belongs to enabled equipment."""
+        capability = capability_for_command(command_key)
+        return capability is None or self.feature_enabled(capability)
 
     @property
     def command_in_progress(self) -> bool:
@@ -161,7 +172,6 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         async with self._command_lock:
             if command_key == "start_engine":
-                # Use fresh cloud telemetry for the conservative start guard.
                 await self.async_request_refresh()
                 reason = remote_start_block_reason((self.data or {}).get("state") or {})
                 if reason:
@@ -208,6 +218,12 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         command = COMMANDS.get(command_key)
         if command is None:
             raise HomeAssistantError(f"Unknown command: {command_key}")
+        if not self.command_enabled(command_key):
+            capability = capability_for_command(command_key)
+            name = CAPABILITIES[capability].name if capability in CAPABILITIES else command["name"]
+            raise HomeAssistantError(
+                f"Функция «{name}» отключена в настройках оборудования GWM Jolion"
+            )
         instructions = copy.deepcopy(command["instructions"])
         path = command.get("operation_time_path")
         if operation_time is not None and path:
