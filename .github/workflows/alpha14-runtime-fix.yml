@@ -1,0 +1,164 @@
+name: Alpha 14 runtime fix
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch command lifecycle and card states
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_method(path: Path, start: str, end: str, replacement: str) -> None:
+              text = path.read_text(encoding="utf-8")
+              a = text.index(start)
+              b = text.index(end, a)
+              path.write_text(text[:a] + replacement + text[b:], encoding="utf-8")
+
+          api = Path("custom_components/gwm_jolion/api.py")
+          text = api.read_text(encoding="utf-8")
+          text = text.replace(
+              "from .command_safety import is_auth_error_code",
+              "from .command_safety import classify_t5_result_code, is_auth_error_code",
+          )
+          api.write_text(text, encoding="utf-8")
+          replace_method(
+              api,
+              "    async def async_poll_t5_result(\n",
+              "    async def _ensure_login",
+              '''    async def async_poll_t5_result(\n        self,\n        vin: str,\n        seq_no: str,\n        expected_remote_type: str,\n        timeout: int = 300,\n        interval: int = 1,\n    ) -> dict[str, Any]:\n        deadline = time.time() + timeout\n        while time.time() < deadline:\n            await asyncio.sleep(interval)\n            try:\n                payload = await self._request(\n                    "GET",\n                    ENDPOINT_T5_CTRL_RESULT,\n                    params={"seqNo": seq_no},\n                    vin_header=vin,\n                )\n            except GwmJolionApiError:\n                continue\n\n            data = payload.get("data")\n            if not isinstance(data, list):\n                continue\n            matched = [\n                item\n                for item in data\n                if str(item.get("remoteType") or "") == expected_remote_type\n            ]\n            if not matched:\n                continue\n\n            for item in matched:\n                result_code = str(item.get("resultCode", ""))\n                if classify_t5_result_code(result_code) == "success":\n                    _LOGGER.debug(\n                        "T5 command succeeded: remoteType=%s code=%s msg=%s",\n                        expected_remote_type,\n                        result_code,\n                        item.get("resultMsg") or "",\n                    )\n                    return item\n\n            terminal_errors = [\n                item\n                for item in matched\n                if classify_t5_result_code(item.get("resultCode")) == "error"\n            ]\n            if terminal_errors:\n                item = terminal_errors[-1]\n                result_code = str(item.get("resultCode", ""))\n                result_msg = str(item.get("resultMsg") or "")\n                _LOGGER.debug(\n                    "T5 terminal error: remoteType=%s code=%s msg=%s",\n                    expected_remote_type,\n                    result_code,\n                    result_msg,\n                )\n                raise GwmJolionApiError(\n                    f"Команда GWM завершилась с ошибкой: {result_msg}"\n                    if result_msg\n                    else f"Команда GWM завершилась с кодом {result_code}",\n                    code=result_code or "error",\n                )\n\n            _LOGGER.debug(\n                "T5 command still pending: remoteType=%s codes=%s",\n                expected_remote_type,\n                [str(item.get("resultCode", "")) for item in matched],\n            )\n\n        raise GwmJolionApiError(\n            "GWM не подтвердил выполнение команды за 300 секунд",\n            code="timeout",\n        )\n\n'''
+          )
+
+          coordinator = Path("custom_components/gwm_jolion/coordinator.py")
+          replace_method(
+              coordinator,
+              "    async def async_send_custom_t5(\n",
+              "    async def async_execute_command",
+              '''    async def async_send_custom_t5(\n        self,\n        *,\n        name: str,\n        instructions: dict[str, Any],\n        expected_remote_type: str,\n        command_key: str | None = None,\n    ) -> dict[str, Any]:\n        if self._command_lock.locked():\n            raise HomeAssistantError("Другая удалённая команда GWM уже выполняется")\n\n        command_started = False\n        result: dict[str, Any] | None = None\n        try:\n            async with self._command_lock:\n                if command_key == "start_engine":\n                    await self.async_request_refresh()\n                    reason = remote_start_block_reason((self.data or {}).get("state") or {})\n                    if reason:\n                        raise HomeAssistantError(\n                            f"Удалённый запуск отменён: {reason}. Обновите состояние автомобиля, если оно изменилось"\n                        )\n\n                vin = self._ensure_remote_ready()\n                self._last_command_time = time.monotonic()\n                self.last_command_name = name\n                self.last_command_status = "pending"\n                self.last_command_result_code = None\n                self.last_command_result_message = "Команда отправлена в GWM"\n                self.last_command_at = datetime.now(timezone.utc)\n                command_started = True\n                self.async_update_listeners()\n\n                try:\n                    result = await self.client.async_send_t5_command(\n                        vin,\n                        instructions,\n                        expected_remote_type,\n                        security_pin=self.security_pin,\n                    )\n                except Exception as err:\n                    self.last_command_status = "error"\n                    error_code = getattr(err, "code", None)\n                    self.last_command_result_code = str(error_code) if error_code else "error"\n                    self.last_command_result_message = _friendly_remote_error(err)\n                    self.async_update_listeners()\n                    raise\n\n                self.last_command_status = "success"\n                self.last_command_result_code = str(result.get("resultCode", ""))\n                self.last_command_result_message = str(result.get("resultMsg") or "Команда выполнена")\n                self.async_update_listeners()\n        finally:\n            # The lock is already released here. Publish one more state update so\n            # last_command.in_progress cannot remain stuck at true in Lovelace.\n            if command_started:\n                self.async_update_listeners()\n\n        if result is None:\n            raise HomeAssistantError("GWM не вернул результат удалённой команды")\n\n        try:\n            await self.async_request_refresh()\n        except ConfigEntryAuthFailed:\n            raise\n        except Exception as err:\n            _LOGGER.debug("Post-command refresh failed after successful command: %s", err)\n        return result\n\n'''
+          )
+
+          for filename in ("gwm-jolion-card.js", "gwm-jolion-remote-card.js"):
+              path = Path("custom_components/gwm_jolion/frontend") / filename
+              text = path.read_text(encoding="utf-8")
+              old = '''    _remoteCommandInProgress() {\n      const state = this._state("lastCommand");\n      return Boolean(state?.attributes?.in_progress || state?.attributes?.status === "pending");\n    }'''
+              old_multiline = '''    _remoteCommandInProgress() {\n      const state = this._state("lastCommand");\n      return Boolean(\n        state?.attributes?.in_progress || state?.attributes?.status === "pending"\n      );\n    }'''
+              new = '''    _remoteCommandInProgress() {\n      const state = this._state("lastCommand");\n      return state?.attributes?.in_progress === true;\n    }'''
+              if old in text:
+                  text = text.replace(old, new)
+              elif old_multiline in text:
+                  text = text.replace(old_multiline, new)
+              else:
+                  raise SystemExit(f"busy helper not found in {filename}")
+              path.write_text(text, encoding="utf-8")
+
+          remote = Path("custom_components/gwm_jolion/frontend/gwm-jolion-remote-card.js")
+          replace_method(
+              remote,
+              "    _statusMeta(id) {\n",
+              "    _renderStatuses()",
+              '''    _statusMeta(id) {\n      const unknown = (key) => this._isUnavailable(key);\n      const noData = (label, position, icon = "mdi:help-circle-outline") =>\n        [icon, `${label}: нет данных`, "muted", position];\n      const unlocked = this._isOn("unlocked");\n      const engine = this._isOn("engine");\n      const doors = this._isOn("doors");\n      const windows = this._isOn("windows");\n      const trunk = this._isOn("trunk");\n      const climateKnown = !unknown("climateOn") || !unknown("climate");\n      const climate = this._isOn("climateOn") || this._state("climate")?.state === "heat_cool";\n      const online = this._isOn("tbox");\n      const gps = this._isOn("gps");\n      return {\n        lock: unknown("unlocked") ? noData("Замок", "s-lock", "mdi:lock-question") : [unlocked ? "mdi:lock-open-variant" : "mdi:lock", unlocked ? "Открыт" : "Закрыт", unlocked ? "warn" : "ok", "s-lock"],\n        engine: unknown("engine") ? noData("Двигатель", "s-engine", "mdi:engine-outline") : ["mdi:engine", engine ? "Двигатель работает" : "Двигатель выключен", engine ? "active" : "muted", "s-engine"],\n        doors: unknown("doors") ? noData("Двери", "s-doors", "mdi:car-door") : [doors ? "mdi:car-door-open" : "mdi:car-door", doors ? "Дверь открыта" : "Двери закрыты", doors ? "warn" : "ok", "s-doors"],\n        windows: unknown("windows") ? noData("Окна", "s-windows", "mdi:car-door") : ["mdi:car-door", windows ? `Окна: ${this._openWindows().join(", ") || "открыты"}` : "Окна закрыты", windows ? "warn" : "ok", "s-windows"],\n        trunk: unknown("trunk") ? noData("Багажник", "s-trunk", "mdi:car-back") : ["mdi:car-back", trunk ? "Багажник открыт" : "Багажник закрыт", trunk ? "warn" : "ok", "s-trunk"],\n        climate: !climateKnown ? noData("Климат", "s-climate", "mdi:air-conditioner") : ["mdi:air-conditioner", climate ? "Климат работает" : "Климат выключен", climate ? "active" : "muted", "s-climate"],\n        online: unknown("tbox") ? noData("T-Box", "s-online", "mdi:cloud-question") : [online ? "mdi:cloud-check" : "mdi:cloud-off-outline", online ? "T-Box online" : "T-Box offline", online ? "ok" : "warn", "s-online"],\n        gps: unknown("gps") ? noData("GPS", "s-gps", "mdi:crosshairs-question") : ["mdi:crosshairs-gps", gps ? "GPS доступен" : "GPS недоступен", gps ? "ok" : "muted", "s-gps"],\n      }[id];\n    }\n\n'''
+          )
+
+          replace_method(
+              remote,
+              "    _controlMeta(id) {\n",
+              "    _renderControls()",
+              '''    _controlMeta(id) {\n      const feature = FEATURE_BY_CONTROL[id];\n      if (feature && !this._featureEnabled(feature)) return null;\n      const unlockedKnown = !this._isUnavailable("unlocked");\n      const engineKnown = !this._isUnavailable("engine");\n      const climateKnown = !this._isUnavailable("climateOn") || !this._isUnavailable("climate");\n      const trunkKnown = !this._isUnavailable("trunk");\n      const windowsKnown = !this._isUnavailable("windows");\n      const unlocked = this._isOn("unlocked");\n      const engine = this._isOn("engine");\n      const climate = this._isOn("climateOn") || this._state("climate")?.state === "heat_cool";\n      const trunk = this._isOn("trunk");\n      const windows = this._isOn("windows");\n      const steering = !this._isUnavailable("steeringHeat") ? this._isOn("steeringHeat") : Boolean(this._assumed.steeringHeat);\n      const rearDefrost = !this._isUnavailable("rearDefrost") ? this._isOn("rearDefrost") : Boolean(this._assumed.rearDefrost);\n      const frontDefrost = !this._isUnavailable("frontDefrost") ? this._isOn("frontDefrost") : Boolean(this._assumed.frontDefrost);\n      return {\n        lock: unlockedKnown ? [unlocked ? "mdi:lock" : "mdi:lock-open-variant", unlocked ? "Закрыть" : "Открыть", unlocked ? "active" : "", false] : ["mdi:lock-question", "Замок · нет данных", "", true],\n        engine: engineKnown ? [engine ? "mdi:engine-off" : "mdi:engine", engine ? "Заглушить" : "Запустить", engine ? "active" : "", false] : ["mdi:engine-outline", "Двигатель · нет данных", "", true],\n        climate: climateKnown ? ["mdi:air-conditioner", climate ? "Климат выкл." : "Климат вкл.", climate ? "active" : "", false] : ["mdi:air-conditioner", "Климат · нет данных", "", true],\n        trunk: trunkKnown ? ["mdi:car-back", trunk ? "Закрыть багажник" : "Открыть багажник", trunk ? "warn" : "", false] : ["mdi:car-back", "Багажник · нет данных", "", true],\n        windows: windowsKnown ? ["mdi:car-door", windows ? "Закрыть окна" : "Открыть окна", windows ? "warn" : "", false] : ["mdi:car-door", "Окна · нет данных", "", true],\n        refresh: ["mdi:refresh", "Обновить", "", false],\n        steering: ["mdi:steering", steering ? "Руль выкл." : "Руль вкл.", steering ? "active" : "", false],\n        rear_defrost: ["mdi:car-defrost-rear", rearDefrost ? "Заднее стекло выкл." : "Заднее стекло вкл.", rearDefrost ? "active" : "", false],\n        front_defrost: ["mdi:car-defrost-front", frontDefrost ? "Defrost выкл." : "Defrost вкл.", frontDefrost ? "active" : "experimental", false],\n        sunroof: ["mdi:car-select", "Панорама", "experimental", false],\n        sunshade: ["mdi:blinds", "Шторка", "experimental", false],\n      }[id] || null;\n    }\n\n'''
+          )
+
+          text = remote.read_text(encoding="utf-8")
+          old = '''        const [icon, label, tone] = meta;\n        const busy = this._busy.has(id) || (id !== "refresh" && this._remoteCommandInProgress());\n        return `\n          <button type="button" class="remote-action ${tone} ${busy ? "busy" : ""}" data-action="${id}" ${busy ? "disabled" : ""}>'''
+          new = '''        const [icon, label, tone, disabled = false] = meta;\n        const busy = this._busy.has(id) || (id !== "refresh" && this._remoteCommandInProgress());\n        const blocked = disabled || busy;\n        return `\n          <button type="button" class="remote-action ${tone} ${busy ? "busy" : ""} ${disabled ? "disabled" : ""}" ${blocked ? "disabled" : `data-action="${id}"`}>'''
+          if old not in text:
+              raise SystemExit("remote control renderer pattern not found")
+          text = text.replace(old, new)
+          text = text.replace(
+              '''          .remote-action.busy { opacity:.48; pointer-events:none; }''',
+              '''          .remote-action.busy, .remote-action.disabled { opacity:.48; pointer-events:none; }''',
+          )
+          text = text.replace(
+              '''      const online = this._isOn("tbox");\n      const carColor = this._safeColor();''',
+              '''      const onlineKnown = !this._isUnavailable("tbox");\n      const online = onlineKnown && this._isOn("tbox");\n      const carColor = this._safeColor();''',
+          )
+          text = text.replace(
+              '''          .connection.online i { background:var(--success-color,#43a047); box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#43a047) 11%,transparent); }''',
+              '''          .connection.online i { background:var(--success-color,#43a047); box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#43a047) 11%,transparent); }\n          .connection.unknown i { background:var(--secondary-text-color); box-shadow:none; }''',
+          )
+          text = text.replace(
+              '''              <div class="connection ${online ? "online" : ""}"><i></i>${online ? "Online" : "Offline"}</div>''',
+              '''              <div class="connection ${onlineKnown ? (online ? "online" : "") : "unknown"}"><i></i>${onlineKnown ? (online ? "Online" : "Offline") : "Нет данных"}</div>''',
+          )
+          remote.write_text(text, encoding="utf-8")
+
+          primary = Path("custom_components/gwm_jolion/frontend/gwm-jolion-card.js")
+          text = primary.read_text(encoding="utf-8")
+          text = text.replace(
+              '''      const engineOn = this._isOn("engine");\n      const unlocked = this._isOn("unlocked");''',
+              '''      const engineKnown = !this._isUnavailable("engine");\n      const lockKnown = !this._isUnavailable("unlocked");\n      const trunkKnown = !this._isUnavailable("trunk");\n      const windowsKnown = !this._isUnavailable("windows");\n      const climateKnown = !this._isUnavailable("climateOn") || (climate && !["unknown", "unavailable"].includes(climate.state));\n      const onlineKnown = !this._isUnavailable("tbox");\n      const engineOn = engineKnown && this._isOn("engine");\n      const unlocked = lockKnown && this._isOn("unlocked");''',
+              1,
+          )
+          text = text.replace(
+              '''      const trunkOpen = this._isOn("trunk");\n      const windowsOpen = this._isOn("windows");\n      const doorsOpen = this._isOn("doors");\n      const online = this._isOn("tbox");''',
+              '''      const trunkOpen = trunkKnown && this._isOn("trunk");\n      const windowsOpen = windowsKnown && this._isOn("windows");\n      const doorsOpen = this._isOn("doors");\n      const online = onlineKnown && this._isOn("tbox");''',
+              1,
+          )
+          text = text.replace(
+              '''                  engineOn ? "Остановить" : `Запустить · ${engineRuntime} мин`,\n                  engineOn ? "active" : ""\n                )''',
+              '''                  engineKnown ? (engineOn ? "Остановить" : `Запустить · ${engineRuntime} мин`) : "Нет данных",\n                  engineOn ? "active" : "",\n                  !engineKnown\n                )''',
+              1,
+          )
+          text = text.replace(
+              '''                  unlocked ? "Закрыть" : "Открыть",\n                  unlocked ? "active" : ""\n                )''',
+              '''                  lockKnown ? (unlocked ? "Закрыть" : "Открыть") : "Нет данных",\n                  unlocked ? "active" : "",\n                  !lockKnown\n                )''',
+              1,
+          )
+          text = text.replace(
+              '''                  trunkOpen ? "Закрыть" : "Открыть",\n                  trunkOpen ? "danger" : ""\n                )''',
+              '''                  trunkKnown ? (trunkOpen ? "Закрыть" : "Открыть") : "Нет данных",\n                  trunkOpen ? "danger" : "",\n                  !trunkKnown\n                )''',
+              1,
+          )
+          text = text.replace(
+              '''                  this._windowSubtitle(),\n                  windowsOpen ? "danger" : ""\n                )''',
+              '''                  this._windowSubtitle(),\n                  windowsOpen ? "danger" : "",\n                  !windowsKnown\n                )''',
+              1,
+          )
+          text = text.replace(
+              '''                    ${engineOn ? "disabled" : ""}''',
+              '''                    ${engineOn || !engineKnown ? "disabled" : ""}''',
+              1,
+          )
+          text = text.replace(
+              '''                    climateOn ? "Выключить" : "Включить",\n                    climateOn ? "active" : ""\n                  )''',
+              '''                    climateKnown ? (climateOn ? "Выключить" : "Включить") : "Нет данных",\n                    climateOn ? "active" : "",\n                    !climateKnown\n                  )''',
+              1,
+          )
+          text = text.replace(
+              '''                ${online ? "Online" : "Offline"}''',
+              '''                ${onlineKnown ? (online ? "Online" : "Offline") : "Нет данных"}''',
+              1,
+          )
+          primary.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Remove one-shot workflow and commit
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/alpha14-runtime-fix.yml
+          git add custom_components/gwm_jolion/api.py custom_components/gwm_jolion/coordinator.py custom_components/gwm_jolion/frontend/gwm-jolion-card.js custom_components/gwm_jolion/frontend/gwm-jolion-remote-card.js
+          git commit -m "Fix remote command lifecycle and unknown states"
+          git push
