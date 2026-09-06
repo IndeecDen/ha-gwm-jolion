@@ -84,6 +84,8 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.protocol_capture_last_marker: str | None = None
         self._protocol_capture_last_signals: dict[str, Any] = {}
         self._protocol_capture_last_basics: dict[str, Any] = {}
+        self._protocol_capture_last_status_meta: dict[str, Any] = {}
+        self._protocol_capture_last_tbox_meta: dict[str, Any] = {}
         self._protocol_capture_has_snapshot = False
         self._next_update_source = "poll"
         self._last_command_time = 0.0
@@ -145,6 +147,14 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 signals=signals_for_change_history,
                 unknown_signals=unknown_for_history,
                 vehicle_basics=data.get("vehicle_basics") or {},
+                signal_units=state.get("_signal_units") or {},
+                signal_item_seen_keys=state.get("_signal_item_seen_keys") or [],
+                status_meta=state.get("_status_meta") or {},
+                status_structure=state.get("_status_structure") or {},
+                tbox_meta=state.get("_tbox_meta") or {},
+                tbox_structure=state.get("_tbox_structure") or {},
+                vehicle_basics_seen_keys=state.get("_vehicle_basics_seen_keys") or [],
+                vehicle_basics_structure=state.get("_vehicle_basics_structure") or {},
             )
 
         self.last_successful_update = now
@@ -158,6 +168,14 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         signals: dict[str, Any],
         unknown_signals: dict[str, Any],
         vehicle_basics: dict[str, Any],
+        signal_units: dict[str, Any],
+        signal_item_seen_keys: list[str],
+        status_meta: dict[str, Any],
+        status_structure: dict[str, Any],
+        tbox_meta: dict[str, Any],
+        tbox_structure: dict[str, Any],
+        vehicle_basics_seen_keys: list[str],
+        vehicle_basics_structure: dict[str, Any],
     ) -> None:
         """Append one successful cloud update to the active JSONL capture."""
         normalized_signals = {str(code): value for code, value in signals.items()}
@@ -165,6 +183,16 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         normalized_basics = (
             {str(key): value for key, value in vehicle_basics.items()}
             if isinstance(vehicle_basics, dict)
+            else {}
+        )
+        normalized_status_meta = (
+            {str(key): value for key, value in status_meta.items()}
+            if isinstance(status_meta, dict)
+            else {}
+        )
+        normalized_tbox_meta = (
+            {str(key): value for key, value in tbox_meta.items()}
+            if isinstance(tbox_meta, dict)
             else {}
         )
         sequence = self.protocol_capture_sequence + 1
@@ -180,6 +208,16 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             vehicle_basics=normalized_basics,
             previous_vehicle_basics=self._protocol_capture_last_basics,
             baseline=baseline,
+            signal_units=signal_units,
+            signal_item_seen_keys=signal_item_seen_keys,
+            status_meta=normalized_status_meta,
+            previous_status_meta=self._protocol_capture_last_status_meta,
+            status_structure=status_structure,
+            tbox_meta=normalized_tbox_meta,
+            previous_tbox_meta=self._protocol_capture_last_tbox_meta,
+            tbox_structure=tbox_structure,
+            vehicle_basics_seen_keys=vehicle_basics_seen_keys,
+            vehicle_basics_structure=vehicle_basics_structure,
         )
         try:
             await self.hass.async_add_executor_job(
@@ -199,6 +237,8 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.protocol_capture_last_changes_count = int(record.get("changes_count", 0))
         self._protocol_capture_last_signals = dict(normalized_signals)
         self._protocol_capture_last_basics = dict(normalized_basics)
+        self._protocol_capture_last_status_meta = dict(normalized_status_meta)
+        self._protocol_capture_last_tbox_meta = dict(normalized_tbox_meta)
         self._protocol_capture_has_snapshot = True
 
     async def async_add_protocol_capture_marker(self, label: str) -> None:
