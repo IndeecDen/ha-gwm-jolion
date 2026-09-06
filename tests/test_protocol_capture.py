@@ -49,6 +49,7 @@ def test_capture_baseline_contains_full_snapshots_without_changes(tmp_path):
         baseline=True,
     )
 
+    assert record["schema"] == 2
     assert record["type"] == "refresh"
     assert record["baseline"] is True
     assert record["signals"]["2220001"] == 0
@@ -89,6 +90,51 @@ def test_capture_diff_has_known_and_unknown_signal_metadata():
             "removed": False,
         }
     ]
+
+
+def test_capture_preserves_units_safe_meta_and_structures():
+    capture = load_capture_module()
+    record = capture.build_capture_record(
+        sequence=7,
+        timestamp=datetime(2026, 9, 6, 16, 7, tzinfo=timezone.utc),
+        source="manual_button",
+        integration_version="test",
+        signals={"2013005": 93},
+        previous_signals={"2013005": 92},
+        unknown_signals={"2013005": 93},
+        vehicle_basics={"leftFrontSeat": 0},
+        previous_vehicle_basics={"leftFrontSeat": 0},
+        baseline=False,
+        signal_units={"2013005": "%"},
+        signal_item_seen_keys=["unit", "value", "code"],
+        status_meta={"oilQty": 4, "percentageOfOil": 50, "charge": None},
+        previous_status_meta={"oilQty": 4, "percentageOfOil": 49, "charge": None},
+        status_structure={"type": "dict", "keys": ["items", "latitude", "percentageOfOil"]},
+        tbox_meta={"status": "1", "signalLevel": 4},
+        previous_tbox_meta={"status": "1", "signalLevel": 3},
+        tbox_structure={"type": "dict", "keys": ["status", "deviceId", "signalLevel"]},
+        vehicle_basics_seen_keys=["vin", "leftFrontSeat", "mysteryField"],
+        vehicle_basics_structure={"type": "dict", "keys": ["config", "vin"]},
+    )
+
+    assert record["signal_units"] == {"2013005": "%"}
+    assert record["signal_item_seen_keys"] == ["code", "unit", "value"]
+    assert record["status_meta"]["percentageOfOil"] == 50
+    assert record["status_meta"]["charge"] is None
+    assert record["status_meta_changes"] == [
+        {
+            "key": "percentageOfOil",
+            "previous": 49,
+            "value": 50,
+            "initial": False,
+            "removed": False,
+        }
+    ]
+    assert record["tbox_meta_changes"][0]["key"] == "signalLevel"
+    assert "latitude" in record["status_structure"]["keys"]
+    assert "deviceId" in record["tbox_structure"]["keys"]
+    assert record["vehicle_basics_seen_keys"] == ["leftFrontSeat", "mysteryField", "vin"]
+    assert record["privacy"]["structure_descriptions_contain_values"] is False
 
 
 def test_marker_is_separate_short_record():
