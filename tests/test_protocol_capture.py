@@ -1,13 +1,40 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import importlib.util
 import json
+from pathlib import Path
+import sys
+import types
 
-from custom_components.gwm_jolion.protocol_capture import append_jsonl, build_capture_record
+ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_ROOT = ROOT / "custom_components" / "gwm_jolion"
+
+
+def load_capture_module():
+    custom_components = types.ModuleType("custom_components")
+    custom_components.__path__ = [str(ROOT / "custom_components")]
+    sys.modules.setdefault("custom_components", custom_components)
+
+    package = types.ModuleType("custom_components.gwm_jolion")
+    package.__path__ = [str(PACKAGE_ROOT)]
+    sys.modules.setdefault("custom_components.gwm_jolion", package)
+
+    for module_name in ("protocol", "protocol_capture"):
+        full_name = f"custom_components.gwm_jolion.{module_name}"
+        path = PACKAGE_ROOT / f"{module_name}.py"
+        spec = importlib.util.spec_from_file_location(full_name, path)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[full_name] = module
+        spec.loader.exec_module(module)
+
+    return sys.modules["custom_components.gwm_jolion.protocol_capture"]
 
 
 def test_capture_baseline_contains_full_snapshots_without_changes(tmp_path):
-    record = build_capture_record(
+    capture = load_capture_module()
+    record = capture.build_capture_record(
         sequence=1,
         timestamp=datetime(2026, 9, 6, 16, 0, tzinfo=timezone.utc),
         source="poll",
@@ -28,7 +55,8 @@ def test_capture_baseline_contains_full_snapshots_without_changes(tmp_path):
 
 
 def test_capture_diff_has_known_and_unknown_signal_metadata():
-    record = build_capture_record(
+    capture = load_capture_module()
+    record = capture.build_capture_record(
         sequence=2,
         timestamp=datetime(2026, 9, 6, 16, 1, tzinfo=timezone.utc),
         source="manual_button",
@@ -59,9 +87,10 @@ def test_capture_diff_has_known_and_unknown_signal_metadata():
 
 
 def test_append_jsonl_appends_independent_records(tmp_path):
+    capture = load_capture_module()
     path = tmp_path / "capture.jsonl"
-    append_jsonl(path, {"seq": 1, "value": "первый"})
-    append_jsonl(path, {"seq": 2, "value": "второй"})
+    capture.append_jsonl(path, {"seq": 1, "value": "первый"})
+    capture.append_jsonl(path, {"seq": 2, "value": "второй"})
 
     lines = path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
