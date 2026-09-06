@@ -18,7 +18,7 @@ from .capabilities import CAPABILITIES, capability_for_command, capability_repor
 from .command_safety import remote_start_block_reason
 from .commands import COMMANDS
 from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN
-from .protocol import SIGNALS, VerificationStatus
+from .protocol import SIGNALS, VerificationStatus, update_signal_change_history
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,6 +77,8 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.last_command_at: datetime | None = None
         self.last_successful_update: datetime | None = None
         self.unknown_signal_history: dict[str, dict[str, Any]] = {}
+        self.signal_change_history: list[dict[str, Any]] = []
+        self._signal_history_last_values: dict[str, Any] = {}
         self.seen_signal_codes: set[str] = set()
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -88,14 +90,28 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         unknown_for_history: dict[str, Any] = (
             dict(raw_unknown) if isinstance(raw_unknown, dict) else {}
         )
+        signals_for_change_history: dict[str, Any] = {}
 
         if isinstance(seen, dict):
+            signals_for_change_history.update({str(code): value for code, value in seen.items()})
             self.seen_signal_codes.update(str(code) for code in seen)
             for raw_code, value in seen.items():
                 code = str(raw_code)
                 info = SIGNALS.get(code)
                 if info is not None and info.status == VerificationStatus.UNKNOWN:
                     unknown_for_history.setdefault(code, value)
+
+        if isinstance(raw_unknown, dict):
+            for raw_code, value in raw_unknown.items():
+                signals_for_change_history.setdefault(str(raw_code), value)
+
+        if signals_for_change_history:
+            update_signal_change_history(
+                self.signal_change_history,
+                self._signal_history_last_values,
+                signals_for_change_history,
+                now.isoformat(),
+            )
 
         if unknown_for_history:
             self._track_unknown_signals(unknown_for_history, now)
