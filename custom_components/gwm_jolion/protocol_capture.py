@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -13,7 +14,7 @@ CONF_PROTOCOL_CAPTURE = "protocol_capture_enabled"
 DEFAULT_PROTOCOL_CAPTURE = False
 CAPTURE_DIRECTORY = "gwm_jolion_protocol_capture"
 CAPTURE_SCHEMA_VERSION = 1
-MAX_DIAGNOSTICS_RECORDS = 2000
+MAX_DIAGNOSTICS_RECORDS = 5000
 MAX_MARKER_LENGTH = 80
 
 
@@ -146,59 +147,98 @@ def append_jsonl(path: str | Path, record: dict[str, Any]) -> None:
         handle.write("\n")
 
 
+def _diagnostics_export_payload(
+    *,
+    baseline_record: dict[str, Any] | None,
+    recent_records: deque[dict[str, Any]],
+    records_in_file: int,
+    valid_records_in_file: int,
+    invalid_lines: int,
+    max_records: int,
+    read_error: str | None,
+) -> dict[str, Any]:
+    """Build diagnostics metadata for baseline + recent-record selection."""
+    records = ([baseline_record] if baseline_record is not None else []) + list(recent_records)
+    return {
+        "records": records,
+        "records_in_file": records_in_file,
+        "valid_records_in_file": valid_records_in_file,
+        "records_exported": len(records),
+        "truncated": valid_records_in_file > len(records),
+        "baseline_preserved": baseline_record is not None,
+        "recent_records_limit": max_records,
+        "selection": "first_baseline_plus_latest",
+        "invalid_lines": invalid_lines,
+        "read_error": read_error,
+    }
+
+
 def read_jsonl_for_diagnostics(
     path: str | Path,
     max_records: int = MAX_DIAGNOSTICS_RECORDS,
 ) -> dict[str, Any]:
-    """Read a bounded capture session for inclusion in HA diagnostics."""
+    """Export the first baseline plus the newest bounded capture records."""
     file_path = Path(path)
+    recent_limit = max(0, int(max_records))
     if not file_path.exists():
-        return {
-            "records": [],
-            "records_in_file": 0,
-            "records_exported": 0,
-            "truncated": False,
-            "invalid_lines": 0,
-            "read_error": "file_not_found",
-        }
+        return _diagnostics_export_payload(
+            baseline_record=None,
+            recent_records=deque(maxlen=recent_limit),
+            records_in_file=0,
+            valid_records_in_file=0,
+            invalid_lines=0,
+            max_records=recent_limit,
+            read_error="file_not_found",
+        )
 
-    records: list[dict[str, Any]] = []
+    baseline_record: dict[str, Any] | None = None
+    recent_records: deque[dict[str, Any]] = deque(maxlen=recent_limit)
     records_in_file = 0
+    valid_records_in_file = 0
     invalid_lines = 0
+
     try:
         with file_path.open("r", encoding="utf-8") as handle:
             for line in handle:
                 if not line.strip():
                     continue
                 records_in_file += 1
-                if len(records) >= max_records:
-                    continue
                 try:
                     item = json.loads(line)
                 except json.JSONDecodeError:
                     invalid_lines += 1
                     continue
-                if isinstance(item, dict):
-                    records.append(item)
-                else:
+                if not isinstance(item, dict):
                     invalid_lines += 1
-    except OSError as err:
-        valid_lines_seen = max(0, records_in_file - invalid_lines)
-        return {
-            "records": records,
-            "records_in_file": records_in_file,
-            "records_exported": len(records),
-            "truncated": valid_lines_seen > len(records),
-            "invalid_lines": invalid_lines,
-            "read_error": str(err),
-        }
+                    continue
 
-    valid_lines_seen = max(0, records_in_file - invalid_lines)
-    return {
-        "records": records,
-        "records_in_file": records_in_file,
-        "records_exported": len(records),
-        "truncated": valid_lines_seen > len(records),
-        "invalid_lines": invalid_lines,
-        "read_error": None,
-    }
+                valid_records_in_file += 1
+                if (
+                    baseline_record is None
+                    and item.get("type") == "refresh"
+                    and item.get("baseline") is True
+                ):
+                    baseline_record = item
+                    continue
+                if recent_limit:
+                    recent_records.append(item)
+    except OSError as err:
+        return _diagnostics_export_payload(
+            baseline_record=baseline_record,
+            recent_records=recent_records,
+            records_in_file=records_in_file,
+            valid_records_in_file=valid_records_in_file,
+            invalid_lines=invalid_lines,
+            max_records=recent_limit,
+            read_error=str(err),
+        )
+
+    return _diagnostics_export_payload(
+        baseline_record=baseline_record,
+        recent_records=recent_records,
+        records_in_file=records_in_file,
+        valid_records_in_file=valid_records_in_file,
+        invalid_lines=invalid_lines,
+        max_records=recent_limit,
+        read_error=None,
+    )
