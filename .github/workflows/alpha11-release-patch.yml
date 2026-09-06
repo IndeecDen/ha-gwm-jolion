@@ -57,21 +57,23 @@ jobs:
 
           changelog_path = Path("CHANGELOG.md")
           text = changelog_path.read_text(encoding="utf-8")
-          section = """## 0.1.0-alpha.11
-
-Исправление разбора `vehicleBasicsInfo` для российского GWM Cloud без добавления новых команд автомобилю.
-
-### Диагностика / API
-
-- поддержана фактическая вложенность ответа `data → config`;
-- безопасный snapshot теперь может включать полезные параметры климата, сидений, окон, defrost, `skyLight`, `shadeScreen` и таймеры comfort-функций;
-- VIN, `userId`, подписка и неизвестные поля по-прежнему не попадают в whitelist snapshot;
-- live-телеметрия подогрева сидений остаётся приоритетной, значения `vehicleBasicsInfo` используются только как fallback;
-- `skyLight` и `shadeScreen` сохраняются как raw diagnostics без предположения о значении enum;
-- добавлены unit-тесты для реальной структуры российского ответа и защиты от утечки неизвестных полей;
-- remote payload и встроенная карточка в этой версии не изменялись.
-
-"""
+          section = "\n".join([
+              "## 0.1.0-alpha.11",
+              "",
+              "Исправление разбора `vehicleBasicsInfo` для российского GWM Cloud без добавления новых команд автомобилю.",
+              "",
+              "### Диагностика / API",
+              "",
+              "- поддержана фактическая вложенность ответа `data → config`;",
+              "- безопасный snapshot теперь может включать полезные параметры климата, сидений, окон, defrost, `skyLight`, `shadeScreen` и таймеры comfort-функций;",
+              "- VIN, `userId`, подписка и неизвестные поля по-прежнему не попадают в whitelist snapshot;",
+              "- live-телеметрия подогрева сидений остаётся приоритетной, значения `vehicleBasicsInfo` используются только как fallback;",
+              "- `skyLight` и `shadeScreen` сохраняются как raw diagnostics без предположения о значении enum;",
+              "- добавлены unit-тесты для реальной структуры российского ответа и защиты от утечки неизвестных полей;",
+              "- remote payload и встроенная карточка в этой версии не изменялись.",
+              "",
+              "",
+          ])
           if not text.startswith("# Changelog\n"):
               raise SystemExit("CHANGELOG header not found")
           if "## 0.1.0-alpha.11" not in text:
