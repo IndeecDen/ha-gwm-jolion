@@ -61,7 +61,12 @@
 - 🧪 front windscreen heat status;
 - 🧪 air circulation status;
 - ✅ история неизвестных GWM-кодов в diagnostics;
-- ✅ bounded `signal_change_history` для важных raw-сигналов: первое значение + последующие изменения с временем.
+- ✅ bounded `signal_change_history` для важных raw-сигналов: первое значение + последующие изменения с временем;
+- ✅ опциональный JSONL Protocol Capture: полный raw snapshot + `previous → value` после каждого успешного опроса;
+- ✅ различение источника capture-записи: `poll`, `manual_button`, `remote_command`, `remote_start_guard`;
+- ✅ пользовательские маркеры этапов теста без изменения telemetry baseline;
+- ✅ диагностический сенсор состояния Protocol Capture;
+- ✅ экспорт текущей capture-сессии внутри стандартной диагностики Home Assistant с ограничением размера.
 
 ### Нужно найти / подтвердить
 
@@ -232,6 +237,8 @@
 - ✅ diagnostics export с редактированием чувствительных данных;
 - ✅ RU / EN translations;
 - ✅ диагностический сенсор ручных capability-настроек;
+- ✅ диагностический сенсор состояния Protocol Capture;
+- ✅ сервис `gwm_jolion.add_capture_marker` для маркировки шагов физических тестов;
 - ✅ опциональные button/sensor/binary_sensor не загружаются для отключённого оборудования;
 - ⏳ `switch` для функций с подтверждённым readback;
 - ⏳ `select` для подтверждённых многоуровневых функций;
@@ -250,8 +257,11 @@
 - ✅ reauth;
 - ✅ диагностическое скрытие VIN, номера автомобиля, токенов, IMSI/ICCID, координат и других чувствительных полей;
 - ✅ bounded history изменений тестовых raw-сигналов без координат и идентификаторов;
+- ✅ JSONL capture не пишет автоматические VIN, координаты, аккаунт, credentials и device identifiers;
+- ✅ capture-ошибки не прерывают основной polling автомобиля;
 - ✅ unit tests для protocol / capabilities / vehicle data / command safety;
 - ✅ unit tests ручных capability-настроек и сопоставления команд/сущностей;
+- ✅ unit tests JSONL baseline/diff/marker/diagnostics export;
 - ⏳ дополнительные тесты auth refresh / API outage;
 - ⏳ расширенные тесты timeout и неожиданных ответов GWM.
 
@@ -273,6 +283,14 @@
 - ⏳ заявка в default repositories HACS после стабилизации.
 
 ## 10. Версии
+
+### `0.1.0-alpha.19` — Protocol capture tooling
+
+Protocol Capture подготовлен к полевой сессии: текущий JSONL-журнал вкладывается в стандартную диагностику Home Assistant, добавлен диагностический сенсор состояния записи и сервис `gwm_jolion.add_capture_marker` для меток этапов. Маркеры не меняют telemetry baseline. Экспорт ограничен 2000 записями и явно сообщает о truncation/invalid lines. Новых GWM remote payload нет.
+
+### `0.1.0-alpha.18` — Protocol capture mode
+
+Добавлен включаемый режим поиска GWM-кодов. Каждый успешный cloud refresh дописывает в отдельный JSONL-файл полный raw snapshot, diff `previous → value`, неизвестные сигналы и безопасный `vehicleBasicsInfo`; ручные, автоматические и post-command refresh получают разные source-маркеры. Автоматические capture-записи не содержат VIN, координаты, аккаунт, токены и device identifiers. Новых GWM remote payload нет.
 
 ### `0.1.0-alpha.17` — Primary card editor registration fix
 
