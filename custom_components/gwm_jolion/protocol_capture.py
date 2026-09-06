@@ -9,6 +9,8 @@ from typing import Any
 
 from .protocol import SIGNALS
 
+CONF_PROTOCOL_CAPTURE = "protocol_capture_enabled"
+DEFAULT_PROTOCOL_CAPTURE = False
 CAPTURE_DIRECTORY = "gwm_jolion_protocol_capture"
 CAPTURE_SCHEMA_VERSION = 1
 
@@ -19,23 +21,16 @@ def new_capture_path(config_directory: str | Path, now: datetime | None = None) 
     return Path(config_directory) / f"gwm_code_search_{timestamp}.jsonl"
 
 
-def _mapping_diff(
-    previous: dict[str, Any],
-    current: dict[str, Any],
-    *,
-    signal_metadata: bool = False,
-) -> list[dict[str, Any]]:
+def _mapping_diff(previous: dict[str, Any], current: dict[str, Any], *, signal_metadata: bool = False) -> list[dict[str, Any]]:
     """Return deterministic previous -> current changes for two mappings."""
     changes: list[dict[str, Any]] = []
-    keys = sorted(set(previous) | set(current))
-    for key in keys:
+    for key in sorted(set(previous) | set(current)):
         had_previous = key in previous
         has_current = key in current
         previous_value = previous.get(key)
         current_value = current.get(key)
         if had_previous and has_current and previous_value == current_value:
             continue
-
         item: dict[str, Any] = {
             "key": key,
             "previous": previous_value if had_previous else None,
@@ -59,30 +54,14 @@ def _mapping_diff(
     return changes
 
 
-def build_capture_record(
-    *,
-    sequence: int,
-    timestamp: datetime,
-    source: str,
-    integration_version: str,
-    signals: dict[str, Any],
-    previous_signals: dict[str, Any],
-    unknown_signals: dict[str, Any],
-    vehicle_basics: dict[str, Any],
-    previous_vehicle_basics: dict[str, Any],
-) -> dict[str, Any]:
+def build_capture_record(*, sequence: int, timestamp: datetime, source: str, integration_version: str, signals: dict[str, Any], previous_signals: dict[str, Any], unknown_signals: dict[str, Any], vehicle_basics: dict[str, Any], previous_vehicle_basics: dict[str, Any]) -> dict[str, Any]:
     """Build one self-contained, privacy-limited JSONL record."""
     normalized_signals = {str(key): value for key, value in signals.items()}
     normalized_unknown = {str(key): value for key, value in unknown_signals.items()}
     normalized_basics = {str(key): value for key, value in vehicle_basics.items()}
-    signal_changes = _mapping_diff(
-        previous_signals,
-        normalized_signals,
-        signal_metadata=True,
-    )
+    signal_changes = _mapping_diff(previous_signals, normalized_signals, signal_metadata=True)
     basics_changes = _mapping_diff(previous_vehicle_basics, normalized_basics)
     baseline = sequence == 1
-
     return {
         "schema": CAPTURE_SCHEMA_VERSION,
         "integration_version": integration_version,
