@@ -25,6 +25,20 @@ def test_auth_error_codes() -> None:
     assert not command_safety.is_auth_error_code("1000")
 
 
+def test_t5_result_classification() -> None:
+    command_safety = load_command_safety()
+
+    for code in ("0", "6", "10"):
+        assert command_safety.classify_t5_result_code(code) == "success"
+    for code in ("1000", "2000", "11"):
+        assert command_safety.classify_t5_result_code(code) == "pending"
+
+    assert command_safety.classify_t5_result_code("") == "unknown"
+    assert command_safety.classify_t5_result_code(None) == "unknown"
+    assert command_safety.classify_t5_result_code("12345") == "error"
+    assert command_safety.classify_t5_result_code("network_error") == "error"
+
+
 def test_remote_start_blockers() -> None:
     command_safety = load_command_safety()
 
