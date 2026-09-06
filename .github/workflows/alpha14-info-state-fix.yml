@@ -1,0 +1,48 @@
+name: Alpha 14 info state fix
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fix information states
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('custom_components/gwm_jolion/frontend/gwm-jolion-remote-card.js')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '      const climate = this._state("climate");\n      const climateOn = this._isOn("climateOn") || climate?.state === "heat_cool";\n      const pressureValues =',
+              '      const climate = this._state("climate");\n      const climateKnown = !this._isUnavailable("climateOn") || !this._isUnavailable("climate");\n      const climateOn = climateKnown && (this._isOn("climateOn") || climate?.state === "heat_cool");\n      const tboxKnown = !this._isUnavailable("tbox");\n      const gpsKnown = !this._isUnavailable("gps");\n      const pressureValues =',
+              1,
+          )
+          text = text.replace(
+              '        gsm: ["mdi:signal", "GSM / T-Box", this._isOn("tbox") ? `online · ${this._rawValue("signal") ?? "—"}/4` : "offline"],\n        gps: ["mdi:crosshairs-gps", "GPS", this._isOn("gps") ? "доступен" : "нет"],\n        climate: ["mdi:air-conditioner", "Климат", climateOn ? `работает · ${climate?.attributes?.temperature ?? 22} °C` : "выключен"],',
+              '        gsm: ["mdi:signal", "GSM / T-Box", tboxKnown ? (this._isOn("tbox") ? `online · ${this._rawValue("signal") ?? "—"}/4` : "offline") : "нет данных"],\n        gps: ["mdi:crosshairs-gps", "GPS", gpsKnown ? (this._isOn("gps") ? "доступен" : "нет") : "нет данных"],\n        climate: ["mdi:air-conditioner", "Климат", climateKnown ? (climateOn ? `работает · ${climate?.attributes?.temperature ?? 22} °C` : "выключен") : "нет данных"],',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit patch and remove workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/alpha14-info-state-fix.yml
+          git add custom_components/gwm_jolion/frontend/gwm-jolion-remote-card.js
+          git commit -m "Fix remote card unknown information states"
+          git push
