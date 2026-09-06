@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 
 class VerificationStatus(StrEnum):
@@ -81,6 +82,85 @@ SIGNALS: dict[str, SignalInfo] = {
     "2202111": SignalInfo("2202111", "front_windscreen_heat_raw", "Электрообогрев лобового стекла", VerificationStatus.KNOWN_UNVERIFIED),
     "2078020": SignalInfo("2078020", "air_circulation_raw", "Очистка/циркуляция воздуха салона", VerificationStatus.KNOWN_UNVERIFIED),
 }
+
+
+# A bounded change log for signals that are useful during physical vehicle tests.
+# We deliberately exclude noisy values such as fuel, mileage, TPMS pressure and
+# T-Box RSSI. Unknown signals are tracked automatically as well.
+SIGNAL_HISTORY_CODES: frozenset[str] = frozenset(
+    {
+        "2016001",
+        "2208001",
+        "2206001",
+        "2206002",
+        "2206003",
+        "2206004",
+        "2206005",
+        "2210001",
+        "2210002",
+        "2210003",
+        "2210004",
+        "2210010",
+        "2210011",
+        "2210012",
+        "2210013",
+        "2202001",
+        "2220001",
+        "2220002",
+        "2204007",
+        "2204008",
+        "2204009",
+        "2204010",
+        "2222001",
+        "2210032",
+        "2060016",
+        "2202111",
+        "2078020",
+    }
+)
+SIGNAL_HISTORY_MAX_EVENTS = 250
+
+
+def update_signal_change_history(
+    history: list[dict[str, Any]],
+    last_values: dict[str, Any],
+    seen: dict[str, Any],
+    timestamp: str,
+    *,
+    max_events: int = SIGNAL_HISTORY_MAX_EVENTS,
+) -> None:
+    """Append first observations and value changes for test-relevant raw signals.
+
+    The caller owns ``history`` and ``last_values`` so the helper stays free of
+    Home Assistant dependencies and can be unit-tested directly.
+    """
+    for raw_code, value in seen.items():
+        code = str(raw_code)
+        info = SIGNALS.get(code)
+        is_unknown = info is None or info.status == VerificationStatus.UNKNOWN
+        if code not in SIGNAL_HISTORY_CODES and not is_unknown:
+            continue
+
+        had_previous = code in last_values
+        previous = last_values.get(code)
+        if had_previous and previous == value:
+            continue
+
+        history.append(
+            {
+                "time": timestamp,
+                "code": code,
+                "key": info.key if info is not None else "unknown_signal",
+                "description": info.description if info is not None else "Неизвестный сигнал GWM",
+                "previous": previous if had_previous else None,
+                "value": value,
+                "initial": not had_previous,
+            }
+        )
+        last_values[code] = value
+
+    if len(history) > max_events:
+        del history[: len(history) - max_events]
 
 
 def signal_report(seen_codes: set[str] | list[str] | tuple[str, ...]) -> dict[str, dict[str, str | bool]]:
