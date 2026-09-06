@@ -22,6 +22,7 @@ from .const import (
     DEFAULT_ENABLE_REMOTE_CONTROLS, DEFAULT_POLL_INTERVAL, DOMAIN,
 )
 from .helpers import normalize_phone
+from .protocol_capture import CONF_PROTOCOL_CAPTURE, DEFAULT_PROTOCOL_CAPTURE
 
 CLEAR_SECURITY_PIN = "clear_security_pin"
 
@@ -70,6 +71,7 @@ class GwmJolionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_POLL_INTERVAL: user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
                     CONF_ENABLE_REMOTE_CONTROLS: user_input.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS),
                     CONF_COMMAND_COOLDOWN: DEFAULT_COMMAND_COOLDOWN,
+                    CONF_PROTOCOL_CAPTURE: DEFAULT_PROTOCOL_CAPTURE,
                 }
                 if user_input.get(CONF_SECURITY_PIN):
                     options[CONF_SECURITY_PIN] = user_input[CONF_SECURITY_PIN]
@@ -122,6 +124,7 @@ class GwmJolionOptionsFlow(config_entries.OptionsFlowWithReload):
             options[CONF_POLL_INTERVAL] = user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
             options[CONF_ENABLE_REMOTE_CONTROLS] = user_input.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)
             options[CONF_COMMAND_COOLDOWN] = user_input.get(CONF_COMMAND_COOLDOWN, DEFAULT_COMMAND_COOLDOWN)
+            options[CONF_PROTOCOL_CAPTURE] = bool(user_input.get(CONF_PROTOCOL_CAPTURE, DEFAULT_PROTOCOL_CAPTURE))
             if user_input.get(CONF_SECURITY_PIN):
                 options[CONF_SECURITY_PIN] = user_input[CONF_SECURITY_PIN]
             if user_input.get(CLEAR_SECURITY_PIN):
@@ -137,6 +140,7 @@ class GwmJolionOptionsFlow(config_entries.OptionsFlowWithReload):
             vol.Optional(CONF_POLL_INTERVAL, default=current.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)): vol.All(int, vol.Range(min=30, max=3600)),
             vol.Optional(CONF_ENABLE_REMOTE_CONTROLS, default=current.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)): bool,
             vol.Optional(CONF_COMMAND_COOLDOWN, default=current.get(CONF_COMMAND_COOLDOWN, DEFAULT_COMMAND_COOLDOWN)): vol.All(int, vol.Range(min=10, max=120)),
+            vol.Optional(CONF_PROTOCOL_CAPTURE, default=bool(current.get(CONF_PROTOCOL_CAPTURE, DEFAULT_PROTOCOL_CAPTURE))): bool,
             vol.Optional(CONF_SECURITY_PIN): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
             vol.Optional(CLEAR_SECURITY_PIN, default=False): bool,
         }

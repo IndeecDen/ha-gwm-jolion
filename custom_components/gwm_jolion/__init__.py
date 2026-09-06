@@ -23,6 +23,12 @@ from .const import (
     DEFAULT_ENABLE_REMOTE_CONTROLS, DEFAULT_POLL_INTERVAL, DOMAIN, PLATFORMS,
 )
 from .coordinator import GwmJolionCoordinator
+from .protocol_capture import (
+    CAPTURE_DIRECTORY,
+    CONF_PROTOCOL_CAPTURE,
+    DEFAULT_PROTOCOL_CAPTURE,
+    new_capture_path,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,6 +68,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         country=data.get(CONF_COUNTRY, DEFAULT_COUNTRY),
         country_code=data.get(CONF_COUNTRY_CODE, DEFAULT_COUNTRY_CODE),
     )
+    capture_enabled = bool(options.get(CONF_PROTOCOL_CAPTURE, DEFAULT_PROTOCOL_CAPTURE))
+    capture_path = None
+    if capture_enabled:
+        capture_path = str(new_capture_path(hass.config.path(CAPTURE_DIRECTORY)))
+        _LOGGER.warning("GWM protocol capture enabled: %s", capture_path)
+
     coordinator = GwmJolionCoordinator(
         hass,
         client,
@@ -71,6 +83,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         command_cooldown=int(options.get(CONF_COMMAND_COOLDOWN, DEFAULT_COMMAND_COOLDOWN)),
         security_pin=str(options.get(CONF_SECURITY_PIN)) if options.get(CONF_SECURITY_PIN) else None,
         feature_flags=resolve_manual_capabilities(options),
+        protocol_capture_enabled=capture_enabled,
+        protocol_capture_path=capture_path,
     )
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
