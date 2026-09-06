@@ -1,0 +1,133 @@
+name: Alpha 14 release prep
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare alpha.14 files
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          version = "0.1.0-alpha.14"
+
+          # Python version and both frontend cache URLs.
+          path = Path("custom_components/gwm_jolion/const.py")
+          text = path.read_text(encoding="utf-8").replace('VERSION = "0.1.0-alpha.13"', f'VERSION = "{version}"', 1)
+          path.write_text(text, encoding="utf-8")
+
+          path = Path("custom_components/gwm_jolion/__init__.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace('/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.12', f'/gwm-jolion/gwm-jolion-card.js?v={version}', 1)
+          text = text.replace('/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-alpha.13', f'/gwm-jolion/gwm-jolion-remote-card.js?v={version}', 1)
+          path.write_text(text, encoding="utf-8")
+
+          for filename, previous in (("gwm-jolion-card.js", "0.1.0-alpha.12"), ("gwm-jolion-remote-card.js", "0.1.0-alpha.13")):
+              path = Path("custom_components/gwm_jolion/frontend") / filename
+              text = path.read_text(encoding="utf-8").replace(previous, version, 2)
+              path.write_text(text, encoding="utf-8")
+
+          # Preserve the user's README layout/screenshots and only update version + reliability notes.
+          path = Path("README.md")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace("Текущая версия — **0.1.0-alpha.13**.", f"Текущая версия — **{version}**.", 1)
+          marker = "- результат последней команды отображается как **выполняется / выполнено / ошибка**;\n"
+          extra = (
+              "- явная ошибка GWM завершает ожидание сразу и освобождает очередь команд, а не удерживает управление до общего timeout;\n"
+              "- при временно недоступной телеметрии карточки показывают **Нет данных** и не угадывают состояние замка, двигателя, климата, окон или багажника;\n"
+          )
+          if extra not in text:
+              if marker not in text:
+                  raise SystemExit("README reliability marker not found")
+              text = text.replace(marker, marker + extra, 1)
+          path.write_text(text, encoding="utf-8")
+
+          # Changelog.
+          path = Path("CHANGELOG.md")
+          text = path.read_text(encoding="utf-8")
+          section = """## 0.1.0-alpha.14
+
+Исправление зависания очереди удалённых команд и отображения неизвестных состояний в карточках.
+
+### Удалённые команды
+
+- конечные ошибки T5 теперь завершают polling сразу вместо ожидания полного 300-секундного timeout;
+- коды `1000`, `2000` и подтверждённый промежуточный код `11` продолжают считаться незавершёнными;
+- после выхода из command lock публикуется отдельное обновление `in_progress=false`, поэтому карточки больше не остаются заблокированными после завершённой/ошибочной команды;
+- карточки ориентируются на фактический `in_progress`, а не на потенциально устаревшее состояние `pending`;
+- новых remote payload автомобиля нет.
+
+### Карточки / статусы
+
+- основная карточка не предлагает действие по замку, двигателю, климату, окнам или багажнику, если соответствующая телеметрия недоступна;
+- карточка-пульт показывает `нет данных` вместо ложных `закрыто`, `выключено`, `offline` для неизвестных основных состояний;
+- информационные плитки GSM/T-Box, GPS и климата также различают реальное отрицательное состояние и отсутствие данных;
+- добавлены unit-тесты классификации T5 result codes.
+
+"""
+          if "## 0.1.0-alpha.14" not in text:
+              text = text.replace("# Changelog\n\n", "# Changelog\n\n" + section, 1)
+          path.write_text(text, encoding="utf-8")
+
+          # Roadmap: mark the concrete reliability work and add the version entry.
+          path = Path("ROADMAP.md")
+          text = path.read_text(encoding="utf-8")
+          marker = "- ✅ отдельная обработка timeout;\n"
+          extra = (
+              "- ✅ конечные T5-ошибки завершают polling сразу и освобождают очередь команд;\n"
+              "- ✅ `in_progress=false` публикуется после фактического освобождения command lock;\n"
+          )
+          if extra not in text:
+              if marker not in text:
+                  raise SystemExit("ROADMAP reliability marker not found")
+              text = text.replace(marker, marker + extra, 1)
+
+          marker = "- ✅ защита от повторных remote-команд.\n"
+          extra = "- ✅ неизвестные/недоступные состояния не отображаются как ложные `off / closed / offline`.\n"
+          if extra not in text:
+              if marker not in text:
+                  raise SystemExit("ROADMAP card marker not found")
+              text = text.replace(marker, marker + extra, 1)
+
+          version_marker = "## 10. Версии\n\n"
+          version_section = """### `0.1.0-alpha.14` — Command lifecycle / state accuracy
+
+Исправлено зависание управления после ошибочных remote-команд: явные T5-ошибки больше не ждут общий timeout, состояние `in_progress` сбрасывается после освобождения lock, а обе карточки не выдают отсутствие телеметрии за реальное `выключено / закрыто / offline`. Новых GWM payload нет.
+
+"""
+          if "### `0.1.0-alpha.14`" not in text:
+              if version_marker not in text:
+                  raise SystemExit("ROADMAP version marker not found")
+              text = text.replace(version_marker, version_marker + version_section, 1)
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Syntax checks
+        shell: bash
+        run: |
+          python -m compileall -q custom_components/gwm_jolion
+          node --check custom_components/gwm_jolion/frontend/gwm-jolion-card.js
+          node --check custom_components/gwm_jolion/frontend/gwm-jolion-remote-card.js
+
+      - name: Commit prep and remove workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/alpha14-release-prep.yml
+          git add README.md ROADMAP.md CHANGELOG.md custom_components/gwm_jolion/const.py custom_components/gwm_jolion/__init__.py custom_components/gwm_jolion/frontend/gwm-jolion-card.js custom_components/gwm_jolion/frontend/gwm-jolion-remote-card.js
+          git commit -m "Prepare alpha.14 release"
+          git push
