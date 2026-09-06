@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorEntityDescription
@@ -54,6 +55,7 @@ async def async_setup_entry(
             GwmJolionUnknownSignalsSensor(coordinator),
             GwmJolionVehicleBasicsStatusSensor(coordinator),
             GwmJolionFeatureFlagsSensor(coordinator),
+            GwmJolionProtocolCaptureSensor(coordinator),
         ]
     )
     async_add_entities(entities)
@@ -197,3 +199,37 @@ class GwmJolionFeatureFlagsSensor(GwmJolionEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return dict(self.coordinator.feature_flags)
+
+
+class GwmJolionProtocolCaptureSensor(GwmJolionEntity, SensorEntity):
+    """Expose whether field-test protocol capture is healthy and recording."""
+
+    _attr_name = "Запись протокола GWM"
+    _attr_icon = "mdi:file-document-edit-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: GwmJolionCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry_id}_protocol_capture_status"
+
+    @property
+    def native_value(self) -> str:
+        if not self.coordinator.protocol_capture_enabled:
+            return "disabled"
+        if self.coordinator.protocol_capture_last_error:
+            return "error"
+        return "recording"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        path = self.coordinator.protocol_capture_path
+        last_time = self.coordinator.protocol_capture_last_record_time
+        return {
+            "file_name": Path(path).name if path else None,
+            "records_written": self.coordinator.protocol_capture_sequence,
+            "last_record_time": last_time.isoformat() if last_time else None,
+            "last_source": self.coordinator.protocol_capture_last_source,
+            "last_changes_count": self.coordinator.protocol_capture_last_changes_count,
+            "last_marker": self.coordinator.protocol_capture_last_marker,
+            "last_error": self.coordinator.protocol_capture_last_error,
+        }

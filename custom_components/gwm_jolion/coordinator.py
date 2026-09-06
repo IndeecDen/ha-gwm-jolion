@@ -19,7 +19,12 @@ from .command_safety import remote_start_block_reason
 from .commands import COMMANDS
 from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN, VERSION
 from .protocol import SIGNALS, VerificationStatus, update_signal_change_history
-from .protocol_capture import append_jsonl, build_capture_record
+from .protocol_capture import (
+    append_jsonl,
+    build_capture_record,
+    build_marker_record,
+    normalize_marker,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,8 +78,13 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.protocol_capture_path = protocol_capture_path
         self.protocol_capture_sequence = 0
         self.protocol_capture_last_error: str | None = None
+        self.protocol_capture_last_record_time: datetime | None = None
+        self.protocol_capture_last_source: str | None = None
+        self.protocol_capture_last_changes_count: int | None = None
+        self.protocol_capture_last_marker: str | None = None
         self._protocol_capture_last_signals: dict[str, Any] = {}
         self._protocol_capture_last_basics: dict[str, Any] = {}
+        self._protocol_capture_has_snapshot = False
         self._next_update_source = "poll"
         self._last_command_time = 0.0
         self._command_lock = asyncio.Lock()
@@ -152,10 +162,13 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Append one successful cloud update to the active JSONL capture."""
         normalized_signals = {str(code): value for code, value in signals.items()}
         normalized_unknown = {str(code): value for code, value in unknown_signals.items()}
-        normalized_basics = {
-            str(key): value for key, value in vehicle_basics.items()
-        } if isinstance(vehicle_basics, dict) else {}
+        normalized_basics = (
+            {str(key): value for key, value in vehicle_basics.items()}
+            if isinstance(vehicle_basics, dict)
+            else {}
+        )
         sequence = self.protocol_capture_sequence + 1
+        baseline = not self._protocol_capture_has_snapshot
         record = build_capture_record(
             sequence=sequence,
             timestamp=timestamp,
@@ -166,6 +179,7 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             unknown_signals=normalized_unknown,
             vehicle_basics=normalized_basics,
             previous_vehicle_basics=self._protocol_capture_last_basics,
+            baseline=baseline,
         )
         try:
             await self.hass.async_add_executor_job(
@@ -180,8 +194,48 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self.protocol_capture_sequence = sequence
         self.protocol_capture_last_error = None
+        self.protocol_capture_last_record_time = timestamp
+        self.protocol_capture_last_source = source
+        self.protocol_capture_last_changes_count = int(record.get("changes_count", 0))
         self._protocol_capture_last_signals = dict(normalized_signals)
         self._protocol_capture_last_basics = dict(normalized_basics)
+        self._protocol_capture_has_snapshot = True
+
+    async def async_add_protocol_capture_marker(self, label: str) -> None:
+        """Append a human test marker without changing the telemetry baseline."""
+        if not self.protocol_capture_enabled or not self.protocol_capture_path:
+            raise HomeAssistantError("Режим поиска GWM-кодов выключен")
+        try:
+            marker = normalize_marker(label)
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+
+        now = datetime.now(timezone.utc)
+        sequence = self.protocol_capture_sequence + 1
+        record = build_marker_record(
+            sequence=sequence,
+            timestamp=now,
+            integration_version=VERSION,
+            label=marker,
+        )
+        try:
+            await self.hass.async_add_executor_job(
+                append_jsonl,
+                self.protocol_capture_path,
+                record,
+            )
+        except Exception as err:
+            self.protocol_capture_last_error = str(err)
+            self.async_update_listeners()
+            raise HomeAssistantError(f"Не удалось записать метку: {err}") from err
+
+        self.protocol_capture_sequence = sequence
+        self.protocol_capture_last_error = None
+        self.protocol_capture_last_record_time = now
+        self.protocol_capture_last_source = "marker"
+        self.protocol_capture_last_changes_count = 0
+        self.protocol_capture_last_marker = marker
+        self.async_update_listeners()
 
     async def async_request_refresh_with_source(self, source: str) -> None:
         """Request a refresh and tag the next successful update with its source."""
@@ -315,7 +369,12 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Post-command refresh failed after successful command: %s", err)
         return result
 
-    async def async_execute_command(self, command_key: str, *, operation_time: int | None = None) -> dict[str, Any]:
+    async def async_execute_command(
+        self,
+        command_key: str,
+        *,
+        operation_time: int | None = None,
+    ) -> dict[str, Any]:
         command = COMMANDS.get(command_key)
         if command is None:
             raise HomeAssistantError(f"Unknown command: {command_key}")

@@ -12,6 +12,7 @@ from homeassistant.helpers.device_registry import DeviceEntry
 from .const import DOMAIN, VERSION
 from .coordinator import GwmJolionCoordinator
 from .protocol import signal_report
+from .protocol_capture import read_jsonl_for_diagnostics
 
 _REDACTED = "**REDACTED**"
 _SENSITIVE_NORMALIZED_KEYS = {
@@ -45,13 +46,17 @@ def _redact(value: Any) -> Any:
     return value
 
 
-def _diagnostics_payload(entry: ConfigEntry, coordinator: GwmJolionCoordinator) -> dict[str, Any]:
+def _base_diagnostics_payload(
+    entry: ConfigEntry,
+    coordinator: GwmJolionCoordinator,
+) -> dict[str, Any]:
     data = coordinator.data or {}
     state = data.get("state") or {}
     public_state = {key: value for key, value in state.items() if not str(key).startswith("_")}
     last_update = coordinator.last_successful_update
     last_command = coordinator.last_command_at
     capture_name = Path(coordinator.protocol_capture_path).name if coordinator.protocol_capture_path else None
+    capture_time = coordinator.protocol_capture_last_record_time
 
     return {
         "integration": {"domain": DOMAIN, "version": VERSION, "entry_title": entry.title},
@@ -71,7 +76,12 @@ def _diagnostics_payload(entry: ConfigEntry, coordinator: GwmJolionCoordinator) 
             "enabled": coordinator.protocol_capture_enabled,
             "file_name": capture_name,
             "records_written": coordinator.protocol_capture_sequence,
+            "last_record_time": capture_time.isoformat() if capture_time else None,
+            "last_source": coordinator.protocol_capture_last_source,
+            "last_changes_count": coordinator.protocol_capture_last_changes_count,
+            "last_marker": coordinator.protocol_capture_last_marker,
             "last_error": coordinator.protocol_capture_last_error,
+            "session_export": None,
         },
         "protocol": signal_report(coordinator.seen_signal_codes),
         "last_remote_command": {
@@ -86,19 +96,47 @@ def _diagnostics_payload(entry: ConfigEntry, coordinator: GwmJolionCoordinator) 
             "vin_included": False,
             "vehicle_number_included": False,
             "credentials_included": False,
+            "capture_automatic_identifiers_included": False,
+            "capture_markers_are_user_supplied": True,
         },
     }
 
 
-async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
-    """Return redacted diagnostics for a config entry."""
+async def _async_diagnostics_payload(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: GwmJolionCoordinator,
+) -> dict[str, Any]:
+    payload = _base_diagnostics_payload(entry, coordinator)
+    if coordinator.protocol_capture_path:
+        capture_export = await hass.async_add_executor_job(
+            read_jsonl_for_diagnostics,
+            coordinator.protocol_capture_path,
+        )
+        payload["protocol_capture"]["session_export"] = _redact(capture_export)
+    return payload
+
+
+async def async_get_config_entry_diagnostics(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> dict[str, Any]:
+    """Return redacted diagnostics including the current capture session."""
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
-    return _diagnostics_payload(entry, coordinator)
+    return await _async_diagnostics_payload(hass, entry, coordinator)
 
 
-async def async_get_device_diagnostics(hass: HomeAssistant, entry: ConfigEntry, device: DeviceEntry) -> dict[str, Any]:
+async def async_get_device_diagnostics(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    device: DeviceEntry,
+) -> dict[str, Any]:
     """Return the same safe diagnostics from the vehicle device page."""
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
-    payload = _diagnostics_payload(entry, coordinator)
-    payload["device"] = {"name": device.name, "model": device.model, "manufacturer": device.manufacturer}
+    payload = await _async_diagnostics_payload(hass, entry, coordinator)
+    payload["device"] = {
+        "name": device.name,
+        "model": device.model,
+        "manufacturer": device.manufacturer,
+    }
     return payload

@@ -51,6 +51,7 @@ FRONTEND_ASSETS = (
     ),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
+SERVICE_ADD_CAPTURE_MARKER = "add_capture_marker"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -139,9 +140,19 @@ def _register_services(hass: HomeAssistant) -> None:
             operation_time=int(operation_time) if operation_time is not None else None,
         )
 
+    async def handle_capture_marker(call: ServiceCall) -> None:
+        coordinators = _coordinators(hass)
+        if not coordinators:
+            return
+        label = call.data.get("label")
+        await coordinators[0].async_add_protocol_capture_marker(str(label or ""))
+
     for command_key in COMMANDS:
         if not hass.services.has_service(DOMAIN, command_key):
             hass.services.async_register(DOMAIN, command_key, handle_command)
+
+    if not hass.services.has_service(DOMAIN, SERVICE_ADD_CAPTURE_MARKER):
+        hass.services.async_register(DOMAIN, SERVICE_ADD_CAPTURE_MARKER, handle_capture_marker)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -152,4 +163,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for command_key in COMMANDS:
                 if hass.services.has_service(DOMAIN, command_key):
                     hass.services.async_remove(DOMAIN, command_key)
+            if hass.services.has_service(DOMAIN, SERVICE_ADD_CAPTURE_MARKER):
+                hass.services.async_remove(DOMAIN, SERVICE_ADD_CAPTURE_MARKER)
     return unload_ok
