@@ -9,8 +9,36 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import ITEM_MAP, KPA_TO_BAR, RAW_SENSOR_MAP, VEHICLE_STATUS_MAP, Conversion
 from .vehicle_basics import flatten_vehicle_basics, vehicle_basics_snapshot
+from .vehicle_data import describe_structure
 
 _LOGGER = logging.getLogger(__name__)
+
+# Values from these top-level getLastStatus fields are useful for protocol analysis
+# and are not vehicle/account identifiers or exact coordinates.
+_STATUS_SAFE_META_KEYS = (
+    "acquisitionTime",
+    "uploadTime",
+    "updateTime",
+    "oilQty",
+    "percentageOfOil",
+    "charge",
+    "serviceStatus",
+    "deviceType",
+    "command",
+)
+
+# findStatus layouts differ between vehicles. Keep only explicitly safe scalar
+# values, while the structure inventory below exposes names/types of other fields.
+_TBOX_SAFE_META_KEYS = (
+    "status",
+    "signal",
+    "signalLevel",
+    "networkType",
+    "network",
+    "acquisitionTime",
+    "uploadTime",
+    "updateTime",
+)
 
 
 def normalize_phone(raw: str) -> str:
@@ -54,9 +82,25 @@ def _seconds_to_minutes(value: Any) -> int | float | None:
     return int(minutes) if minutes.is_integer() else round(minutes, 1)
 
 
+def _safe_scalar_snapshot(source: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    """Return explicitly allowed scalar values, including present null values."""
+    if not isinstance(source, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for key in keys:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if value is None or isinstance(value, (str, int, float, bool)):
+            result[key] = value
+    return result
+
+
 def merge_vehicle_basics(state: dict[str, Any], basics: dict[str, Any]) -> None:
     """Merge conservative vehicleBasicsInfo fields into coordinator state."""
     merged = flatten_vehicle_basics(basics)
+    state["_vehicle_basics_seen_keys"] = sorted(str(key) for key in merged)
+    state["_vehicle_basics_structure"] = describe_structure(basics)
     if not merged:
         return
 
@@ -86,7 +130,7 @@ def merge_vehicle_basics(state: dict[str, Any], basics: dict[str, Any]) -> None:
         if cloud_key in merged and merged[cloud_key] is not None:
             state[state_key] = converter(merged[cloud_key])
 
-    # Main telemetry signals remain authoritative.  Seat values from
+    # Main telemetry signals remain authoritative. Seat values from
     # vehicleBasicsInfo are used only as a fallback when the live signal is absent.
     if state.get("driver_seat_heat_level_raw") is None and merged.get("leftFrontSeat") is not None:
         state["driver_seat_heat_level_raw"] = value_to_number(merged["leftFrontSeat"])
@@ -103,12 +147,20 @@ def build_state(status: dict[str, Any], tbox: dict[str, Any], basics: dict[str, 
     }
     seen_signals: dict[str, Any] = {}
     unknown_signals: dict[str, Any] = {}
+    signal_units: dict[str, str] = {}
+    signal_item_seen_keys: set[str] = set()
 
     for item in status.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        signal_item_seen_keys.update(str(key) for key in item)
         code = str(item.get("code"))
         raw = item.get("value")
         value = value_to_number(raw)
         seen_signals[code] = value
+        unit = item.get("unit")
+        if unit not in (None, ""):
+            signal_units[code] = str(unit)
 
         if code in ITEM_MAP:
             defn = ITEM_MAP[code]
@@ -156,9 +208,18 @@ def build_state(status: dict[str, Any], tbox: dict[str, Any], basics: dict[str, 
     state["tbox_status"] = tbox_status
     state["tbox_online"] = str(tbox_status) == "1" if tbox_status is not None else None
 
-    merge_vehicle_basics(state, basics or {})
+    # Private coordinator-only snapshots used by Protocol Capture. Structure
+    # descriptions contain key names/types only, never raw values.
     state["_seen_signals"] = seen_signals
     state["_unknown_signals"] = unknown_signals
+    state["_signal_units"] = signal_units
+    state["_signal_item_seen_keys"] = sorted(signal_item_seen_keys)
+    state["_status_meta"] = _safe_scalar_snapshot(status, _STATUS_SAFE_META_KEYS)
+    state["_status_structure"] = describe_structure(status)
+    state["_tbox_meta"] = _safe_scalar_snapshot(tbox, _TBOX_SAFE_META_KEYS)
+    state["_tbox_structure"] = describe_structure(tbox)
+
+    merge_vehicle_basics(state, basics or {})
 
     _LOGGER.debug("TBOX data keys: %s", list(tbox.keys()) if isinstance(tbox, dict) else "none")
     return state
