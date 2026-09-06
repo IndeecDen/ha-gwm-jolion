@@ -36,7 +36,7 @@ class GwmJolionRefreshButton(GwmJolionEntity, ButtonEntity):
         self._attr_unique_id = f"{coordinator.entry_id}_refresh"
 
     async def async_press(self) -> None:
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_request_refresh_with_source("manual_button")
 
 
 class GwmJolionCommandButton(GwmJolionEntity, ButtonEntity):
