@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .capabilities import capability_for_state_key
 from .const import DOMAIN, EXTRA_SENSORS, ITEM_MAP, RAW_SENSOR_MAP
 from .coordinator import GwmJolionCoordinator
 from .entity import GwmJolionEntity
@@ -30,6 +31,9 @@ async def async_setup_entry(
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
     descriptions: list[GwmJolionSensorDescription] = []
     for defn in list(ITEM_MAP.values()) + list(RAW_SENSOR_MAP.values()) + list(EXTRA_SENSORS.values()):
+        capability = capability_for_state_key(defn.key)
+        if capability is not None and not coordinator.feature_enabled(capability):
+            continue
         descriptions.append(
             GwmJolionSensorDescription(
                 key=defn.key,
@@ -49,6 +53,7 @@ async def async_setup_entry(
             GwmJolionLastUpdateSensor(coordinator),
             GwmJolionUnknownSignalsSensor(coordinator),
             GwmJolionVehicleBasicsStatusSensor(coordinator),
+            GwmJolionFeatureFlagsSensor(coordinator),
         ]
     )
     async_add_entities(entities)
@@ -172,3 +177,23 @@ class GwmJolionVehicleBasicsStatusSensor(GwmJolionEntity, SensorEntity):
             "description": diagnostics.get("description"),
             "data_type": diagnostics.get("data_type"),
         }
+
+
+class GwmJolionFeatureFlagsSensor(GwmJolionEntity, SensorEntity):
+    """Expose manual equipment flags to diagnostics and the bundled card."""
+
+    _attr_name = "Оборудование автомобиля"
+    _attr_icon = "mdi:car-cog"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: GwmJolionCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry_id}_feature_flags"
+
+    @property
+    def native_value(self) -> str:
+        return "configured"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return dict(self.coordinator.feature_flags)
