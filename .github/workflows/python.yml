@@ -21,7 +21,12 @@ jobs:
       - name: Compile integration
         run: python -m compileall -q custom_components/gwm_jolion
       - name: Validate bundled card JavaScript
-        run: node --check custom_components/gwm_jolion/frontend/gwm-jolion-card.js
+        shell: bash
+        run: |
+          for card in custom_components/gwm_jolion/frontend/*.js; do
+            echo "Checking $card"
+            node --check "$card"
+          done
       - name: Validate JSON and YAML files
         shell: bash
         run: |
