@@ -1,6 +1,6 @@
-/* GWM Jolion primary card visual editor v0.1.0-alpha.16 */
+/* GWM Jolion primary card visual editor v0.1.0-alpha.17 */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.16";
+  const CARD_VERSION = "0.1.0-alpha.17";
 
   const CONTROL_OPTIONS = [
     ["engine", "Двигатель"],
@@ -226,33 +226,6 @@
     customElements.define("gwm-jolion-card-editor", GwmJolionCardEditor);
   }
 
-  const Card = customElements.get("gwm-jolion-card");
-  if (!Card) {
-    console.error("[GWM Jolion Card Editor] gwm-jolion-card is not registered");
-    return;
-  }
-
-  Card.getConfigElement = () => document.createElement("gwm-jolion-card-editor");
-  Card.getStubConfig = () => ({
-    controls: [...DEFAULT_CONTROLS],
-    info: [...DEFAULT_INFO],
-    details: [...DEFAULT_DETAILS],
-  });
-
-  const originalRender = Card.prototype._render;
-  if (!Card.prototype._gwmVisualEditorPatched) {
-    Card.prototype._render = function patchedRender(...args) {
-      const result = originalRender.apply(this, args);
-      try {
-        applyVisibility(this);
-      } catch (err) {
-        console.error("[GWM Jolion Card Editor] visibility update failed", err);
-      }
-      return result;
-    };
-    Card.prototype._gwmVisualEditorPatched = true;
-  }
-
   function selected(config, key, fallback) {
     return new Set(Array.isArray(config?.[key]) ? config[key] : fallback);
   }
@@ -361,6 +334,43 @@
     }
     const systemWanted = systemKeys.some((key) => info.has(key)) || info.has("last_update");
     setVisible(systemSection, systemWanted);
+  }
+
+  function patchCard(Card) {
+    Card.getConfigElement = () => document.createElement("gwm-jolion-card-editor");
+    Card.getStubConfig = () => ({
+      controls: [...DEFAULT_CONTROLS],
+      info: [...DEFAULT_INFO],
+      details: [...DEFAULT_DETAILS],
+    });
+
+    if (!Card.prototype._gwmVisualEditorPatched) {
+      const originalRender = Card.prototype._render;
+      Card.prototype._render = function patchedRender(...args) {
+        const result = originalRender.apply(this, args);
+        try {
+          applyVisibility(this);
+        } catch (err) {
+          console.error("[GWM Jolion Card Editor] visibility update failed", err);
+        }
+        return result;
+      };
+      Card.prototype._gwmVisualEditorPatched = true;
+    }
+  }
+
+  const existingCard = customElements.get("gwm-jolion-card");
+  if (existingCard) {
+    patchCard(existingCard);
+  } else {
+    customElements.whenDefined("gwm-jolion-card")
+      .then(() => {
+        const Card = customElements.get("gwm-jolion-card");
+        if (Card) patchCard(Card);
+      })
+      .catch((err) => {
+        console.error("[GWM Jolion Card Editor] card registration wait failed", err);
+      });
   }
 
   console.info(
