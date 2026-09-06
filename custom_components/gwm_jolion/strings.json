@@ -15,9 +15,7 @@
       "reauth": {
         "title": "GWM Jolion — повторная авторизация",
         "description": "Введите пароль от аккаунта GWM.",
-        "data": {
-          "password": "Пароль"
-        }
+        "data": {"password": "Пароль"}
       }
     },
     "error": {
@@ -34,28 +32,29 @@
     "step": {
       "init": {
         "title": "Настройки GWM Jolion",
-        "description": "PIN: {pin_status}. Экспериментальные кнопки по умолчанию отключены в реестре сущностей.",
+        "description": "PIN: {pin_status}. Ниже можно отключить оборудование, которого нет в конкретной комплектации. GWM возвращает универсальный набор полей, поэтому наличие оборудования пока задаётся вручную.",
         "data": {
           "poll_interval": "Интервал опроса, секунд",
           "enable_remote_controls": "Включить удалённое управление",
           "command_cooldown_seconds": "Задержка между командами, секунд",
           "security_pin": "Новый PIN безопасности",
-          "clear_security_pin": "Удалить сохранённый PIN"
+          "clear_security_pin": "Удалить сохранённый PIN",
+          "feature_sunroof": "Панорамная крыша / люк",
+          "feature_sunshade": "Шторка панорамной крыши",
+          "feature_steering_wheel_heat": "Обогрев руля",
+          "feature_rear_defrost": "Обогрев заднего стекла",
+          "feature_front_defrost": "Передний defrost / интенсивный обдув",
+          "feature_front_windscreen_heat": "Электрообогрев лобового стекла",
+          "feature_driver_seat_heat": "Подогрев сиденья водителя",
+          "feature_passenger_seat_heat": "Подогрев сиденья пассажира",
+          "feature_cabin_clean": "Cabin Clean / проветривание салона",
+          "feature_air_purifier": "Очиститель воздуха"
         }
       }
     }
   },
   "services": {
-    "start_engine": {
-      "name": "Запустить двигатель",
-      "description": "Удалённо запускает двигатель через GWM Cloud.",
-      "fields": {
-        "operation_time": {
-          "name": "Время работы",
-          "description": "Время удалённого запуска двигателя в минутах."
-        }
-      }
-    },
+    "start_engine": {"name": "Запустить двигатель", "description": "Удалённо запускает двигатель через GWM Cloud.", "fields": {"operation_time": {"name": "Время работы", "description": "Время удалённого запуска двигателя в минутах."}}},
     "stop_engine": {"name": "Остановить двигатель", "description": "Останавливает двигатель, запущенный удалённой командой."},
     "flash_lights": {"name": "Моргнуть фарами", "description": "Включает удалённый поиск автомобиля светом."},
     "horn": {"name": "Подать звуковой сигнал", "description": "Включает удалённый звуковой сигнал автомобиля."},
@@ -69,27 +68,9 @@
     "open_sunroof": {"name": "Открыть люк (эксперимент)", "description": "Экспериментальная команда открытия люка."},
     "open_sunshade": {"name": "Открыть шторку люка (эксперимент)", "description": "Экспериментальная команда открытия шторки люка."},
     "close_sunshade": {"name": "Закрыть шторку люка (эксперимент)", "description": "Экспериментальная команда закрытия шторки люка."},
-    "rear_defrost_on": {
-      "name": "Включить обогрев заднего стекла",
-      "description": "Включает обогрев заднего стекла.",
-      "fields": {
-        "operation_time": {
-          "name": "Время работы",
-          "description": "Желаемое время работы в минутах."
-        }
-      }
-    },
+    "rear_defrost_on": {"name": "Включить обогрев заднего стекла", "description": "Включает обогрев заднего стекла.", "fields": {"operation_time": {"name": "Время работы", "description": "Желаемое время работы в минутах."}}},
     "rear_defrost_off": {"name": "Выключить обогрев заднего стекла", "description": "Выключает обогрев заднего стекла."},
-    "steering_wheel_heat_on": {
-      "name": "Включить обогрев руля",
-      "description": "Включает обогрев рулевого колеса.",
-      "fields": {
-        "operation_time": {
-          "name": "Время работы",
-          "description": "Желаемое время работы в минутах."
-        }
-      }
-    },
+    "steering_wheel_heat_on": {"name": "Включить обогрев руля", "description": "Включает обогрев рулевого колеса.", "fields": {"operation_time": {"name": "Время работы", "description": "Желаемое время работы в минутах."}}},
     "steering_wheel_heat_off": {"name": "Выключить обогрев руля", "description": "Выключает обогрев рулевого колеса."},
     "front_defrost_on": {"name": "Включить передний defrost (эксперимент)", "description": "Экспериментальная команда интенсивного обдува лобового стекла."},
     "front_defrost_off": {"name": "Выключить передний defrost (эксперимент)", "description": "Экспериментальная команда выключения переднего defrost."},
