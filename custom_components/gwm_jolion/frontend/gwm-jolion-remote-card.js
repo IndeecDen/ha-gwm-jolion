@@ -527,7 +527,10 @@
     _infoMeta(id) {
       if (FEATURE_BY_INFO[id] && !this._featureEnabled(FEATURE_BY_INFO[id])) return null;
       const climate = this._state("climate");
-      const climateOn = this._isOn("climateOn") || climate?.state === "heat_cool";
+      const climateKnown = !this._isUnavailable("climateOn") || !this._isUnavailable("climate");
+      const climateOn = climateKnown && (this._isOn("climateOn") || climate?.state === "heat_cool");
+      const tboxKnown = !this._isUnavailable("tbox");
+      const gpsKnown = !this._isUnavailable("gps");
       const pressureValues = ["tireFlP", "tireFrP", "tireRlP", "tireRrP"].map((key) => this._rawValue(key)).filter(Boolean);
       const seatValue = (key) => {
         const raw = this._rawValue(key);
@@ -540,9 +543,9 @@
         range: ["mdi:map-marker-distance", "Запас хода", this._value("range")],
         mileage: ["mdi:counter", "Пробег", this._value("mileage")],
         tires: ["mdi:car-tire-alert", "Шины", pressureValues.length ? `${pressureValues.join(" / ")} bar` : "—"],
-        gsm: ["mdi:signal", "GSM / T-Box", this._isOn("tbox") ? `online · ${this._rawValue("signal") ?? "—"}/4` : "offline"],
-        gps: ["mdi:crosshairs-gps", "GPS", this._isOn("gps") ? "доступен" : "нет"],
-        climate: ["mdi:air-conditioner", "Климат", climateOn ? `работает · ${climate?.attributes?.temperature ?? 22} °C` : "выключен"],
+        gsm: ["mdi:signal", "GSM / T-Box", tboxKnown ? (this._isOn("tbox") ? `online · ${this._rawValue("signal") ?? "—"}/4` : "offline") : "нет данных"],
+        gps: ["mdi:crosshairs-gps", "GPS", gpsKnown ? (this._isOn("gps") ? "доступен" : "нет") : "нет данных"],
+        climate: ["mdi:air-conditioner", "Климат", climateKnown ? (climateOn ? `работает · ${climate?.attributes?.temperature ?? 22} °C` : "выключен") : "нет данных"],
         oil: ["mdi:oil", "Масло GWM", this._rawValue("oilQty") === null ? "—" : `${this._rawValue("oilQty")}/8`],
         update: ["mdi:cloud-sync", "Обновление", this._relativeUpdate()],
         seat_driver: ["mdi:car-seat-heater", "Сиденье водителя", seatValue("seatDriver")],
