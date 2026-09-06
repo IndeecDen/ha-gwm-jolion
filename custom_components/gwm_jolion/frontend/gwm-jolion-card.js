@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-alpha.10 */
+/* GWM Jolion Card v0.1.0-alpha.12 */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.10";
+  const CARD_VERSION = "0.1.0-alpha.12";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -37,6 +37,7 @@
     tireRrT: "_tire_rr_temp",
     signal: "_tbox_signal_raw",
     lastCommand: "_last_command",
+    featureFlags: "_feature_flags",
     steeringHeat: "_steering_wheel_heat_on",
     rearDefrost: "_rear_defrost_on",
     frontDefrost: "_front_defrost_on",
@@ -219,6 +220,12 @@
         return null;
       }
       return String(stateObj.state);
+    }
+
+    _featureEnabled(capability) {
+      const flags = this._state("featureFlags");
+      if (!flags?.attributes || !(capability in flags.attributes)) return true;
+      return flags.attributes[capability] !== false;
     }
 
     _seatValue(key) {
@@ -857,18 +864,18 @@
                   this._windowSubtitle(),
                   windowsOpen ? "danger" : ""
                 )}
-                ${this._roofControl(
+                ${this._featureEnabled("sunroof") ? this._roofControl(
                   "sunroof",
                   "sunroofOpen",
                   "mdi:car-select",
                   "Панорама"
-                )}
-                ${this._roofControl(
+                ) : ""}
+                ${this._featureEnabled("sunshade") ? this._roofControl(
                   "sunshade",
                   "sunshadeOpen",
                   "mdi:blinds",
                   "Шторка"
-                )}
+                ) : ""}
                 ${this._control(
                   "refresh",
                   "mdi:refresh",
@@ -933,43 +940,43 @@
                 </div>
 
                 <div class="comfort">
-                  ${this._comfortControl(
+                  ${this._featureEnabled("steering_wheel_heat") ? this._comfortControl(
                     "steering-heat",
                     "steeringHeat",
                     "mdi:steering",
                     "Обогрев руля"
-                  )}
-                  ${this._readOnlyComfort(
+                  ) : ""}
+                  ${this._featureEnabled("seat_heat_driver") ? this._readOnlyComfort(
                     "seatDriver",
                     "mdi:car-seat-heater",
                     "Сиденье водителя",
                     this._seatValue("seatDriver")
-                  )}
-                  ${this._readOnlyComfort(
+                  ) : ""}
+                  ${this._featureEnabled("seat_heat_passenger") ? this._readOnlyComfort(
                     "seatPassenger",
                     "mdi:car-seat-heater",
                     "Сиденье пассажира",
                     this._seatValue("seatPassenger")
-                  )}
-                  ${this._comfortControl(
+                  ) : ""}
+                  ${this._featureEnabled("rear_defrost") ? this._comfortControl(
                     "rear-defrost",
                     "rearDefrost",
                     "mdi:car-defrost-rear",
                     "Обогрев заднего стекла"
-                  )}
-                  ${this._comfortControl(
+                  ) : ""}
+                  ${this._featureEnabled("front_defrost") ? this._comfortControl(
                     "front-defrost",
                     "frontDefrost",
                     "mdi:car-defrost-front",
                     "Обдув лобового",
                     { experimental: true }
-                  )}
-                  ${this._readOnlyComfort(
+                  ) : ""}
+                  ${this._featureEnabled("front_windscreen_heat") ? this._readOnlyComfort(
                     "windscreenHeat",
                     "mdi:car-defrost-front",
                     "Обогрев лобового",
                     windscreenStatus
-                  )}
+                  ) : ""}
                 </div>
               </div>
             </div>
