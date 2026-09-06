@@ -7,6 +7,8 @@ from pathlib import Path
 import sys
 import types
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = ROOT / "custom_components" / "gwm_jolion"
 
@@ -44,8 +46,10 @@ def test_capture_baseline_contains_full_snapshots_without_changes(tmp_path):
         unknown_signals={"9999999": 7},
         vehicle_basics={"leftFrontSeat": 0},
         previous_vehicle_basics={},
+        baseline=True,
     )
 
+    assert record["type"] == "refresh"
     assert record["baseline"] is True
     assert record["signals"]["2220001"] == 0
     assert record["unknown_signals"] == {"9999999": 7}
@@ -66,6 +70,7 @@ def test_capture_diff_has_known_and_unknown_signal_metadata():
         unknown_signals={"9999999": 8},
         vehicle_basics={"leftFrontSeat": 3},
         previous_vehicle_basics={"leftFrontSeat": 0},
+        baseline=False,
     )
 
     assert record["source"] == "manual_button"
@@ -86,6 +91,29 @@ def test_capture_diff_has_known_and_unknown_signal_metadata():
     ]
 
 
+def test_marker_is_separate_short_record():
+    capture = load_capture_module()
+    marker = capture.build_marker_record(
+        sequence=3,
+        timestamp=datetime(2026, 9, 6, 16, 2, tzinfo=timezone.utc),
+        integration_version="test",
+        label="  DRIVER_SEAT_L3   ",
+    )
+
+    assert marker["type"] == "marker"
+    assert marker["label"] == "DRIVER_SEAT_L3"
+    assert "signals" not in marker
+    assert marker["privacy"]["label_is_user_supplied"] is True
+
+
+def test_marker_rejects_empty_and_too_long_values():
+    capture = load_capture_module()
+    with pytest.raises(ValueError):
+        capture.normalize_marker("   ")
+    with pytest.raises(ValueError):
+        capture.normalize_marker("X" * 81)
+
+
 def test_append_jsonl_appends_independent_records(tmp_path):
     capture = load_capture_module()
     path = tmp_path / "capture.jsonl"
@@ -96,3 +124,29 @@ def test_append_jsonl_appends_independent_records(tmp_path):
     assert len(lines) == 2
     assert json.loads(lines[0]) == {"seq": 1, "value": "первый"}
     assert json.loads(lines[1]) == {"seq": 2, "value": "второй"}
+
+
+def test_diagnostics_reader_exports_bounded_session(tmp_path):
+    capture = load_capture_module()
+    path = tmp_path / "capture.jsonl"
+    for seq in range(1, 4):
+        capture.append_jsonl(path, {"seq": seq, "type": "refresh"})
+
+    exported = capture.read_jsonl_for_diagnostics(path, max_records=2)
+    assert exported["records_in_file"] == 3
+    assert exported["records_exported"] == 2
+    assert exported["truncated"] is True
+    assert [item["seq"] for item in exported["records"]] == [1, 2]
+    assert exported["read_error"] is None
+
+
+def test_diagnostics_reader_reports_invalid_lines(tmp_path):
+    capture = load_capture_module()
+    path = tmp_path / "capture.jsonl"
+    path.write_text('{"seq":1}\nnot-json\n', encoding="utf-8")
+
+    exported = capture.read_jsonl_for_diagnostics(path)
+    assert exported["records_in_file"] == 2
+    assert exported["records_exported"] == 1
+    assert exported["invalid_lines"] == 1
+    assert exported["truncated"] is False
