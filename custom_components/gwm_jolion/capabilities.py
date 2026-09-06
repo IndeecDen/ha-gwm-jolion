@@ -77,6 +77,8 @@ STATE_KEY_CAPABILITY: dict[str, str] = {
     "front_windscreen_heat_saved_runtime": "front_windscreen_heat",
     "driver_seat_heat_level_raw": "seat_heat_driver",
     "passenger_seat_heat_level_raw": "seat_heat_passenger",
+    "air_circulation_on": "cabin_clean",
+    "air_circulation_raw": "cabin_clean",
     "air_purifier_status_raw": "air_purifier",
     "purifier_runtime": "air_purifier",
     "sunroof_basics_raw": "sunroof",
