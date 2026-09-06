@@ -41,3 +41,71 @@ def test_signal_report_marks_observed_codes():
     assert report["2016001"]["observed"] is True
     assert report["2208001"]["observed"] is True
     assert report["2202001"]["observed"] is False
+
+
+def test_signal_change_history_records_initial_and_changes_only():
+    protocol = load_module("gwm_protocol_history_test", "custom_components/gwm_jolion/protocol.py")
+    history = []
+    last_values = {}
+
+    protocol.update_signal_change_history(
+        history,
+        last_values,
+        {"2220001": 0, "2017002": 35},
+        "2026-09-06T15:00:00+00:00",
+    )
+    assert len(history) == 1
+    assert history[0]["code"] == "2220001"
+    assert history[0]["value"] == 0
+    assert history[0]["initial"] is True
+
+    protocol.update_signal_change_history(
+        history,
+        last_values,
+        {"2220001": 0},
+        "2026-09-06T15:01:00+00:00",
+    )
+    assert len(history) == 1
+
+    protocol.update_signal_change_history(
+        history,
+        last_values,
+        {"2220001": 3},
+        "2026-09-06T15:02:00+00:00",
+    )
+    assert len(history) == 2
+    assert history[-1]["previous"] == 0
+    assert history[-1]["value"] == 3
+    assert history[-1]["initial"] is False
+
+
+def test_signal_change_history_tracks_unknown_and_is_bounded():
+    protocol = load_module("gwm_protocol_history_bound_test", "custom_components/gwm_jolion/protocol.py")
+    history = []
+    last_values = {}
+
+    protocol.update_signal_change_history(
+        history,
+        last_values,
+        {"9999999": 0},
+        "t0",
+        max_events=2,
+    )
+    protocol.update_signal_change_history(
+        history,
+        last_values,
+        {"9999999": 1},
+        "t1",
+        max_events=2,
+    )
+    protocol.update_signal_change_history(
+        history,
+        last_values,
+        {"9999999": 2},
+        "t2",
+        max_events=2,
+    )
+
+    assert len(history) == 2
+    assert [event["value"] for event in history] == [1, 2]
+    assert all(event["key"] == "unknown_signal" for event in history)
