@@ -18,7 +18,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[ButtonEntity] = [GwmJolionRefreshButton(coordinator)]
     if coordinator.enable_remote_controls and coordinator.security_pin:
-        entities.extend(GwmJolionCommandButton(coordinator, command) for command in COMMANDS.values())
+        entities.extend(
+            GwmJolionCommandButton(coordinator, command)
+            for command in COMMANDS.values()
+            if coordinator.command_enabled(command["key"])
+        )
     async_add_entities(entities)
 
 
