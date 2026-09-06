@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.0-alpha.19.2
+
+Расширенный диагностический релиз перед физическими тестами автомобиля. Цель — не потерять потенциально полезные поля GWM, которые раньше не попадали в Protocol Capture.
+
+### Protocol Capture schema 2
+
+- schema JSONL повышена до `2`;
+- для каждого `items[].code` сохраняется `signal_units`, если GWM прислал единицу измерения;
+- сохраняется `signal_item_seen_keys` — набор имён полей, реально встреченных внутри элементов `items[]`;
+- добавлен `status_meta` с безопасными верхнеуровневыми полями `getLastStatus`: `acquisitionTime`, `uploadTime`, `updateTime`, `oilQty`, `percentageOfOil`, `charge`, `serviceStatus`, `deviceType`, `command`;
+- для `status_meta` сохраняется diff `previous → value` в `status_meta_changes`;
+- добавлен `status_structure` — структура всего `getLastStatus` только с именами ключей и типами, без значений; благодаря этому неизвестные верхнеуровневые и вложенные поля можно заметить без риска утечки VIN/координат;
+- добавлены `vehicle_basics_seen_keys` и `vehicle_basics_structure`, чтобы видеть неизвестные поля `vehicleBasicsInfo`, даже если их значения не входят в безопасный whitelist;
+- добавлены `tbox_meta`, `tbox_meta_changes` и `tbox_structure` для безопасного анализа `findStatus` / T-Box;
+- потенциально чувствительные неизвестные значения автоматически не сохраняются: для них остаётся только структура ключей/типов;
+- VIN, точные координаты, телефон/аккаунт, credentials, IMSI/ICCID, vehicle/device ID по-прежнему не записываются в Protocol Capture.
+
+### GPS / карта Home Assistant
+
+- существующая сущность `device_tracker` **Местоположение** остаётся источником GPS для стандартной карты Home Assistant;
+- latitude/longitude теперь безопасно приводятся к `float`, чтобы строковые координаты GWM корректно отображались на карте;
+- для GPS-трекера добавлена иконка `mdi:car`;
+- координаты используются только самой GPS-сущностью и не добавляются в Protocol Capture/диагностический экспорт.
+
+### Тесты / документация
+
+- добавлены unit-тесты расширенного capture record: units, `percentageOfOil`, safe metadata, structures и изменения meta-полей;
+- обновлены `README.md`, `ROADMAP.md`, `CHANGELOG.md`, `manifest.json` и внутренний `VERSION`;
+- новых GWM remote-команд, command payload и предположений о назначении неизвестных кодов нет;
+- версия интеграции — `0.1.0-alpha.19.2`.
+
 ## 0.1.0-alpha.19.1
 
 Диагностический hotfix Protocol Capture: длинная тестовая сессия больше не может вытеснить исходный telemetry baseline из стандартного экспорта Home Assistant.
