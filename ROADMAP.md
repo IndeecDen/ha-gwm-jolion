@@ -1,195 +1,198 @@
 # Roadmap — GWM Jolion для Home Assistant
 
-Этот файл фиксирует план развития проекта `ha-gwm-jolion`.
+План развития `ha-gwm-jolion`.
 
 Статусы:
 
-- ✅ подтверждено / реализовано;
-- 🟢 реализовано в Alpha и тестируется;
-- 🧪 эксперимент;
-- 🚧 в разработке;
+- ✅ реализовано / подтверждено;
+- 🟢 реализовано в Alpha и требует дальнейшей проверки;
+- 🧪 экспериментальная функция;
 - ⏳ запланировано.
 
 ## 0. Базовая интеграция
 
-- ✅ отдельный domain `gwm_jolion`;
+- ✅ domain `gwm_jolion`;
 - ✅ Config Flow;
 - ✅ авторизация в российском GWM Cloud;
 - ✅ подпись API-запросов;
-- ✅ `getLastStatus`;
-- ✅ `findStatus`;
+- ✅ `getLastStatus` / `findStatus`;
 - ✅ coordinator polling;
-- ✅ T5 send/poll result;
+- ✅ T5 send + polling результата;
 - ✅ PIN security check;
-- ✅ общий cooldown удалённых команд;
-- ✅ безопасное хранение PIN в options;
-- ⏳ reauth и обработка дополнительных вариантов ошибок cloud;
-- ⏳ multi-vehicle support;
-- ⏳ capability detection по каждой машине.
+- ✅ настройки polling / remote controls / cooldown / PIN;
+- ✅ автоматическая повторная авторизация после auth-ошибок GWM;
+- ✅ Home Assistant reauth при недействительных учётных данных;
+- ✅ сохранение существующего GWM device ID при reauth;
+- ⏳ несколько автомобилей в одном аккаунте;
+- 🟢 capability detection по данным и комплектации автомобиля.
 
 ## 1. Телеметрия автомобиля
 
-### Подтверждено
+### Основная
 
-- ✅ пробег;
-- ✅ топливо;
-- ✅ запас хода;
-- ✅ GPS location;
-- ✅ T-Box online;
 - ✅ двигатель;
 - ✅ центральный замок;
 - ✅ 4 двери;
 - ✅ багажник;
 - ✅ 4 окна;
+- ✅ пробег;
+- ✅ топливо в литрах;
+- ✅ расчёт топлива в процентах;
+- ✅ запас хода;
+- ✅ GPS;
+- ✅ T-Box online;
 - ✅ давление 4 шин;
-- ✅ температура 4 шин.
+- ✅ температура 4 шин;
+- 🟢 уровень масла GWM `oilQty`;
 
 ### Расширенная диагностика
 
-- 🟢 TPMS pressure raw `2102001–2102004`;
-- 🟢 TPMS temperature raw `2102007–2102010`;
-- 🟢 window learn `2210010–2210013`;
-- 🟢 seat heat raw `2220001`, `2220002`;
-- 🟢 light raw `2204007–2204010`;
-- 🟢 GPS authorization `2310001`;
-- 🟢 T-Box signal `4105008`;
-- 🧪 front defrost status `2222001`;
-- 🧪 rear defrost status `2210032`;
-- 🧪 steering wheel heat status `2060016`;
-- 🧪 front windscreen heat status `2202111`;
-- 🧪 air circulation status `2078020`.
+- 🟢 TPMS raw/status;
+- 🟢 window learn raw;
+- 🟢 seat heat raw;
+- 🟢 light raw;
+- 🟢 GPS authorization;
+- 🟢 T-Box signal;
+- 🧪 front defrost status;
+- 🧪 rear defrost status;
+- 🧪 steering wheel heat status;
+- 🧪 front windscreen heat status;
+- 🧪 air circulation status;
+- ✅ история неизвестных GWM-кодов в diagnostics.
 
-### Нужно найти
+### Нужно найти / подтвердить
 
-- ⏳ реальное напряжение 12V АКБ;
-- ⏳ SOC 12V АКБ, если cloud его отдаёт;
-- ⏳ наружную температуру;
-- ⏳ температуру салона;
-- ⏳ температуру охлаждающей жидкости;
-- ⏳ уровень/давление масла, если доступно;
-- ⏳ дополнительные предупреждения автомобиля.
+- ⏳ напряжение 12V АКБ;
+- ⏳ SOC 12V АКБ, если GWM Cloud его отдаёт;
+- ⏳ наружная температура;
+- ⏳ температура салона;
+- ⏳ температура охлаждающей жидкости;
+- ⏳ дополнительные предупреждения автомобиля;
+- ⏳ точная расшифровка шкалы GSM;
+- ⏳ точная физическая интерпретация делений `oilQty`.
 
 ## 2. Удалённое управление
 
 ### Подтверждено
 
-- ✅ запуск двигателя `0x03`;
-- ✅ остановка двигателя `0x03`.
+- ✅ запуск двигателя;
+- ✅ остановка двигателя;
+- ✅ lock / unlock;
+- ✅ открыть / закрыть багажник;
+- ✅ закрыть окна;
+- ✅ flash lights;
+- ✅ horn;
+- ✅ flash + horn.
 
 ### Реализовано в Alpha
 
-- 🟢 lock;
-- 🟢 unlock;
-- 🟢 открыть багажник;
-- 🟢 закрыть багажник;
-- 🟢 закрыть окна;
-- 🟢 flash lights;
-- 🟢 horn;
-- 🟢 flash + horn;
+- 🧪 открытие всех окон;
+- 🧪 открыть / закрыть панораму;
+- 🧪 открыть / закрыть шторку панорамы;
 - 🟢 задний defrost ON/OFF;
-- 🟢 обогрев руля ON/OFF.
+- 🟢 обогрев руля ON/OFF;
+- 🧪 передний defrost ON/OFF;
+- 🧪 Cabin Clean / проветривание.
 
-### План
+### Надёжность команд
 
-- ⏳ открытие окон;
+- ✅ команды сериализованы: одновременно выполняется только одна T5-команда;
+- ✅ повторная команда отклоняется, пока предыдущая выполняется;
+- ✅ cooldown между командами;
+- ✅ cooldown использует монотонный таймер;
+- ✅ сенсор последней команды: `pending / success / error`;
+- ✅ сохранение кода и сообщения результата GWM;
+- ✅ отдельная обработка timeout;
+- ✅ перед remote start выполняется свежий cloud refresh;
+- ✅ перед remote start проверяются двигатель, замок, двери и багажник;
+- ✅ карточка блокирует другие remote-кнопки во время выполнения команды;
+- ⏳ расширенный справочник пользовательских сообщений для известных кодов ошибок GWM.
+
+### Дальше
+
 - ⏳ выбор отдельных окон;
-- ⏳ открыть / закрыть люк;
-- ⏳ tilt люка;
-- ⏳ промежуточные положения люка;
-- ⏳ шторка люка;
-- ⏳ проверка условий перед командой;
-- ⏳ подробный перевод ошибок T5;
-- ⏳ статус pending/success/error для UI.
+- ⏳ tilt / промежуточные положения панорамы;
+- ⏳ реальные telemetry-коды положения панорамы и шторки.
 
 ## 3. Климат
 
 - 🟢 Home Assistant `climate` entity;
-- 🟢 target temperature;
+- 🟢 target temperature 16–32 °C;
 - 🟢 runtime 5–30 минут;
-- 🟢 climate ON `0x04`;
-- 🧪 climate OFF `0x04` / `switchOrder=0`;
-- 🧪 `modifyVehicleRemoteCtlInfo`;
-- 🧪 чтение сохранённой температуры GWM;
-- 🧪 чтение сохранённого runtime GWM;
+- 🟢 climate ON;
+- 🧪 climate OFF;
+- 🧪 сохранение настроек через `modifyVehicleRemoteCtlInfo`;
 - 🧪 `vehicleBasicsInfo`;
-- ⏳ реальное отображение оставшегося времени;
-- ⏳ синхронизация HA ↔ GWM App;
-- ⏳ blowing mode / power gear, если Jolion поддерживает remote control этих параметров.
+- ✅ безопасная диагностика ответа `vehicleBasicsInfo` без публикации значений;
+- ⏳ реальное оставшееся время работы;
+- ⏳ синхронизация настроек HA ↔ GWM App;
+- ⏳ blowing mode / power gear, если поддерживаются Jolion.
 
 ## 4. Comfort-функции
 
-### Defrost / стекло
+### Стёкла / defrost
 
-- 🧪 передний defrost `0x0B`;
-- 🟢 задний defrost `0x0B`;
-- ⏳ электрический обогрев лобового `0x2A`;
-- ⏳ реальные binary sensors для всех режимов.
+- 🧪 передний defrost;
+- 🟢 задний defrost;
+- ⏳ электрический обогрев лобового — управление после подтверждения payload;
+- ⏳ `switch` entities для функций с достоверным readback.
 
 ### Сиденья
 
 - 🟢 чтение raw водительского подогрева;
 - 🟢 чтение raw пассажирского подогрева;
-- ⏳ расшифровка уровней 0/1/2/3;
-- ⏳ payload `0x0A` для подогрева;
+- ⏳ подтверждение значений уровней;
+- ⏳ подтверждение payload управления подогревом;
 - ⏳ вентиляция сидений для поддерживаемых комплектаций;
-- ⏳ отдельные `select` / `number` entities.
+- ⏳ `select` entities для уровней после подтверждения протокола.
 
-### Руль
+### Руль / салон
 
-- 🟢 команда подогрева руля;
-- 🧪 реальный status `2060016`;
-- ⏳ switch entity с реальным readback.
-
-### Салон
-
-- 🧪 Cabin Clean / проветривание `0x11`;
-- ⏳ air purifier `0x0C`, если поддерживается;
-- ⏳ status и таймер очистителя.
+- 🟢 команда обогрева руля;
+- 🧪 реальный readback обогрева руля;
+- 🧪 Cabin Clean;
+- ⏳ air purifier, если поддерживается автомобилем.
 
 ## 5. TPMS
 
-- ✅ фактическое давление 4 шин;
-- ✅ фактическая температура 4 шин;
-- 🟢 raw status-коды давления;
-- 🟢 raw status-коды температуры;
-- ⏳ расшифровка enum каждого status-кода;
-- ⏳ отдельные binary sensors предупреждений;
-- ⏳ визуальная подсветка проблемного колеса в карточке.
+- ✅ давление 4 шин;
+- ✅ температура 4 шин;
+- 🟢 raw status-коды;
+- ⏳ расшифровка enum status-кодов;
+- ⏳ отдельные предупреждения Home Assistant;
+- ⏳ визуальное выделение проблемного колеса в карточке.
 
 ## 6. Карточка GWM Jolion
 
-### Alpha
+### Уже реализовано
 
-- 🧪 `custom:gwm-jolion-card`;
-- 🧪 auto-discovery entities через Entity Registry;
-- 🧪 engine / lock / climate controls;
-- 🧪 fuel / range / mileage;
-- 🧪 tyres;
-- 🧪 body status;
-- 🧪 T-Box / GPS / GSM.
+- ✅ встроенная `custom:gwm-jolion-card`;
+- ✅ автоматическая регистрация frontend;
+- ✅ auto-discovery сущностей через Entity Registry;
+- ✅ заголовок модель + имя автомобиля + `2WD / 4WD`;
+- ✅ топливо / запас хода / пробег;
+- ✅ engine / lock / trunk / windows controls;
+- ✅ конкретные открытые окна;
+- ✅ таймер remote start;
+- ✅ climate / temperature / runtime;
+- ✅ comfort-блок;
+- ✅ панорама / шторка;
+- ✅ 4 шины;
+- ✅ T-Box / GPS / GSM;
+- ✅ сегментный индикатор масла;
+- ✅ время последнего обновления;
+- ✅ отображение результата последней команды;
+- ✅ блокировка remote-кнопок во время выполняющейся команды;
+- ✅ адаптация сетки для мобильного экрана.
 
-### Следующая версия
+### План
 
-- 🚧 исправить автоматическую регистрацию frontend;
-- 🚧 гарантированная загрузка после HACS/manual update;
-- 🚧 встроенный visual editor;
-- 🚧 автоматический выбор автомобиля;
-- 🚧 адаптивный desktop/mobile layout;
-- 🚧 нормальные состояния loading/error/unavailable.
-
-### Финальный дизайн
-
-- ⏳ внешний вид уровня StarLine;
-- ⏳ изображение Jolion;
-- ⏳ динамические двери;
-- ⏳ динамические окна;
-- ⏳ багажник / люк;
-- ⏳ климатический блок;
-- ⏳ comfort-блок;
-- ⏳ четыре колеса вокруг автомобиля;
-- ⏳ GSM / GPS / T-Box diagnostics;
-- ⏳ подтверждения опасных действий;
-- ⏳ возможность скрывать ненужные секции.
+- ⏳ visual editor карточки;
+- ⏳ выбор автомобиля при нескольких машинах;
+- ⏳ возможность скрывать отдельные секции;
+- ⏳ более подробные состояния loading / unavailable / API error;
+- ⏳ визуальные предупреждения TPMS;
+- ⏳ отображение реального состояния панорамы/шторки после нахождения telemetry.
 
 ## 7. Home Assistant architecture
 
@@ -200,64 +203,70 @@
 - ✅ `lock`;
 - ✅ `climate`;
 - ✅ `number`;
-- ⏳ `switch` для функций с реальным readback;
-- ⏳ `select` для seat levels / режимов;
-- ⏳ diagnostics platform;
-- ⏳ Repairs integration для проблем авторизации/API;
-- ⏳ entity translations RU/EN;
-- ⏳ device capabilities.
+- ✅ diagnostics export с редактированием чувствительных данных;
+- ✅ RU / EN translations;
+- ⏳ `switch` для функций с подтверждённым readback;
+- ⏳ `select` для подтверждённых многоуровневых функций;
+- ⏳ Repairs для длительных cloud/API проблем;
+- ⏳ полноценное создание сущностей по capabilities конкретной машины;
+- ⏳ multi-vehicle architecture.
 
 ## 8. Надёжность и безопасность
 
-- ✅ общий command cooldown;
-- ✅ polling результата T5;
-- ✅ experimental buttons disabled by default;
-- ⏳ command queue;
-- ⏳ блокировка конфликтующих T5-команд;
-- ⏳ защита от повторного нажатия в frontend;
-- ⏳ проверка lock state перед remote engine start;
-- ⏳ понятные Home Assistant errors;
-- ⏳ автоматическое удаление персональных данных из diagnostics;
-- ⏳ тесты token refresh;
-- ⏳ тесты timeout / GWM outage.
+- ✅ serialized remote commands;
+- ✅ command cooldown;
+- ✅ T5 result polling;
+- ✅ защита remote start по свежей телеметрии;
+- ✅ frontend-защита от повторных remote-команд;
+- ✅ reauth;
+- ✅ диагностическое скрытие VIN, номера автомобиля, токенов, IMSI/ICCID, координат и других чувствительных полей;
+- ✅ unit tests для protocol / capabilities / vehicle data / command safety;
+- ⏳ дополнительные тесты auth refresh / API outage;
+- ⏳ расширенные тесты timeout и неожиданных ответов GWM.
 
-## 9. Публичный релиз и HACS
+## 9. GitHub / HACS
 
-- ✅ структура HACS custom integration;
+- ✅ публичный GitHub repository;
 - ✅ MIT License;
-- ✅ local Home Assistant brand assets;
-- ✅ README;
-- ✅ THIRD_PARTY_NOTICES;
-- ⏳ GitHub Actions: HACS validation;
-- ⏳ GitHub Actions: hassfest;
-- ⏳ unit tests;
-- ⏳ tagged pre-releases;
-- ⏳ public repository;
-- ⏳ публикация стабильного `v1.0.0`;
-- ⏳ заявка в HACS default repositories после стабилизации.
+- ✅ README / ROADMAP / CHANGELOG / THIRD_PARTY_NOTICES;
+- ✅ branding assets;
+- ✅ HACS metadata;
+- ✅ GitHub repository topics;
+- ✅ HACS validation;
+- ✅ Hassfest;
+- ✅ Python / JSON / YAML / JavaScript checks;
+- ✅ unit tests в GitHub Actions;
+- ✅ автоматические versioned GitHub Releases;
+- ✅ HACS показывает версии релизов вместо SHA;
+- ⏳ стабильный `1.0.0`;
+- ⏳ заявка в default repositories HACS после стабилизации.
 
-## 10. План релизов
+## 10. Версии
 
-### `0.1.x` — Protocol Alpha
+### `0.1.0-alpha.10` — Reliability
 
-Телеметрия, основные команды, climate, сбор raw-кодов.
+Надёжность удалённых команд, remote-start guard, reauth и понятные состояния выполнения без добавления новых payload автомобиля.
 
-### `0.2.x` — Comfort Alpha
+### Следующие `0.1.x`
 
-Defrost, сиденья, руль, Cabin Clean, расширенный `vehicleBasicsInfo`.
+Физическое подтверждение уже реализованных экспериментальных функций и дальнейшая расшифровка телеметрии.
 
-### `0.3.x` — Jolion Card
+### `0.2.x` — Comfort
 
-Стабильная встроенная карточка и visual editor.
+Подогревы, defrost, сиденья и другие comfort-функции после подтверждения протокола.
+
+### `0.3.x` — Card / UX
+
+Visual editor, настройка секций и поддержка нескольких автомобилей в карточке.
 
 ### `0.4.x` — Deep Telemetry
 
-TPMS statuses, свет, T-Box diagnostics, температуры и 12V.
+TPMS status, температуры, 12V и дополнительные диагностические сигналы.
 
 ### `0.5.x` — Multi-car / Capabilities
 
-Несколько машин, разные комплектации, автоматическое создание только поддерживаемых entities.
+Несколько автомобилей и автоматическое создание только поддерживаемых сущностей.
 
 ### `1.0.0`
 
-Стабильный релиз после физических проверок ключевых функций минимум на нескольких Haval Jolion.
+Стабильный релиз после физических проверок ключевых функций на нескольких Haval Jolion.
