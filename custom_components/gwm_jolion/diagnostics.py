@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -14,24 +15,10 @@ from .protocol import signal_report
 
 _REDACTED = "**REDACTED**"
 _SENSITIVE_NORMALIZED_KEYS = {
-    "accesstoken",
-    "account",
-    "deviceid",
-    "engineno",
-    "iccid",
-    "imsi",
-    "latitude",
-    "longitude",
-    "password",
-    "phone",
-    "securitypassword",
-    "securitypin",
-    "shareid",
-    "showedvin",
-    "token",
-    "vehicleid",
-    "vehiclenumber",
-    "vin",
+    "accesstoken", "account", "deviceid", "engineno", "iccid", "imsi",
+    "latitude", "longitude", "password", "phone", "securitypassword",
+    "securitypin", "shareid", "showedvin", "token", "vehicleid",
+    "vehiclenumber", "vin",
 }
 
 
@@ -61,26 +48,14 @@ def _redact(value: Any) -> Any:
 def _diagnostics_payload(entry: ConfigEntry, coordinator: GwmJolionCoordinator) -> dict[str, Any]:
     data = coordinator.data or {}
     state = data.get("state") or {}
-    public_state = {
-        key: value
-        for key, value in state.items()
-        if not str(key).startswith("_")
-    }
+    public_state = {key: value for key, value in state.items() if not str(key).startswith("_")}
     last_update = coordinator.last_successful_update
     last_command = coordinator.last_command_at
+    capture_name = Path(coordinator.protocol_capture_path).name if coordinator.protocol_capture_path else None
 
     return {
-        "integration": {
-            "domain": DOMAIN,
-            "version": VERSION,
-            "entry_title": entry.title,
-        },
-        "config": _redact(
-            {
-                "data": dict(entry.data),
-                "options": dict(entry.options),
-            }
-        ),
+        "integration": {"domain": DOMAIN, "version": VERSION, "entry_title": entry.title},
+        "config": _redact({"data": dict(entry.data), "options": dict(entry.options)}),
         "vehicle": _redact(data.get("vehicle") or {}),
         "state": _redact(public_state),
         "vehicle_basics": _redact(data.get("vehicle_basics") or {}),
@@ -91,6 +66,12 @@ def _diagnostics_payload(entry: ConfigEntry, coordinator: GwmJolionCoordinator) 
             "unknown_signal_history": _redact(coordinator.unknown_signal_history),
             "signal_change_history": _redact(coordinator.signal_change_history),
             "capabilities": coordinator.capability_report,
+        },
+        "protocol_capture": {
+            "enabled": coordinator.protocol_capture_enabled,
+            "file_name": capture_name,
+            "records_written": coordinator.protocol_capture_sequence,
+            "last_error": coordinator.protocol_capture_last_error,
         },
         "protocol": signal_report(coordinator.seen_signal_codes),
         "last_remote_command": {
@@ -109,26 +90,15 @@ def _diagnostics_payload(entry: ConfigEntry, coordinator: GwmJolionCoordinator) 
     }
 
 
-async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-) -> dict[str, Any]:
+async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     """Return redacted diagnostics for a config entry."""
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
     return _diagnostics_payload(entry, coordinator)
 
 
-async def async_get_device_diagnostics(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    device: DeviceEntry,
-) -> dict[str, Any]:
+async def async_get_device_diagnostics(hass: HomeAssistant, entry: ConfigEntry, device: DeviceEntry) -> dict[str, Any]:
     """Return the same safe diagnostics from the vehicle device page."""
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
     payload = _diagnostics_payload(entry, coordinator)
-    payload["device"] = {
-        "name": device.name,
-        "model": device.model,
-        "manufacturer": device.manufacturer,
-    }
+    payload["device"] = {"name": device.name, "model": device.model, "manufacturer": device.manufacturer}
     return payload
