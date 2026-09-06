@@ -89,6 +89,7 @@ def _diagnostics_payload(entry: ConfigEntry, coordinator: GwmJolionCoordinator) 
             "last_successful_update": last_update.isoformat() if last_update else None,
             "seen_signal_codes": sorted(coordinator.seen_signal_codes),
             "unknown_signal_history": _redact(coordinator.unknown_signal_history),
+            "signal_change_history": _redact(coordinator.signal_change_history),
             "capabilities": coordinator.capability_report,
         },
         "protocol": signal_report(coordinator.seen_signal_codes),
