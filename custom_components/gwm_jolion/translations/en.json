@@ -32,7 +32,7 @@
     "step": {
       "init": {
         "title": "GWM Jolion settings",
-        "description": "PIN: {pin_status}. Protocol capture creates a separate JSONL session under /config/gwm_jolion_protocol_capture and records every successful refresh without VIN, exact location, tokens, account data or device identifiers. Optional equipment can also be configured below.",
+        "description": "PIN: {pin_status}. Protocol capture creates a JSONL session under /config/gwm_jolion_protocol_capture, and the current session is also embedded into standard Home Assistant diagnostics. Automatic capture records exclude VIN, exact location, tokens, account data and device identifiers. Optional equipment can also be configured below.",
         "data": {
           "poll_interval": "Polling interval, seconds",
           "enable_remote_controls": "Enable remote controls",
@@ -75,6 +75,7 @@
     "steering_wheel_heat_off": {"name": "Turn off steering-wheel heat", "description": "Turns off steering-wheel heating."},
     "front_defrost_on": {"name": "Turn on front defrost (experimental)", "description": "Experimental front-windscreen defrost command."},
     "front_defrost_off": {"name": "Turn off front defrost (experimental)", "description": "Experimental front-defrost off command."},
-    "cabin_clean": {"name": "Ventilate cabin for 60 seconds (experimental)", "description": "Experimental Cabin Clean / cabin ventilation command."}
+    "cabin_clean": {"name": "Ventilate cabin for 60 seconds (experimental)", "description": "Experimental Cabin Clean / cabin ventilation command."},
+    "add_capture_marker": {"name": "Add GWM capture marker", "description": "Adds a short user marker to the active JSONL capture without changing the telemetry baseline.", "fields": {"label": {"name": "Marker", "description": "Short test-step label, for example DRIVER_SEAT_L3. Do not enter personal or secret data."}}}
   }
 }
