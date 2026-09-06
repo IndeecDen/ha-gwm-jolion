@@ -183,20 +183,22 @@ def read_jsonl_for_diagnostics(
                 else:
                     invalid_lines += 1
     except OSError as err:
+        valid_lines_seen = max(0, records_in_file - invalid_lines)
         return {
             "records": records,
             "records_in_file": records_in_file,
             "records_exported": len(records),
-            "truncated": records_in_file > len(records),
+            "truncated": valid_lines_seen > len(records),
             "invalid_lines": invalid_lines,
             "read_error": str(err),
         }
 
+    valid_lines_seen = max(0, records_in_file - invalid_lines)
     return {
         "records": records,
         "records_in_file": records_in_file,
         "records_exported": len(records),
-        "truncated": records_in_file > len(records),
+        "truncated": valid_lines_seen > len(records),
         "invalid_lines": invalid_lines,
         "read_error": None,
     }
