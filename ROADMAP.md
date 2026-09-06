@@ -122,8 +122,9 @@
 - 🟢 climate ON;
 - 🧪 climate OFF;
 - 🧪 сохранение настроек через `modifyVehicleRemoteCtlInfo`;
-- 🧪 `vehicleBasicsInfo`;
-- ✅ безопасная диагностика ответа `vehicleBasicsInfo` без публикации значений;
+- 🟢 `vehicleBasicsInfo`;
+- ✅ разбор российского ответа `vehicleBasicsInfo` с вложенностью `data → config`;
+- ✅ безопасный whitelist snapshot полезных climate/comfort значений без VIN, user ID и других идентификаторов;
 - ⏳ реальное оставшееся время работы;
 - ⏳ синхронизация настроек HA ↔ GWM App;
 - ⏳ blowing mode / power gear, если поддерживаются Jolion.
@@ -242,6 +243,10 @@
 - ⏳ заявка в default repositories HACS после стабилизации.
 
 ## 10. Версии
+
+### `0.1.0-alpha.11` — vehicleBasicsInfo
+
+Исправлен разбор `vehicleBasicsInfo → data → config`. Диагностика теперь сохраняет только разрешённые climate/comfort значения, включая параметры сидений, defrost, `skyLight` и `shadeScreen`, без чувствительных идентификаторов. Новых remote payload автомобиля нет.
 
 ### `0.1.0-alpha.10` — Reliability
 
