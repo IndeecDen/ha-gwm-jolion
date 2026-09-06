@@ -8,27 +8,9 @@ from typing import Any
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import ITEM_MAP, KPA_TO_BAR, RAW_SENSOR_MAP, VEHICLE_STATUS_MAP, Conversion
+from .vehicle_basics import flatten_vehicle_basics, vehicle_basics_snapshot
 
 _LOGGER = logging.getLogger(__name__)
-
-VEHICLE_BASICS_SAFE_KEYS = {
-    "airConditionerTemperature",
-    "airConditionerStatusTime",
-    "airConditionerTime",
-    "engineStatusTime",
-    "seatHeatingControlTime",
-    "seatHeatingType",
-    "leftFrontSeat",
-    "rightFrontSeat",
-    "frontDefrostStatus",
-    "backDefrostStatus",
-    "airPurifierStatus",
-    "purifierTime",
-    "blowingMode",
-    "powerGear",
-    "cabinCleanNum",
-    "cabinCleanTime",
-}
 
 
 def normalize_phone(raw: str) -> str:
@@ -72,35 +54,12 @@ def _seconds_to_minutes(value: Any) -> int | float | None:
     return int(minutes) if minutes.is_integer() else round(minutes, 1)
 
 
-def _flatten_vehicle_basics(basics: dict[str, Any]) -> dict[str, Any]:
-    """Flatten known nesting variants returned by vehicleBasicsInfo."""
-    if not isinstance(basics, dict) or not basics:
-        return {}
-    candidates = [basics]
-    for key in ("vehicleBasicsInfo", "remoteControlInfo", "remoteControl", "data"):
-        nested = basics.get(key)
-        if isinstance(nested, dict):
-            candidates.append(nested)
-    merged: dict[str, Any] = {}
-    for candidate in candidates:
-        merged.update(candidate)
-    return merged
-
-
-def vehicle_basics_snapshot(basics: dict[str, Any]) -> dict[str, Any]:
-    """Return only non-sensitive vehicleBasicsInfo fields useful for diagnostics."""
-    merged = _flatten_vehicle_basics(basics)
-    return {
-        key: merged[key]
-        for key in sorted(VEHICLE_BASICS_SAFE_KEYS)
-        if key in merged and merged[key] is not None
-    }
-
-
 def merge_vehicle_basics(state: dict[str, Any], basics: dict[str, Any]) -> None:
-    merged = _flatten_vehicle_basics(basics)
+    """Merge conservative vehicleBasicsInfo fields into coordinator state."""
+    merged = flatten_vehicle_basics(basics)
     if not merged:
         return
+
     mappings = {
         "airConditionerTemperature": ("climate_saved_temperature", value_to_number),
         "airConditionerStatusTime": ("climate_saved_runtime", _seconds_to_minutes),
@@ -109,17 +68,31 @@ def merge_vehicle_basics(state: dict[str, Any], basics: dict[str, Any]) -> None:
         "seatHeatingControlTime": ("seat_heat_saved_runtime", _seconds_to_minutes),
         "seatHeatingType": ("seat_heating_type_raw", value_to_number),
         "frontDefrostStatus": ("front_defrost_status_basics_raw", value_to_number),
+        "frontDefrostTime": ("front_defrost_saved_runtime", _seconds_to_minutes),
         "backDefrostStatus": ("rear_defrost_status_basics_raw", value_to_number),
+        "rearDefrostTime": ("rear_defrost_saved_runtime", _seconds_to_minutes),
+        "frontWindshieldFullScreenHeatingTime": (
+            "front_windscreen_heat_saved_runtime",
+            _seconds_to_minutes,
+        ),
+        "steeringWheelHeatingTime": ("steering_wheel_heat_saved_runtime", _seconds_to_minutes),
         "airPurifierStatus": ("air_purifier_status_raw", value_to_number),
+        "airPurifierTime": ("purifier_runtime", _seconds_to_minutes),
         "purifierTime": ("purifier_runtime", _seconds_to_minutes),
+        "skyLight": ("sunroof_basics_raw", value_to_number),
+        "shadeScreen": ("sunshade_basics_raw", value_to_number),
     }
     for cloud_key, (state_key, converter) in mappings.items():
         if cloud_key in merged and merged[cloud_key] is not None:
             state[state_key] = converter(merged[cloud_key])
+
+    # Main telemetry signals remain authoritative.  Seat values from
+    # vehicleBasicsInfo are used only as a fallback when the live signal is absent.
     if state.get("driver_seat_heat_level_raw") is None and merged.get("leftFrontSeat") is not None:
         state["driver_seat_heat_level_raw"] = value_to_number(merged["leftFrontSeat"])
     if state.get("passenger_seat_heat_level_raw") is None and merged.get("rightFrontSeat") is not None:
         state["passenger_seat_heat_level_raw"] = value_to_number(merged["rightFrontSeat"])
+
     _LOGGER.debug("vehicleBasicsInfo keys: %s", sorted(merged.keys()))
 
 
