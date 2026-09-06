@@ -66,7 +66,7 @@
 - ✅ различение источника capture-записи: `poll`, `manual_button`, `remote_command`, `remote_start_guard`;
 - ✅ пользовательские маркеры этапов теста без изменения telemetry baseline;
 - ✅ диагностический сенсор состояния Protocol Capture;
-- ✅ экспорт текущей capture-сессии внутри стандартной диагностики Home Assistant с ограничением размера.
+- ✅ экспорт текущей capture-сессии внутри стандартной диагностики Home Assistant: первый baseline + до 5000 самых свежих корректных записей; полный JSONL не обрезается.
 
 ### Нужно найти / подтвердить
 
@@ -261,7 +261,7 @@
 - ✅ capture-ошибки не прерывают основной polling автомобиля;
 - ✅ unit tests для protocol / capabilities / vehicle data / command safety;
 - ✅ unit tests ручных capability-настроек и сопоставления команд/сущностей;
-- ✅ unit tests JSONL baseline/diff/marker/diagnostics export;
+- ✅ unit tests JSONL baseline/diff/marker/diagnostics export, включая сохранение первого baseline + последних записей;
 - ⏳ дополнительные тесты auth refresh / API outage;
 - ⏳ расширенные тесты timeout и неожиданных ответов GWM.
 
@@ -284,9 +284,13 @@
 
 ## 10. Версии
 
+### `0.1.0-alpha.19.1` — Baseline-preserving diagnostics export
+
+Диагностический hotfix Protocol Capture: стандартная диагностика Home Assistant теперь всегда сохраняет первый telemetry baseline отдельно и добавляет до 5000 самых свежих корректных записей. Baseline не входит в лимит, поэтому максимальный `session_export.records` — 5001 запись. Полный JSONL-журнал не обрезается. Добавлены явные поля `baseline_preserved`, `valid_records_in_file`, `recent_records_limit` и `selection`. Новых GWM remote payload или telemetry mappings нет.
+
 ### `0.1.0-alpha.19` — Protocol capture tooling
 
-Protocol Capture подготовлен к полевой сессии: текущий JSONL-журнал вкладывается в стандартную диагностику Home Assistant, добавлен диагностический сенсор состояния записи и сервис `gwm_jolion.add_capture_marker` для меток этапов. Маркеры не меняют telemetry baseline. Экспорт ограничен 2000 записями и явно сообщает о truncation/invalid lines. Новых GWM remote payload нет.
+Protocol Capture подготовлен к полевой сессии: текущий JSONL-журнал вкладывается в стандартную диагностику Home Assistant, добавлен диагностический сенсор состояния записи и сервис `gwm_jolion.add_capture_marker` для меток этапов. Маркеры не меняют telemetry baseline. Экспорт был ограничен 2000 записями; политика экспорта улучшена в `0.1.0-alpha.19.1`. Новых GWM remote payload нет.
 
 ### `0.1.0-alpha.18` — Protocol capture mode
 
