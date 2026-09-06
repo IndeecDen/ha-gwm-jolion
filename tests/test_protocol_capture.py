@@ -126,18 +126,43 @@ def test_append_jsonl_appends_independent_records(tmp_path):
     assert json.loads(lines[1]) == {"seq": 2, "value": "второй"}
 
 
-def test_diagnostics_reader_exports_bounded_session(tmp_path):
+def test_diagnostics_reader_preserves_baseline_plus_latest_records(tmp_path):
     capture = load_capture_module()
     path = tmp_path / "capture.jsonl"
-    for seq in range(1, 4):
-        capture.append_jsonl(path, {"seq": seq, "type": "refresh"})
+    capture.append_jsonl(path, {"seq": 1, "type": "marker", "label": "BEFORE"})
+    capture.append_jsonl(path, {"seq": 2, "type": "refresh", "baseline": True})
+    capture.append_jsonl(path, {"seq": 3, "type": "refresh", "baseline": False})
+    capture.append_jsonl(path, {"seq": 4, "type": "marker", "label": "STEP"})
+    capture.append_jsonl(path, {"seq": 5, "type": "refresh", "baseline": False})
 
     exported = capture.read_jsonl_for_diagnostics(path, max_records=2)
-    assert exported["records_in_file"] == 3
-    assert exported["records_exported"] == 2
+    assert exported["records_in_file"] == 5
+    assert exported["valid_records_in_file"] == 5
+    assert exported["records_exported"] == 3
     assert exported["truncated"] is True
-    assert [item["seq"] for item in exported["records"]] == [1, 2]
+    assert exported["baseline_preserved"] is True
+    assert exported["recent_records_limit"] == 2
+    assert exported["selection"] == "first_baseline_plus_latest"
+    assert [item["seq"] for item in exported["records"]] == [2, 4, 5]
     assert exported["read_error"] is None
+
+
+def test_diagnostics_reader_default_limit_is_5000():
+    capture = load_capture_module()
+    assert capture.MAX_DIAGNOSTICS_RECORDS == 5000
+
+
+def test_diagnostics_reader_exports_short_session_completely(tmp_path):
+    capture = load_capture_module()
+    path = tmp_path / "capture.jsonl"
+    capture.append_jsonl(path, {"seq": 1, "type": "refresh", "baseline": True})
+    capture.append_jsonl(path, {"seq": 2, "type": "marker", "label": "STEP"})
+    capture.append_jsonl(path, {"seq": 3, "type": "refresh", "baseline": False})
+
+    exported = capture.read_jsonl_for_diagnostics(path, max_records=5000)
+    assert exported["records_exported"] == 3
+    assert exported["truncated"] is False
+    assert [item["seq"] for item in exported["records"]] == [1, 2, 3]
 
 
 def test_diagnostics_reader_reports_invalid_lines(tmp_path):
@@ -147,6 +172,8 @@ def test_diagnostics_reader_reports_invalid_lines(tmp_path):
 
     exported = capture.read_jsonl_for_diagnostics(path)
     assert exported["records_in_file"] == 2
+    assert exported["valid_records_in_file"] == 1
     assert exported["records_exported"] == 1
     assert exported["invalid_lines"] == 1
+    assert exported["baseline_preserved"] is False
     assert exported["truncated"] is False
