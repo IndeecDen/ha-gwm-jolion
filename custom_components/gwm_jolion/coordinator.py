@@ -17,8 +17,9 @@ from .api import GwmJolionApiClient, GwmJolionApiError
 from .capabilities import CAPABILITIES, capability_for_command, capability_report
 from .command_safety import remote_start_block_reason
 from .commands import COMMANDS
-from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN
+from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN, VERSION
 from .protocol import SIGNALS, VerificationStatus, update_signal_change_history
+from .protocol_capture import append_jsonl, build_capture_record
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ def _friendly_remote_error(err: Exception) -> str:
 
 
 class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Coordinate polling, diagnostics and serialized remote commands."""
+    """Coordinate polling, diagnostics, protocol capture and remote commands."""
 
     def __init__(
         self,
@@ -58,6 +59,8 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         command_cooldown: int,
         security_pin: str | None,
         feature_flags: dict[str, bool] | None = None,
+        protocol_capture_enabled: bool = False,
+        protocol_capture_path: str | None = None,
     ) -> None:
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=poll_interval))
         self.client = client
@@ -66,6 +69,13 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.command_cooldown = command_cooldown
         self.security_pin = security_pin
         self.feature_flags = dict(feature_flags or {})
+        self.protocol_capture_enabled = protocol_capture_enabled
+        self.protocol_capture_path = protocol_capture_path
+        self.protocol_capture_sequence = 0
+        self.protocol_capture_last_error: str | None = None
+        self._protocol_capture_last_signals: dict[str, Any] = {}
+        self._protocol_capture_last_basics: dict[str, Any] = {}
+        self._next_update_source = "poll"
         self._last_command_time = 0.0
         self._command_lock = asyncio.Lock()
         self.climate_target_temperature = DEFAULT_CLIMATE_TEMPERATURE
@@ -82,6 +92,8 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.seen_signal_codes: set[str] = set()
 
     async def _async_update_data(self) -> dict[str, Any]:
+        source = self._next_update_source
+        self._next_update_source = "poll"
         data = await self.client.async_update()
         now = datetime.now(timezone.utc)
         state = data.get("state") or {}
@@ -116,8 +128,69 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if unknown_for_history:
             self._track_unknown_signals(unknown_for_history, now)
 
+        if self.protocol_capture_enabled and self.protocol_capture_path:
+            await self._async_capture_protocol_update(
+                timestamp=now,
+                source=source,
+                signals=signals_for_change_history,
+                unknown_signals=unknown_for_history,
+                vehicle_basics=data.get("vehicle_basics") or {},
+            )
+
         self.last_successful_update = now
         return data
+
+    async def _async_capture_protocol_update(
+        self,
+        *,
+        timestamp: datetime,
+        source: str,
+        signals: dict[str, Any],
+        unknown_signals: dict[str, Any],
+        vehicle_basics: dict[str, Any],
+    ) -> None:
+        """Append one successful cloud update to the active JSONL capture."""
+        normalized_signals = {str(code): value for code, value in signals.items()}
+        normalized_unknown = {str(code): value for code, value in unknown_signals.items()}
+        normalized_basics = {
+            str(key): value for key, value in vehicle_basics.items()
+        } if isinstance(vehicle_basics, dict) else {}
+        sequence = self.protocol_capture_sequence + 1
+        record = build_capture_record(
+            sequence=sequence,
+            timestamp=timestamp,
+            source=source,
+            integration_version=VERSION,
+            signals=normalized_signals,
+            previous_signals=self._protocol_capture_last_signals,
+            unknown_signals=normalized_unknown,
+            vehicle_basics=normalized_basics,
+            previous_vehicle_basics=self._protocol_capture_last_basics,
+        )
+        try:
+            await self.hass.async_add_executor_job(
+                append_jsonl,
+                self.protocol_capture_path,
+                record,
+            )
+        except Exception as err:  # capture must never break vehicle polling
+            self.protocol_capture_last_error = str(err)
+            _LOGGER.warning("Cannot append GWM protocol capture: %s", err)
+            return
+
+        self.protocol_capture_sequence = sequence
+        self.protocol_capture_last_error = None
+        self._protocol_capture_last_signals = dict(normalized_signals)
+        self._protocol_capture_last_basics = dict(normalized_basics)
+
+    async def async_request_refresh_with_source(self, source: str) -> None:
+        """Request a refresh and tag the next successful update with its source."""
+        self._next_update_source = source
+        try:
+            await self.async_request_refresh()
+        finally:
+            if self._next_update_source == source:
+                self._next_update_source = "poll"
 
     def _track_unknown_signals(self, unknown: dict[str, Any], now: datetime) -> None:
         timestamp = now.isoformat()
@@ -191,7 +264,7 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             async with self._command_lock:
                 if command_key == "start_engine":
-                    await self.async_request_refresh()
+                    await self.async_request_refresh_with_source("remote_start_guard")
                     reason = remote_start_block_reason((self.data or {}).get("state") or {})
                     if reason:
                         raise HomeAssistantError(
@@ -228,8 +301,6 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.last_command_result_message = str(result.get("resultMsg") or "Команда выполнена")
                 self.async_update_listeners()
         finally:
-            # The lock is already released here. Publish one more state update so
-            # last_command.in_progress cannot remain stuck at true in Lovelace.
             if command_started:
                 self.async_update_listeners()
 
@@ -237,7 +308,7 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise HomeAssistantError("GWM не вернул результат удалённой команды")
 
         try:
-            await self.async_request_refresh()
+            await self.async_request_refresh_with_source("remote_command")
         except ConfigEntryAuthFailed:
             raise
         except Exception as err:
