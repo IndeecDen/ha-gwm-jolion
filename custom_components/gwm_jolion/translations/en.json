@@ -32,13 +32,23 @@
     "step": {
       "init": {
         "title": "GWM Jolion settings",
-        "description": "PIN: {pin_status}. Experimental buttons are disabled by default in the entity registry.",
+        "description": "PIN: {pin_status}. Disable equipment that is not installed on this vehicle. GWM exposes a generic configuration template, so optional hardware is currently selected manually.",
         "data": {
           "poll_interval": "Polling interval, seconds",
           "enable_remote_controls": "Enable remote controls",
           "command_cooldown_seconds": "Delay between commands, seconds",
           "security_pin": "New vehicle security PIN",
-          "clear_security_pin": "Remove saved PIN"
+          "clear_security_pin": "Remove saved PIN",
+          "feature_sunroof": "Panoramic roof / sunroof",
+          "feature_sunshade": "Panoramic roof sunshade",
+          "feature_steering_wheel_heat": "Heated steering wheel",
+          "feature_rear_defrost": "Rear-window defrost",
+          "feature_front_defrost": "Front defrost / intensive airflow",
+          "feature_front_windscreen_heat": "Electric windscreen heating",
+          "feature_driver_seat_heat": "Driver seat heating",
+          "feature_passenger_seat_heat": "Passenger seat heating",
+          "feature_cabin_clean": "Cabin Clean / ventilation",
+          "feature_air_purifier": "Air purifier"
         }
       }
     }
