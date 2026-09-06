@@ -53,3 +53,11 @@ steering_wheel_heat_off: {}
 front_defrost_on: {}
 front_defrost_off: {}
 cabin_clean: {}
+add_capture_marker:
+  fields:
+    label:
+      required: true
+      example: DRIVER_SEAT_L3
+      selector:
+        text:
+          multiline: false
