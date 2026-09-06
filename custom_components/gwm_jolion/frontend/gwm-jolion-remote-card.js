@@ -1,6 +1,6 @@
-/* GWM Jolion Remote Card v0.1.0-alpha.13 */
+/* GWM Jolion Remote Card v0.1.0-alpha.14 */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.13";
+  const CARD_VERSION = "0.1.0-alpha.14";
   const INTEGRATION = "gwm_jolion";
 
   const DEFAULT_CONTROLS = ["lock", "engine", "climate"];
