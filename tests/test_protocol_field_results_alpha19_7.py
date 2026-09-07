@@ -37,7 +37,17 @@ def test_high_beam_code_remains_candidate_not_confirmed() -> None:
 def test_const_exposes_raw_sensors_with_physical_names() -> None:
     const = _load("gwm_const_alpha19_7", "custom_components/gwm_jolion/const.py")
     assert const.VERSION == "0.1.0-alpha.19.7"
-    assert const.RAW_SENSOR_MAP["2210001"].name == "Окно переднее левое (raw)"
-    assert const.RAW_SENSOR_MAP["2210002"].name == "Окно переднее правое (raw)"
-    assert const.RAW_SENSOR_MAP["2210003"].name == "Окно заднее левое (raw)"
-    assert const.RAW_SENSOR_MAP["2210004"].name == "Окно заднее правое (raw)"
+    expected_raw = {
+        "2210001": "Окно переднее левое (raw)",
+        "2210002": "Окно переднее правое (raw)",
+        "2210003": "Окно заднее левое (raw)",
+        "2210004": "Окно заднее правое (raw)",
+    }
+    for code, name in expected_raw.items():
+        assert const.RAW_SENSOR_MAP[code].name == name
+
+    binary_names = {key: name for key, name, _device_class, _diagnostic in const.BINARY_SENSOR_DEFS}
+    assert binary_names["window_2210001_open"] == "Окно переднее левое"
+    assert binary_names["window_2210002_open"] == "Окно переднее правое"
+    assert binary_names["window_2210003_open"] == "Окно заднее левое"
+    assert binary_names["window_2210004_open"] == "Окно заднее правое"
