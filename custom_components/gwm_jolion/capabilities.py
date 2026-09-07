@@ -27,22 +27,21 @@ CAPABILITIES: dict[str, CapabilityDef] = {
     "central_lock": CapabilityDef("central_lock", "Центральный замок", CapabilityStatus.CONFIRMED, ("2208001",), ("lock_vehicle", "unlock_vehicle")),
     "trunk": CapabilityDef("trunk", "Багажник", CapabilityStatus.IMPLEMENTED, ("2206001",), ("open_trunk", "close_trunk")),
     "windows_close": CapabilityDef("windows_close", "Окна", CapabilityStatus.IMPLEMENTED, ("2210001", "2210002", "2210003", "2210004"), ("close_windows", "open_windows")),
-    "climate": CapabilityDef("climate", "Климат", CapabilityStatus.EXPERIMENTAL, ("2202001",), ()),
+    "climate": CapabilityDef("climate", "Климат", CapabilityStatus.CONFIRMED, ("2202001",), ()),
     "rear_defrost": CapabilityDef("rear_defrost", "Обогрев заднего стекла", CapabilityStatus.IMPLEMENTED, ("2210032",), ("rear_defrost_on", "rear_defrost_off")),
     "steering_wheel_heat": CapabilityDef("steering_wheel_heat", "Обогрев руля", CapabilityStatus.IMPLEMENTED, ("2060016",), ("steering_wheel_heat_on", "steering_wheel_heat_off")),
     "front_defrost": CapabilityDef("front_defrost", "Передний defrost", CapabilityStatus.EXPERIMENTAL, ("2222001",), ("front_defrost_on", "front_defrost_off")),
     "cabin_clean": CapabilityDef("cabin_clean", "Проветривание салона", CapabilityStatus.EXPERIMENTAL, ("2078020",), ("cabin_clean",)),
-    "seat_heat_driver": CapabilityDef("seat_heat_driver", "Подогрев сиденья водителя", CapabilityStatus.DISCOVERED, ("2220001",), ()),
-    "seat_heat_passenger": CapabilityDef("seat_heat_passenger", "Подогрев сиденья пассажира", CapabilityStatus.DISCOVERED, ("2220002",), ()),
+    "seat_heat_driver": CapabilityDef("seat_heat_driver", "Подогрев сиденья водителя", CapabilityStatus.CONFIRMED, ("2220001",), ()),
+    "seat_heat_passenger": CapabilityDef("seat_heat_passenger", "Подогрев сиденья пассажира", CapabilityStatus.CONFIRMED, ("2220002",), ()),
     "front_windscreen_heat": CapabilityDef("front_windscreen_heat", "Электрообогрев лобового стекла", CapabilityStatus.DISCOVERED, ("2202111",), ()),
     "air_purifier": CapabilityDef("air_purifier", "Очиститель воздуха", CapabilityStatus.DISCOVERED, ("2078020",), ()),
     "sunroof": CapabilityDef("sunroof", "Панорамная крыша / люк", CapabilityStatus.EXPERIMENTAL, (), ("open_sunroof", "close_sunroof")),
     "sunshade": CapabilityDef("sunshade", "Шторка панорамной крыши", CapabilityStatus.EXPERIMENTAL, (), ("open_sunshade", "close_sunshade")),
 }
 
-# Optional equipment is intentionally manual for now. vehicleBasicsInfo contains a
-# generic GWM template and therefore cannot be used as proof that hardware exists.
-MANUAL_CAPABILITY_OPTIONS: dict[str, str] = {
+
+_ALL_MANUAL_CAPABILITY_OPTIONS: dict[str, str] = {
     "sunroof": "feature_sunroof",
     "sunshade": "feature_sunshade",
     "steering_wheel_heat": "feature_steering_wheel_heat",
@@ -55,7 +54,24 @@ MANUAL_CAPABILITY_OPTIONS: dict[str, str] = {
     "air_purifier": "feature_air_purifier",
 }
 
-# Preserve alpha.11 behaviour until the user explicitly changes equipment options.
+_PUBLIC_MANUAL_CAPABILITIES = frozenset(
+    {
+        "steering_wheel_heat",
+        "rear_defrost",
+        "seat_heat_driver",
+        "seat_heat_passenger",
+    }
+)
+
+# alpha.20 only asks the user about equipment that currently affects a useful
+# public status or command. Discovery-only/experimental features remain in the
+# protocol model but are no longer shown in the normal Options Flow.
+MANUAL_CAPABILITY_OPTIONS: dict[str, str] = {
+    key: value
+    for key, value in _ALL_MANUAL_CAPABILITY_OPTIONS.items()
+    if key in _PUBLIC_MANUAL_CAPABILITIES
+}
+
 DEFAULT_MANUAL_CAPABILITIES: dict[str, bool] = {
     key: True for key in MANUAL_CAPABILITY_OPTIONS
 }
@@ -87,7 +103,7 @@ STATE_KEY_CAPABILITY: dict[str, str] = {
 
 
 def resolve_manual_capabilities(options: dict[str, object] | None) -> dict[str, bool]:
-    """Resolve optional equipment flags while preserving legacy defaults."""
+    """Resolve only public equipment flags from config-entry options."""
     source = options or {}
     return {
         capability: bool(source.get(option_key, DEFAULT_MANUAL_CAPABILITIES[capability]))

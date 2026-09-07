@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 DOMAIN = "gwm_jolion"
-VERSION = "0.1.0-alpha.19.7"
+VERSION = "0.1.0-alpha.20"
 PLATFORMS = ["button", "sensor", "binary_sensor", "device_tracker", "lock", "climate", "number"]
 
 CONF_PHONE = "phone"
@@ -74,6 +74,7 @@ class SensorDef:
     diagnostic: bool = False
 
 
+# Normal user-facing numeric telemetry.
 ITEM_MAP: dict[str, SensorDef] = {
     "2011007": SensorDef("range_km", "Запас хода", "km", "mdi:map-marker-distance", code="2011007"),
     "2017002": SensorDef("fuel_liters", "Топливо", "L", "mdi:fuel", code="2017002"),
@@ -88,6 +89,10 @@ ITEM_MAP: dict[str, SensorDef] = {
     "2101008": SensorDef("tire_rr_temp", "Температура шины: задняя правая", "°C", "mdi:thermometer", "temperature", "2101008"),
 }
 
+# Raw values are retained in coordinator state for protocol capture, card
+# attributes and future research.  alpha.20 no longer exposes this whole table
+# as Home Assistant sensor entities; entity_surface.py whitelists the two useful
+# seat-heater level sensors.
 RAW_SENSOR_MAP: dict[str, SensorDef] = {
     "2102001": SensorDef("tpms_pressure_fl_raw", "TPMS давление FL (raw)", icon="mdi:car-tire-alert", code="2102001", diagnostic=True),
     "2102002": SensorDef("tpms_pressure_fr_raw", "TPMS давление FR (raw)", icon="mdi:car-tire-alert", code="2102002", diagnostic=True),
@@ -105,8 +110,8 @@ RAW_SENSOR_MAP: dict[str, SensorDef] = {
     "2210011": SensorDef("window_learn_2210011_raw", "Обучение стекла 2210011 (raw)", icon="mdi:car-door", code="2210011", diagnostic=True),
     "2210012": SensorDef("window_learn_2210012_raw", "Обучение стекла 2210012 (raw)", icon="mdi:car-door", code="2210012", diagnostic=True),
     "2210013": SensorDef("window_learn_2210013_raw", "Обучение стекла 2210013 (raw)", icon="mdi:car-door", code="2210013", diagnostic=True),
-    "2220001": SensorDef("driver_seat_heat_level_raw", "Подогрев сиденья водителя (raw)", icon="mdi:car-seat-heater", code="2220001", diagnostic=True),
-    "2220002": SensorDef("passenger_seat_heat_level_raw", "Подогрев сиденья пассажира (raw)", icon="mdi:car-seat-heater", code="2220002", diagnostic=True),
+    "2220001": SensorDef("driver_seat_heat_level_raw", "Подогрев сиденья водителя", icon="mdi:car-seat-heater", code="2220001"),
+    "2220002": SensorDef("passenger_seat_heat_level_raw", "Подогрев сиденья пассажира", icon="mdi:car-seat-heater", code="2220002"),
     "2204007": SensorDef("light_2204007_raw", "Свет 2204007 (raw)", icon="mdi:car-light-high", code="2204007", diagnostic=True),
     "2204008": SensorDef("light_2204008_raw", "Дальний свет 2204008 (raw, кандидат)", icon="mdi:car-light-high", code="2204008", diagnostic=True),
     "2204009": SensorDef("left_indicator_raw", "Левый указатель поворота (raw)", icon="mdi:arrow-left-bold", code="2204009", diagnostic=True),
@@ -135,31 +140,13 @@ VEHICLE_STATUS_MAP: dict[str, str] = {
     "2078020": "air_circulation_raw",
 }
 
+# Only derived metadata that is genuinely useful as a standalone entity.
 EXTRA_SENSORS: dict[str, SensorDef] = {
-    "brand": SensorDef("brand", "Марка", icon="mdi:car"),
-    "model": SensorDef("model", "Модель", icon="mdi:car-info"),
     "fuel_percent": SensorDef("fuel_percent", "Уровень топлива", "%", "mdi:fuel"),
-    "color": SensorDef("color", "Цвет", icon="mdi:palette", diagnostic=True),
-    "engine_type": SensorDef("engine_type", "Двигатель", icon="mdi:engine", diagnostic=True),
-    "tank_capacity_l": SensorDef("tank_capacity_l", "Объём топливного бака", "L", "mdi:gas-station", diagnostic=True),
-    "vehicle_config": SensorDef("vehicle_config", "Конфигурация GWM", icon="mdi:car-cog", diagnostic=True),
-    "vehicle_type": SensorDef("vehicle_type", "Тип автомобиля GWM", icon="mdi:car-info", diagnostic=True),
-    "telematics_platform": SensorDef("telematics_platform", "Телематическая платформа", icon="mdi:cloud-outline", diagnostic=True),
-    "model_code_raw": SensorDef("model_code_raw", "Код модели GWM (raw)", icon="mdi:identifier", diagnostic=True),
-    "oil_qty": SensorDef("oil_qty", "Уровень масла GWM (0–8)", icon="mdi:oil", diagnostic=True),
-    "service_status": SensorDef("service_status", "Статус обслуживания (raw)", icon="mdi:car-connected", diagnostic=True),
-    "tbox_status": SensorDef("tbox_status", "Статус T-Box (raw)", icon="mdi:access-point-network", diagnostic=True),
-    "climate_saved_temperature": SensorDef("climate_saved_temperature", "Температура климата GWM", "°C", "mdi:thermometer", "temperature"),
-    "climate_saved_runtime": SensorDef("climate_saved_runtime", "Таймер климата GWM", "min", "mdi:timer-outline"),
-    "engine_saved_runtime": SensorDef("engine_saved_runtime", "Таймер автозапуска GWM", "min", "mdi:timer-outline", diagnostic=True),
-    "seat_heat_saved_runtime": SensorDef("seat_heat_saved_runtime", "Таймер подогрева сидений GWM", "min", "mdi:timer-outline", diagnostic=True),
-    "seat_heating_type_raw": SensorDef("seat_heating_type_raw", "Тип подогрева сидений (raw)", icon="mdi:car-seat-heater", diagnostic=True),
-    "front_defrost_status_basics_raw": SensorDef("front_defrost_status_basics_raw", "Front Defrost basics (raw)", icon="mdi:car-defrost-front", diagnostic=True),
-    "rear_defrost_status_basics_raw": SensorDef("rear_defrost_status_basics_raw", "Rear Defrost basics (raw)", icon="mdi:car-defrost-rear", diagnostic=True),
-    "air_purifier_status_raw": SensorDef("air_purifier_status_raw", "Очиститель воздуха (raw)", icon="mdi:air-filter", diagnostic=True),
-    "purifier_runtime": SensorDef("purifier_runtime", "Таймер очистителя воздуха", "min", "mdi:timer-outline", diagnostic=True),
 }
 
+# Public binary states.  Raw/unconfirmed helper states stay in coordinator.data
+# and diagnostics instead of generating entity-registry noise.
 BINARY_SENSOR_DEFS = (
     ("tbox_online", "T-Box онлайн", "connectivity", False),
     ("engine_running", "Двигатель работает", "running", False),
@@ -169,17 +156,10 @@ BINARY_SENSOR_DEFS = (
     ("door_front_right_open", "Дверь передняя правая", "door", False),
     ("door_rear_right_open", "Дверь задняя правая", "door", False),
     ("windows_open", "Окна открыты", "window", False),
-    ("window_2210001_open", "Окно переднее левое", "window", True),
-    ("window_2210002_open", "Окно переднее правое", "window", True),
-    ("window_2210003_open", "Окно заднее левое", "window", True),
-    ("window_2210004_open", "Окно заднее правое", "window", True),
+    ("window_2210001_open", "Окно переднее левое", "window", False),
+    ("window_2210002_open", "Окно переднее правое", "window", False),
+    ("window_2210003_open", "Окно заднее левое", "window", False),
+    ("window_2210004_open", "Окно заднее правое", "window", False),
     ("trunk_open", "Багажник открыт", "door", False),
-    ("vehicle_unlocked", "Автомобиль разблокирован", "lock", False),
     ("climate_on", "Климат работает", "running", False),
-    ("gps_authorized", "GPS доступен", "connectivity", True),
-    ("front_defrost_on", "Обдув лобового", None, True),
-    ("rear_defrost_on", "Обогрев заднего стекла", None, True),
-    ("steering_wheel_heat_on", "Обогрев руля", None, True),
-    ("front_windscreen_heat_on", "Электрообогрев лобового", None, True),
-    ("air_circulation_on", "Проветривание салона", None, True),
 )

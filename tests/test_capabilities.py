@@ -30,25 +30,34 @@ def test_capability_report_observes_telemetry():
     assert report["central_lock"]["telemetry_observed"] is True
     assert report["front_windscreen_heat"]["telemetry_observed"] is False
     assert report["engine"]["status"] == "confirmed"
+    assert report["climate"]["status"] == "confirmed"
 
 
-def test_manual_capabilities_preserve_legacy_defaults():
+def test_manual_capabilities_default_to_public_equipment_only():
     capabilities = load_module("gwm_capabilities_defaults_test", "custom_components/gwm_jolion/capabilities.py")
     flags = capabilities.resolve_manual_capabilities({})
-    assert flags
-    assert all(flags.values())
+    assert flags == {
+        "steering_wheel_heat": True,
+        "rear_defrost": True,
+        "seat_heat_driver": True,
+        "seat_heat_passenger": True,
+    }
+    assert "sunroof" not in capabilities.MANUAL_CAPABILITY_OPTIONS
+    assert "front_defrost" not in capabilities.MANUAL_CAPABILITY_OPTIONS
 
 
-def test_manual_capabilities_can_disable_optional_equipment():
+def test_manual_capabilities_can_disable_public_optional_equipment():
     capabilities = load_module("gwm_capabilities_disable_test", "custom_components/gwm_jolion/capabilities.py")
     flags = capabilities.resolve_manual_capabilities({
-        "feature_sunroof": False,
-        "feature_sunshade": False,
-        "feature_steering_wheel_heat": True,
+        "feature_steering_wheel_heat": False,
+        "feature_rear_defrost": True,
+        "feature_driver_seat_heat": False,
+        "feature_passenger_seat_heat": True,
     })
-    assert flags["sunroof"] is False
-    assert flags["sunshade"] is False
-    assert flags["steering_wheel_heat"] is True
+    assert flags["steering_wheel_heat"] is False
+    assert flags["rear_defrost"] is True
+    assert flags["seat_heat_driver"] is False
+    assert flags["seat_heat_passenger"] is True
 
 
 def test_command_and_state_capability_mapping():
@@ -62,7 +71,7 @@ def test_command_and_state_capability_mapping():
 
 def test_capability_report_includes_manual_enabled_state():
     capabilities = load_module("gwm_capabilities_enabled_test", "custom_components/gwm_jolion/capabilities.py")
-    report = capabilities.capability_report(set(), {"sunroof": False, "sunshade": True})
-    assert report["sunroof"]["enabled"] is False
-    assert report["sunshade"]["enabled"] is True
+    report = capabilities.capability_report(set(), {"rear_defrost": False, "seat_heat_driver": True})
+    assert report["rear_defrost"]["enabled"] is False
+    assert report["seat_heat_driver"]["enabled"] is True
     assert report["engine"]["enabled"] is True
