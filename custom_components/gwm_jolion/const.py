@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 DOMAIN = "gwm_jolion"
-VERSION = "0.1.0-alpha.19.2"
+VERSION = "0.1.0-alpha.19.3"
 PLATFORMS = ["button", "sensor", "binary_sensor", "device_tracker", "lock", "climate", "number"]
 
 CONF_PHONE = "phone"
@@ -165,10 +165,10 @@ BINARY_SENSOR_DEFS = (
     ("door_front_right_open", "Дверь передняя правая", "door", False),
     ("door_rear_right_open", "Дверь задняя правая", "door", False),
     ("windows_open", "Окна открыты", "window", False),
-    ("window_2210001_open", "Окно переднее правое", "window", True),
-    ("window_2210002_open", "Окно переднее левое", "window", True),
-    ("window_2210003_open", "Окно заднее правое", "window", True),
-    ("window_2210004_open", "Окно заднее левое", "window", True),
+    ("window_2210001_open", "Окно 2210001", "window", True),
+    ("window_2210002_open", "Окно 2210002", "window", True),
+    ("window_2210003_open", "Окно 2210003", "window", True),
+    ("window_2210004_open", "Окно 2210004", "window", True),
     ("trunk_open", "Багажник открыт", "door", False),
     ("vehicle_unlocked", "Автомобиль разблокирован", "lock", False),
     ("climate_on", "Климат работает", "running", False),
