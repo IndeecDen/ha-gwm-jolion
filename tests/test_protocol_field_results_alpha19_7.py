@@ -34,9 +34,9 @@ def test_high_beam_code_remains_candidate_not_confirmed() -> None:
     assert "LIGHT_HIGH" in info.notes
 
 
-def test_const_exposes_raw_sensors_with_physical_names() -> None:
-    const = _load("gwm_const_alpha19_7", "custom_components/gwm_jolion/const.py")
-    assert const.VERSION == "0.1.0-alpha.19.7"
+def test_const_keeps_raw_window_protocol_but_exposes_clean_binary_names() -> None:
+    const = _load("gwm_const_alpha20", "custom_components/gwm_jolion/const.py")
+    assert const.VERSION == "0.1.0-alpha.20"
     expected_raw = {
         "2210001": "Окно переднее левое (raw)",
         "2210002": "Окно переднее правое (raw)",
