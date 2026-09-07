@@ -22,7 +22,7 @@
 
 Основная карточка: состояние автомобиля, команды, климат, подогревы и шины.
 
-<p align="center"><img src="docs/gwm-jolion-card.png" alt="Основная карточка GWM Jolion с управлением климатом и подогревами" ></p>
+<p align="center"><img src="docs/gwm-jolion-card.png" alt="Основная карточка GWM Jolion с управлением климатом и подогревами"></p>
 
 ```yaml
 type: custom:gwm-jolion-card
@@ -32,7 +32,7 @@ type: custom:gwm-jolion-card
 
 Анимированная карточка-пульт с автоматической светлой или тёмной темой:
 
-<p align="center"><img src="docs/remote-starline-light.png" alt="Анимированная карточка-пульт" ></p>
+<p align="center"><img src="docs/remote-starline-light.png" alt="Анимированная карточка-пульт"></p>
 
 ```yaml
 type: custom:gwm-jolion-remote-card
