@@ -32,10 +32,6 @@ PUBLIC_COMMAND_BUTTON_KEYS: frozenset[str] = frozenset(
         "flash_and_horn",
         "open_trunk",
         "close_trunk",
-        "rear_defrost_on",
-        "rear_defrost_off",
-        "steering_wheel_heat_on",
-        "steering_wheel_heat_off",
     }
 )
 
@@ -44,8 +40,6 @@ PUBLIC_COMMAND_BUTTON_KEYS: frozenset[str] = frozenset(
 # but no longer clutter the normal Options Flow.
 PUBLIC_MANUAL_CAPABILITIES: frozenset[str] = frozenset(
     {
-        "steering_wheel_heat",
-        "rear_defrost",
         "seat_heat_driver",
         "seat_heat_passenger",
     }

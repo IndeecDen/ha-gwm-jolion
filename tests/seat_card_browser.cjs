@@ -23,6 +23,12 @@ const assert=require('node:assert/strict');
  await page.getByRole('button',{name:/Применить подогрев/}).click();
  assert.deepEqual(await page.evaluate(()=>window.calls[0]),['gwm_jolion','set_seat_heating',{entry_id:'car-2',operation_time:7,driver:3,passenger:1}]);
  assert.equal(await driver.inputValue(),'3');
+ await page.evaluate(()=>{const c=document.querySelector('gwm-jolion-card');c._entities.seatDriver='sensor.driver';c._hass.states['sensor.driver']={state:'2',attributes:{}};c._render();});
+ assert.match(await page.locator('[data-seat-status="driver"]').innerText(),/Включён · уровень 2/);
+ await page.evaluate(()=>{const c=document.querySelector('gwm-jolion-card');c._hass.states['sensor.driver'].state='0';c._render();});
+ assert.equal(await page.locator('[data-seat-status="driver"]').innerText(),'Выключен');
+ assert.equal(await page.getByRole('button',{name:/Обогрев руля|Обогрев заднего стекла/}).count(),0);
+
  await page.getByLabel('Таймер подогрева').fill('99');await page.getByLabel('Таймер подогрева').press('Tab');
  assert.equal(await page.getByLabel('Таймер подогрева').inputValue(),'7');
  assert.equal(await page.locator('gwm-jolion-card').locator('button').filter({hasText:'Окна'}).count(),1);

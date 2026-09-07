@@ -30,3 +30,18 @@ def test_reject_invalid_seat_settings(driver, passenger, time):
 def test_window_positions_match_android():
     assert commands.COMMANDS['close_windows']['instructions'] == {'0x08': {'window': dict(leftFront=0,leftBack=0,rightFront=0,rightBack=0)}}
     assert set(commands.COMMANDS['open_windows']['instructions']['0x08']['window'].values()) == {3}
+
+
+def test_unsupported_heaters_fail_before_network():
+    import ast
+    import asyncio
+    from types import SimpleNamespace
+    path = Path(__file__).resolve().parents[1] / 'custom_components/gwm_jolion/coordinator.py'
+    tree = ast.parse(path.read_text(encoding='utf-8'))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'GwmJolionCoordinator')
+    method = next(node for node in cls.body if isinstance(node, ast.AsyncFunctionDef) and node.name == 'async_execute_command')
+    scope = dict(UNSUPPORTED_COMMANDS=commands.UNSUPPORTED_COMMANDS, HomeAssistantError=RuntimeError, Any=object)
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(path), 'exec'), scope)
+    for key in commands.UNSUPPORTED_COMMANDS:
+        with pytest.raises(RuntimeError, match='отключено'):
+            asyncio.run(scope['async_execute_command'](SimpleNamespace(), key))

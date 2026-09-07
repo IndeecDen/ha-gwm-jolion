@@ -31,8 +31,8 @@ def test_public_entity_surface_is_curated() -> None:
     assert "start_engine" in surface.PUBLIC_COMMAND_BUTTON_KEYS
     assert "stop_engine" in surface.PUBLIC_COMMAND_BUTTON_KEYS
     assert "open_trunk" in surface.PUBLIC_COMMAND_BUTTON_KEYS
-    assert "rear_defrost_on" in surface.PUBLIC_COMMAND_BUTTON_KEYS
-    assert "steering_wheel_heat_on" in surface.PUBLIC_COMMAND_BUTTON_KEYS
+    assert "rear_defrost_on" not in surface.PUBLIC_COMMAND_BUTTON_KEYS
+    assert "steering_wheel_heat_on" not in surface.PUBLIC_COMMAND_BUTTON_KEYS
 
 
 def test_binary_surface_has_only_reliable_status_entities() -> None:
@@ -104,11 +104,11 @@ def test_alpha20_frontend_uses_clean_entity_attributes() -> None:
     patch = (ROOT / "custom_components/gwm_jolion/frontend/gwm-jolion-alpha20.js").read_text(encoding="utf-8")
     init_source = (ROOT / "custom_components/gwm_jolion/__init__.py").read_text(encoding="utf-8")
 
-    assert 'const VERSION = "0.1.0-alpha.22"' in patch
+    assert 'const VERSION = "0.1.0-alpha.23"' in patch
     assert 'signal_level_raw' in patch
     assert 'feature_flags' in patch
     assert 'last_successful_update' in patch
     assert 'if (id === "windows") return ""' not in patch
     assert 'entities.windowFl = oldFr' in patch
     assert 'entities.windowFr = oldFl' in patch
-    assert 'gwm-jolion-alpha20.js?v=0.1.0-alpha.22' in init_source
+    assert 'gwm-jolion-alpha20.js?v=0.1.0-alpha.23' in init_source

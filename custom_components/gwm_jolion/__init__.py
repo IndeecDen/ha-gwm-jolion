@@ -19,7 +19,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import GwmJolionApiClient
 from .capabilities import resolve_manual_capabilities
-from .commands import COMMANDS
+from .commands import COMMANDS, UNSUPPORTED_COMMANDS
 from .const import (
     CONF_COMMAND_COOLDOWN, CONF_COUNTRY, CONF_COUNTRY_CODE, CONF_DEVICE_ID,
     CONF_ENABLE_REMOTE_CONTROLS, CONF_PHONE, CONF_POLL_INTERVAL, CONF_SECURITY_PIN,
@@ -42,22 +42,22 @@ FRONTEND_ASSETS = (
     (
         FRONTEND_DIR / "gwm-jolion-card-editor.js",
         "/gwm-jolion/gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-alpha.22",
+        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-alpha.23",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card.js",
         "/gwm-jolion/gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.22",
+        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.23",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-remote-card.js",
         "/gwm-jolion/gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-alpha.22",
+        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-alpha.23",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-alpha20.js",
         "/gwm-jolion/gwm-jolion-alpha20.js",
-        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-alpha.22",
+        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-alpha.23",
     ),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
@@ -105,6 +105,12 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     await _async_register_frontend(hass)
+
+    registry = er.async_get(hass)
+    for key in UNSUPPORTED_COMMANDS:
+        entity_id = registry.async_get_entity_id("button", DOMAIN, f"{entry.entry_id}_cmd_{key}")
+        if entity_id:
+            registry.async_remove(entity_id)
 
     data = dict(entry.data)
     options = dict(entry.options)

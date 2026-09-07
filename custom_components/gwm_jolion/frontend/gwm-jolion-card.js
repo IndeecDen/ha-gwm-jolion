@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-alpha.22 */
+/* GWM Jolion Card v0.1.0-alpha.23 */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.22";
+  const CARD_VERSION = "0.1.0-alpha.23";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -234,7 +234,7 @@
       if (Number.isFinite(value)) {
         return value === 0
           ? "Выключен"
-          : `Уровень ${value}`;
+          : `Включён · уровень ${value}`;
       }
       return `${raw}`;
     }
@@ -1027,7 +1027,7 @@
       this._seatSettings ||= {driver: 0, passenger: 0, operation_time: 5};
       return `<div class="seat-panel" style="grid-column:1/-1;padding:12px;border:1px solid var(--divider-color);border-radius:12px">
         <strong>Подогрев сидений</strong>
-        ${seats.map(([key, , sensor, label]) => `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0">${label} · ${this._escape(this._seatValue(sensor))}
+        ${seats.map(([key, , sensor, label]) => `<label style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin:10px 0">${label}<span role="status" data-seat-status="${key}" style="font-weight:600;color:${Number(this._rawValue(sensor)) > 0 ? "var(--warning-color, #e58b12)" : "var(--secondary-text-color)"}">${this._escape(this._seatValue(sensor))}</span>
           <select aria-label="Подогрев: ${label}" data-seat-setting="${key}" style="padding:8px;background:var(--card-background-color);color:var(--primary-text-color)">${[0,1,2,3].map(level => `<option value="${level}" ${this._seatSettings[key] === level ? "selected" : ""}>${level ? `Уровень ${level}` : "Выключить"}</option>`).join("")}</select></label>`).join("")}
         <label style="display:flex;justify-content:space-between;align-items:center;margin:10px 0">Таймер, мин
           <input aria-label="Таймер подогрева" data-seat-setting="operation_time" type="number" min="1" max="10" step="1" value="${this._seatSettings.operation_time}" style="width:64px;padding:8px;background:var(--card-background-color);color:var(--primary-text-color)"></label>

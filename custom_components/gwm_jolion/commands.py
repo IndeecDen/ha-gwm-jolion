@@ -226,3 +226,9 @@ def build_seat_heating_instructions(driver: int | None, passenger: int | None, o
     if driver == 0 and passenger == 0:
         seat.update(switchOrder="2", operationTime="0", leftBack="0", rightBack="0")
     return {"0x0A": {"seat": seat}}
+
+
+UNSUPPORTED_COMMANDS = frozenset({
+    "rear_defrost_on", "rear_defrost_off",
+    "steering_wheel_heat_on", "steering_wheel_heat_off",
+})

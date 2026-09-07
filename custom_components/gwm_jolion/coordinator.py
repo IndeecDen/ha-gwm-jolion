@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .api import GwmJolionApiClient, GwmJolionApiError
 from .capabilities import CAPABILITIES, capability_for_command, capability_report
 from .command_safety import remote_start_block_reason
-from .commands import COMMANDS, build_seat_heating_instructions
+from .commands import COMMANDS, UNSUPPORTED_COMMANDS, build_seat_heating_instructions
 from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN, VERSION
 from .protocol import SIGNALS, VerificationStatus, update_signal_change_history
 from .protocol_capture import (
@@ -317,6 +317,8 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def feature_enabled(self, capability: str) -> bool:
         """Return whether optional equipment is enabled by the user."""
+        if capability in {"rear_defrost", "steering_wheel_heat"}:
+            return False
         return self.feature_flags.get(capability, True)
 
     def command_enabled(self, command_key: str) -> bool:
@@ -417,6 +419,8 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         *,
         operation_time: int | None = None,
     ) -> dict[str, Any]:
+        if command_key in UNSUPPORTED_COMMANDS:
+            raise HomeAssistantError("Управление этим обогревом не подтверждено и отключено")
         command = COMMANDS.get(command_key)
         if command is None:
             raise HomeAssistantError(f"Unknown command: {command_key}")
