@@ -204,6 +204,7 @@ class GwmJolionApiClient:
         instructions: dict[str, Any],
         expected_remote_type: str,
         security_pin: str | None = None,
+        remote_type: str = "0",
     ) -> dict[str, Any]:
         await self._ensure_login()
         security_password = None
@@ -213,7 +214,7 @@ class GwmJolionApiClient:
         body = {
             "vin": vin,
             "seqNo": seq_no,
-            "remoteType": "0",
+            "remoteType": remote_type,
             "instructions": instructions,
             "securityPassword": security_password,
             "type": 3,

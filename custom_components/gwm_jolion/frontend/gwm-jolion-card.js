@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-alpha.16 */
+/* GWM Jolion Card v0.1.0-alpha.22 */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.16";
+  const CARD_VERSION = "0.1.0-alpha.22";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -136,6 +136,7 @@
           ? devices.find((device) => device.id === deviceId) || null
           : null;
 
+        this._entryId = vehicleEntries.find((entry) => entry.config_entry_id)?.config_entry_id;
         this._entities = {};
         for (const [key, suffix] of Object.entries(SUFFIX)) {
           const found = vehicleEntries.find((entry) =>
@@ -228,14 +229,14 @@
 
     _seatValue(key) {
       const raw = this._rawValue(key);
-      if (raw === null) return "Нет данных · только статус";
+      if (raw === null) return "Нет данных";
       const value = Number(raw);
       if (Number.isFinite(value)) {
         return value === 0
-          ? "Выключен · только статус"
-          : `Уровень ${value} · только статус`;
+          ? "Выключен"
+          : `Уровень ${value}`;
       }
-      return `${raw} · только статус`;
+      return `${raw}`;
     }
 
     _drivetrain() {
@@ -295,7 +296,7 @@
       if (open.length) {
         return `Открыты: ${open.join(", ")} · закрыть все`;
       }
-      return "Все закрыты · открыть все";
+      return "Все закрыты · проветрить";
     }
 
     _relativeUpdate() {
@@ -477,9 +478,9 @@
 
       const windscreenStatus = this._labelBool(
         "windscreenHeat",
-        "Включен · только статус",
-        "Выключен · только статус",
-        "Нет данных · только статус"
+        "Включен",
+        "Выключен",
+        "Нет данных"
       );
 
       this.shadowRoot.innerHTML = `
@@ -955,18 +956,7 @@
                     "mdi:steering",
                     "Обогрев руля"
                   ) : ""}
-                  ${this._featureEnabled("seat_heat_driver") ? this._readOnlyComfort(
-                    "seatDriver",
-                    "mdi:car-seat-heater",
-                    "Сиденье водителя",
-                    this._seatValue("seatDriver")
-                  ) : ""}
-                  ${this._featureEnabled("seat_heat_passenger") ? this._readOnlyComfort(
-                    "seatPassenger",
-                    "mdi:car-seat-heater",
-                    "Сиденье пассажира",
-                    this._seatValue("seatPassenger")
-                  ) : ""}
+                  ${this._seatHeatingPanel()}
                   ${this._featureEnabled("rear_defrost") ? this._comfortControl(
                     "rear-defrost",
                     "rearDefrost",
@@ -1031,7 +1021,33 @@
       this._bindActions();
     }
 
+    _seatHeatingPanel() {
+      const seats = [["driver", "seat_heat_driver", "seatDriver", "Водитель"], ["passenger", "seat_heat_passenger", "seatPassenger", "Пассажир"]].filter(([, feature]) => this._featureEnabled(feature));
+      if (!seats.length) return "";
+      this._seatSettings ||= {driver: 0, passenger: 0, operation_time: 5};
+      return `<div class="seat-panel" style="grid-column:1/-1;padding:12px;border:1px solid var(--divider-color);border-radius:12px">
+        <strong>Подогрев сидений</strong>
+        ${seats.map(([key, , sensor, label]) => `<label style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0">${label} · ${this._escape(this._seatValue(sensor))}
+          <select aria-label="Подогрев: ${label}" data-seat-setting="${key}" style="padding:8px;background:var(--card-background-color);color:var(--primary-text-color)">${[0,1,2,3].map(level => `<option value="${level}" ${this._seatSettings[key] === level ? "selected" : ""}>${level ? `Уровень ${level}` : "Выключить"}</option>`).join("")}</select></label>`).join("")}
+        <label style="display:flex;justify-content:space-between;align-items:center;margin:10px 0">Таймер, мин
+          <input aria-label="Таймер подогрева" data-seat-setting="operation_time" type="number" min="1" max="10" step="1" value="${this._seatSettings.operation_time}" style="width:64px;padding:8px;background:var(--card-background-color);color:var(--primary-text-color)"></label>
+        ${this._control("seat-heating", "mdi:car-seat-heater", "Применить подогрев", "Уровни и таймер", "", !this._entryId || this._busy.has("seat-heating") || this._remoteCommandInProgress())}
+      </div>`;
+    }
+
     _bindActions() {
+      this.shadowRoot.querySelectorAll("[data-seat-setting]").forEach(input => {
+        input.addEventListener("change", () => {
+          const value = Number(input.value);
+          const maximum = input.dataset.seatSetting === "operation_time" ? 10 : 3;
+          const minimum = input.dataset.seatSetting === "operation_time" ? 1 : 0;
+          if (!Number.isInteger(value) || value < minimum || value > maximum) {
+            input.value = this._seatSettings[input.dataset.seatSetting];
+            return;
+          }
+          this._seatSettings[input.dataset.seatSetting] = value;
+        });
+      });
       this.shadowRoot.querySelectorAll("[data-action]").forEach((button) =>
         button.addEventListener("click", () =>
           this._handleAction(button.dataset.action)
@@ -1186,18 +1202,26 @@
         );
       }
 
+      if (action === "seat-heating") {
+        if (!this._entryId) return;
+        const data = {entry_id: this._entryId, operation_time: this._seatSettings.operation_time};
+        if (this._featureEnabled("seat_heat_driver")) data.driver = this._seatSettings.driver;
+        if (this._featureEnabled("seat_heat_passenger")) data.passenger = this._seatSettings.passenger;
+        return this._runBusy(action, () => this._hass.callService(INTEGRATION, "set_seat_heating", data));
+      }
+
       if (action === "windows") {
         const open = this._openWindows();
         const shouldClose = windowsOpen || open.length > 0;
         const message = shouldClose
           ? `Закрыть все окна${open.length ? `? Сейчас открыты: ${open.join(", ")}.` : "?"}`
-          : "Открыть все окна? Команда открытия пока экспериментальная.";
+          : "Приоткрыть окна для проветривания? Команда ещё не проверена на автомобиле.";
         if (!this._confirm(message)) return;
         return this._runBusy(action, () =>
           this._hass.callService(
             INTEGRATION,
             shouldClose ? "close_windows" : "open_windows",
-            {}
+            {entry_id: this._entryId}
           )
         );
       }

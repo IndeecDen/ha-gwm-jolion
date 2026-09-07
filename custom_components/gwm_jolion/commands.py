@@ -83,7 +83,6 @@ COMMANDS: dict[str, dict] = {
         "icon": "mdi:car-door",
         "instructions": {
             "0x08": {
-                "switchOrder": "2",
                 "window": {
                     "leftFront": 0,
                     "leftBack": 0,
@@ -96,17 +95,16 @@ COMMANDS: dict[str, dict] = {
     },
     "open_windows": {
         "key": "open_windows",
-        "name": "Открыть все окна (эксперимент)",
+        "name": "Проветрить окна (эксперимент)",
         "expected_remote_type": "0x08",
         "icon": "mdi:car-door",
         "instructions": {
             "0x08": {
-                "switchOrder": "1",
                 "window": {
-                    "leftFront": 10,
-                    "leftBack": 10,
-                    "rightFront": 10,
-                    "rightBack": 10,
+                    "leftFront": 3,
+                    "leftBack": 3,
+                    "rightFront": 3,
+                    "rightBack": 3,
                 },
             }
         },
@@ -211,3 +209,20 @@ COMMANDS: dict[str, dict] = {
         "experimental": True,
     },
 }
+
+
+def build_seat_heating_instructions(driver: int | None, passenger: int | None, operation_time: int) -> dict:
+    """Build T5 seat levels; omitted seats are not controlled."""
+    if type(operation_time) is not int or not 1 <= operation_time <= 10:
+        raise ValueError("Время подогрева должно быть целым числом от 1 до 10 минут")
+    if driver is None and passenger is None:
+        raise ValueError("Выберите хотя бы одно сиденье")
+    seat = {"operationMode": "1", "switchOrder": "1", "operationTime": str(operation_time)}
+    for key, level in (("leftFront", driver), ("rightFront", passenger)):
+        if level is not None:
+            if type(level) is not int or not 0 <= level <= 3:
+                raise ValueError("Уровень подогрева должен быть целым числом от 0 до 3")
+            seat[key] = str(level)
+    if driver == 0 and passenger == 0:
+        seat.update(switchOrder="2", operationTime="0", leftBack="0", rightBack="0")
+    return {"0x0A": {"seat": seat}}

@@ -6,11 +6,14 @@ import logging
 from pathlib import Path
 from uuid import uuid4
 
+import voluptuous as vol
+
 from homeassistant.components import frontend
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -39,22 +42,22 @@ FRONTEND_ASSETS = (
     (
         FRONTEND_DIR / "gwm-jolion-card-editor.js",
         "/gwm-jolion/gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-alpha.21",
+        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-alpha.22",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card.js",
         "/gwm-jolion/gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.21",
+        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.22",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-remote-card.js",
         "/gwm-jolion/gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-alpha.21",
+        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-alpha.22",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-alpha20.js",
         "/gwm-jolion/gwm-jolion-alpha20.js",
-        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-alpha.21",
+        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-alpha.22",
     ),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
@@ -176,11 +179,33 @@ def _coordinators(hass: HomeAssistant) -> list[GwmJolionCoordinator]:
 def _register_services(hass: HomeAssistant) -> None:
     """Keep advanced services for compatibility; public UI uses native entities/buttons."""
 
+    def select_coordinator(call: ServiceCall) -> GwmJolionCoordinator:
+        candidates = _coordinators(hass)
+        entry_id = call.data.get("entry_id")
+        if entry_id:
+            candidates = [item for item in candidates if item.entry_id == entry_id]
+        if len(candidates) != 1:
+            raise HomeAssistantError("Укажите entry_id нужного автомобиля GWM")
+        return candidates[0]
+
+    async def handle_seat_heating(call: ServiceCall) -> None:
+        await select_coordinator(call).async_set_seat_heating(
+            call.data.get("driver"), call.data.get("passenger"), call.data["operation_time"]
+        )
+
+    if not hass.services.has_service(DOMAIN, "set_seat_heating"):
+        hass.services.async_register(DOMAIN, "set_seat_heating", handle_seat_heating, schema=vol.Schema({
+            vol.Optional("entry_id"): str,
+            vol.Optional("driver"): vol.All(int, vol.Range(min=0, max=3)),
+            vol.Optional("passenger"): vol.All(int, vol.Range(min=0, max=3)),
+            vol.Optional("operation_time", default=5): vol.All(int, vol.Range(min=1, max=10)),
+        }))
+
     async def handle_command(call: ServiceCall) -> None:
         coordinators = _coordinators(hass)
         if not coordinators:
             return
-        coordinator = coordinators[0]
+        coordinator = select_coordinator(call)
         operation_time = call.data.get("operation_time")
         await coordinator.async_execute_command(
             call.service,
@@ -207,7 +232,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         if not _coordinators(hass):
-            for command_key in COMMANDS:
+            for command_key in (*COMMANDS, "set_seat_heating"):
                 if hass.services.has_service(DOMAIN, command_key):
                     hass.services.async_remove(DOMAIN, command_key)
             if hass.services.has_service(DOMAIN, SERVICE_ADD_CAPTURE_MARKER):

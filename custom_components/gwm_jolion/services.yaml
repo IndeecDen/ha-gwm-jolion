@@ -61,3 +61,35 @@ add_capture_marker:
       selector:
         text:
           multiline: false
+
+set_seat_heating:
+  name: Подогрев сидений
+  description: Уровни передних сидений и таймер. Ноль выключает выбранное сиденье. Команда ещё не проверена на автомобиле.
+  fields:
+    entry_id:
+      description: ID записи интеграции; обязателен при нескольких автомобилях.
+      selector:
+        text:
+    driver:
+      name: Сиденье водителя
+      selector:
+        number:
+          min: 0
+          max: 3
+          step: 1
+    passenger:
+      name: Сиденье пассажира
+      selector:
+        number:
+          min: 0
+          max: 3
+          step: 1
+    operation_time:
+      name: Время подогрева
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 10
+          step: 1
+          unit_of_measurement: min

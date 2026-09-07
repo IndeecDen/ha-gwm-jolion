@@ -1,6 +1,6 @@
 /* GWM Jolion alpha.20 entity-surface compatibility layer */
 (() => {
-  const VERSION = "0.1.0-alpha.21";
+  const VERSION = "0.1.0-alpha.22";
   const SAFE_CAPABILITIES = new Set([
     "steering_wheel_heat",
     "rear_defrost",
@@ -184,15 +184,6 @@
         };
       }
 
-      const originalControl = proto._control;
-      if (typeof originalControl === "function") {
-        proto._control = function alpha20Control(id, ...args) {
-          // T5 0x08 did not physically move the windows in the field test.
-          // Keep window status, but remove the misleading action from the card.
-          if (id === "windows") return "";
-          return originalControl.call(this, id, ...args);
-        };
-      }
     });
   }
 

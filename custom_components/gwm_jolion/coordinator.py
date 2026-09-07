@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .api import GwmJolionApiClient, GwmJolionApiError
 from .capabilities import CAPABILITIES, capability_for_command, capability_report
 from .command_safety import remote_start_block_reason
-from .commands import COMMANDS
+from .commands import COMMANDS, build_seat_heating_instructions
 from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN, VERSION
 from .protocol import SIGNALS, VerificationStatus, update_signal_change_history
 from .protocol_capture import (
@@ -349,6 +349,7 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         instructions: dict[str, Any],
         expected_remote_type: str,
         command_key: str | None = None,
+        remote_type: str = "0",
     ) -> dict[str, Any]:
         if self._command_lock.locked():
             raise HomeAssistantError("Другая удалённая команда GWM уже выполняется")
@@ -381,6 +382,7 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         instructions,
                         expected_remote_type,
                         security_pin=self.security_pin,
+                        remote_type=remote_type,
                     )
                 except Exception as err:
                     self.last_command_status = "error"
@@ -435,4 +437,20 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             instructions=instructions,
             expected_remote_type=command["expected_remote_type"],
             command_key=command_key,
+        )
+
+    async def async_set_seat_heating(
+        self, driver: int | None, passenger: int | None, operation_time: int = 5,
+    ) -> dict[str, Any]:
+        """Apply explicit seat settings through the guarded remote-command path."""
+        for feature, value in (("seat_heat_driver", driver), ("seat_heat_passenger", passenger)):
+            if value is not None and not self.feature_enabled(feature):
+                raise HomeAssistantError("Подогрев этого сиденья отключён в настройках оборудования")
+        try:
+            instructions = build_seat_heating_instructions(driver, passenger, operation_time)
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+        return await self.async_send_custom_t5(
+            name="Подогрев сидений", instructions=instructions, expected_remote_type="0x0A",
+            remote_type="" if driver == 0 and passenger == 0 else "0",
         )
