@@ -37,17 +37,17 @@ FRONTEND_ASSETS = (
     (
         FRONTEND_DIR / "gwm-jolion-card-editor.js",
         "/gwm-jolion/gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-alpha.19.6",
+        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-alpha.19.7",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card.js",
         "/gwm-jolion/gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.19.6",
+        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.19.7",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-remote-card.js",
         "/gwm-jolion/gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-alpha.19.6",
+        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-alpha.19.7",
     ),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"

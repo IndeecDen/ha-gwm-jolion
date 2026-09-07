@@ -60,9 +60,9 @@ def _any_present_equals(state: dict[str, Any], keys: tuple[str, ...], value: int
 def _window_open_from_raw(state: dict[str, Any], key: str) -> bool | None:
     """Decode only window states proven by field capture.
 
-    Raw 1 is closed. Raw 2 and 3 are non-closed states. Exact physical meaning
-    of 2 vs 3 is confirmed for 2210001 only and is intentionally not encoded
-    into the generic binary sensor.
+    Raw 1 is closed. Raw 2 and 3 are non-closed states. Physical positions of
+    2210001..2210004 are field-confirmed; exact 2-vs-3 intermediate semantics
+    were isolated for 2210001 only, so the generic binary sensor stays conservative.
     """
     value = state.get(key)
     if value is None:

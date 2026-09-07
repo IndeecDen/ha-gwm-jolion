@@ -44,9 +44,9 @@ def _status(values: dict[str, int]) -> dict:
 def test_window_binary_decoder_accepts_captured_multistate_values() -> None:
     helpers = load_helpers()
 
-    closed = helpers.build_state(_status({"2210001": 1, "2210002": 1}), {}, {})
-    partial = helpers.build_state(_status({"2210001": 3, "2210002": 1}), {}, {})
-    full = helpers.build_state(_status({"2210001": 2, "2210002": 1}), {}, {})
+    closed = helpers.build_state(_status({"2210001": 1, "2210002": 1, "2210003": 1, "2210004": 1}), {}, {})
+    partial = helpers.build_state(_status({"2210001": 3, "2210002": 1, "2210003": 1, "2210004": 1}), {}, {})
+    full = helpers.build_state(_status({"2210001": 2, "2210002": 2, "2210003": 2, "2210004": 2}), {}, {})
 
     assert closed["windows_open"] is False
     assert closed["window_2210001_open"] is False
@@ -54,6 +54,9 @@ def test_window_binary_decoder_accepts_captured_multistate_values() -> None:
     assert partial["window_2210001_open"] is True
     assert full["windows_open"] is True
     assert full["window_2210001_open"] is True
+    assert full["window_2210002_open"] is True
+    assert full["window_2210003_open"] is True
+    assert full["window_2210004_open"] is True
 
 
 def test_unknown_window_raw_value_stays_unknown() -> None:
