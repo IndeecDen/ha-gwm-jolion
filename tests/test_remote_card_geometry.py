@@ -2,15 +2,24 @@ from pathlib import Path
 
 
 REMOTE_CARD = Path("custom_components/gwm_jolion/frontend/gwm-jolion-remote-card.js")
+ALPHA20_PATCH = Path("custom_components/gwm_jolion/frontend/gwm-jolion-alpha20.js")
 
 
 def _source() -> str:
     return REMOTE_CARD.read_text(encoding="utf-8")
 
 
+def _patch_source() -> str:
+    return ALPHA20_PATCH.read_text(encoding="utf-8")
+
+
 def test_remote_card_version_and_horizontal_orientation() -> None:
     source = _source()
+    patch = _patch_source()
+    # The large SVG remains the field-tested 19.7 visual core; alpha.20 is a
+    # small compatibility layer that adapts it to the cleaned entity surface.
     assert 'CARD_VERSION = "0.1.0-alpha.19.7"' in source
+    assert 'const VERSION = "0.1.0-alpha.20"' in patch
     assert 'viewBox="0 0 1100 520"' in source
     assert "капот слева, багажник справа" in source.lower()
     assert "правая сторона автомобиля сверху, левая снизу" in source
@@ -50,6 +59,7 @@ def test_door_entity_mapping_is_not_swapped() -> None:
 
 def test_field_confirmed_windows_map_to_all_four_physical_panes() -> None:
     source = _source()
+    patch = _patch_source()
     assert 'window1Raw: "_window_2210001_raw"' in source
     assert 'window2Raw: "_window_2210002_raw"' in source
     assert 'window3Raw: "_window_2210003_raw"' in source
@@ -66,6 +76,11 @@ def test_field_confirmed_windows_map_to_all_four_physical_panes() -> None:
     assert "if (value === 1) return 0" in source
     assert "if (value === 3) return 0.52" in source
     assert "if (value === 2) return 1" in source
+    # alpha.20 removes raw window sensor entities; their raw value is carried as
+    # an attribute of the corresponding clean binary sensor instead.
+    assert 'window1Raw: "window1"' in patch
+    assert 'window4Raw: "window4"' in patch
+    assert 'attributes?.raw_state' in patch
 
 
 def test_status_tiles_always_have_visible_values() -> None:
