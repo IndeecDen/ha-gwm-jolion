@@ -48,14 +48,21 @@ def test_door_entity_mapping_is_not_swapped() -> None:
     assert 'doorRr: "_door_rear_right_open"' in source
 
 
-def test_confirmed_driver_window_stays_on_front_left_door() -> None:
+def test_field_confirmed_windows_map_to_all_four_physical_panes() -> None:
     source = _source()
     assert 'window1Raw: "_window_2210001_raw"' in source
     assert 'window2Raw: "_window_2210002_raw"' in source
     assert 'window3Raw: "_window_2210003_raw"' in source
     assert 'window4Raw: "_window_2210004_raw"' in source
+    assert 'const windowFl = this._windowVisual("window1", "window1Raw")' in source
+    assert 'const windowFr = this._windowVisual("window2", "window2Raw")' in source
+    assert 'const windowRl = this._windowVisual("window3", "window3Raw")' in source
+    assert 'const windowRr = this._windowVisual("window4", "window4Raw")' in source
     assert 'class="door door-fl bottom-side' in source
-    assert 'class="door-window driver-window"' in source
+    assert 'class="door-window driver-window ${windowFl.open ? "window-open" : ""}"' in source
+    assert '${windowFr.opacity.toFixed(2)}' in source
+    assert '${windowRl.opacity.toFixed(2)}' in source
+    assert '${windowRr.opacity.toFixed(2)}' in source
     assert "if (value === 1) return 0" in source
     assert "if (value === 3) return 0.52" in source
     assert "if (value === 2) return 1" in source
