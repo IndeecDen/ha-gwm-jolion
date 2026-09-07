@@ -1,11 +1,11 @@
-/* GWM Jolion Remote Card v0.1.0-alpha.16 */
+/* GWM Jolion Remote Card v0.1.0-alpha.19.3-dev */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.16";
+  const CARD_VERSION = "0.1.0-alpha.19.3-dev";
   const INTEGRATION = "gwm_jolion";
 
   const DEFAULT_CONTROLS = ["lock", "engine", "climate"];
-  const DEFAULT_INFO = ["fuel", "range", "mileage", "tires"];
-  const DEFAULT_STATUSES = ["lock", "engine", "doors", "windows", "trunk", "climate"];
+  const DEFAULT_INFO = ["range", "tires"];
+  const DEFAULT_STATUSES = ["engine", "climate", "fuel", "mileage", "doors", "windows", "trunk"];
 
   const CONTROL_OPTIONS = [
     ["lock", "Центральный замок"],
@@ -38,10 +38,12 @@
   const STATUS_OPTIONS = [
     ["lock", "Замок"],
     ["engine", "Двигатель"],
+    ["climate", "Климат"],
+    ["fuel", "Топливо, л"],
+    ["mileage", "Пробег"],
     ["doors", "Двери"],
     ["windows", "Окна"],
     ["trunk", "Багажник"],
-    ["climate", "Климат"],
     ["online", "T-Box online"],
     ["gps", "GPS"],
   ];
@@ -198,9 +200,9 @@
             <span>Подтверждать удалённые команды</span>
           </label>
           ${this._renderGroup("Кнопки управления", "controls", CONTROL_OPTIONS)}
-          ${this._renderGroup("Информация под автомобилем", "info", INFO_OPTIONS)}
-          ${this._renderGroup("Статусы вокруг автомобиля", "statuses", STATUS_OPTIONS)}
-          <div class="note">Настройки оборудования самой интеграции имеют приоритет. Если функция отмечена как отсутствующая в GWM Jolion → Настроить, эта карточка её не покажет даже при выбранном флажке.</div>
+          ${this._renderGroup("Дополнительная информация", "info", INFO_OPTIONS)}
+          ${this._renderGroup("Уведомления под автомобилем", "statuses", STATUS_OPTIONS)}
+          <div class="note">Online/offline и уровень GSM всегда показаны справа сверху. Цветовая подсветка автомобиля использует подтверждённый статус «закрыт/разблокирован»; отдельного подтверждённого статуса охранной сигнализации пока нет.</div>
         </div>`;
 
       this.shadowRoot.querySelectorAll("[data-list]").forEach((input) => {
@@ -433,13 +435,31 @@
       return `<ha-icon icon="${icon}"></ha-icon>`;
     }
 
+    _levelBars(rawValue, max = 4) {
+      const value = Number(rawValue);
+      if (!Number.isFinite(value)) {
+        return `<span class="signal-bars unknown" title="Нет данных">—</span>`;
+      }
+      const active = Math.max(0, Math.min(max, Math.round(value)));
+      const bars = [];
+      for (let i = 1; i <= max; i += 1) {
+        const height = Math.round(4 + ((i - 1) / Math.max(1, max - 1)) * 10);
+        bars.push(`<i class="${i <= active ? "on" : ""}" style="height:${height}px"></i>`);
+      }
+      return `<span class="signal-bars" aria-label="${active} из ${max}">${bars.join("")}</span>`;
+    }
+
     _carSvg() {
       const engineOn = this._isOn("engine");
       const doorsOpen = this._isOn("doors");
       const trunkOpen = this._isOn("trunk");
       const windowsOpen = this._isOn("windows");
+      const lockKnown = !this._isUnavailable("unlocked");
+      const unlocked = lockKnown && this._isOn("unlocked");
+      const securityClass = lockKnown ? (unlocked ? "unlocked" : "locked") : "unknown";
+
       return `
-        <svg class="jolion" viewBox="0 0 520 245" role="img" aria-label="Haval Jolion">
+        <svg class="jolion security-${securityClass}" viewBox="0 0 520 245" role="img" aria-label="Haval Jolion">
           <defs>
             <linearGradient id="bodyShade" x1="0" x2="1" y1="0" y2="1">
               <stop offset="0" stop-color="var(--gwm-car-color)" stop-opacity="1"/>
@@ -452,6 +472,7 @@
             <filter id="glow"><feGaussianBlur stdDeviation="5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
           </defs>
           <ellipse cx="278" cy="215" rx="190" ry="18" class="shadow"/>
+          <ellipse cx="278" cy="211" rx="176" ry="17" class="security-glow ${securityClass}"/>
           ${engineOn ? '<ellipse cx="275" cy="205" rx="175" ry="12" class="engine-glow"/>' : ''}
           <g class="car-shape">
             <path class="body" d="M75 165 L92 130 Q101 112 126 104 L206 84 Q226 60 263 51 L345 50 Q369 52 388 68 L429 105 Q448 112 458 132 L468 166 Q464 185 443 190 L111 190 Q85 187 75 165Z"/>
@@ -491,8 +512,6 @@
 
     _statusMeta(id) {
       const unknown = (key) => this._isUnavailable(key);
-      const noData = (label, position, icon = "mdi:help-circle-outline") =>
-        [icon, `${label}: нет данных`, "muted", position];
       const unlocked = this._isOn("unlocked");
       const engine = this._isOn("engine");
       const doors = this._isOn("doors");
@@ -502,26 +521,46 @@
       const climate = this._isOn("climateOn") || this._state("climate")?.state === "heat_cool";
       const online = this._isOn("tbox");
       const gps = this._isOn("gps");
+
       return {
-        lock: unknown("unlocked") ? noData("Замок", "s-lock", "mdi:lock-question") : [unlocked ? "mdi:lock-open-variant" : "mdi:lock", unlocked ? "Открыт" : "Закрыт", unlocked ? "warn" : "ok", "s-lock"],
-        engine: unknown("engine") ? noData("Двигатель", "s-engine", "mdi:engine-outline") : ["mdi:engine", engine ? "Двигатель работает" : "Двигатель выключен", engine ? "active" : "muted", "s-engine"],
-        doors: unknown("doors") ? noData("Двери", "s-doors", "mdi:car-door") : [doors ? "mdi:car-door-open" : "mdi:car-door", doors ? "Дверь открыта" : "Двери закрыты", doors ? "warn" : "ok", "s-doors"],
-        windows: unknown("windows") ? noData("Окна", "s-windows", "mdi:car-door") : ["mdi:car-door", windows ? `Окна: ${this._openWindows().join(", ") || "открыты"}` : "Окна закрыты", windows ? "warn" : "ok", "s-windows"],
-        trunk: unknown("trunk") ? noData("Багажник", "s-trunk", "mdi:car-back") : ["mdi:car-back", trunk ? "Багажник открыт" : "Багажник закрыт", trunk ? "warn" : "ok", "s-trunk"],
-        climate: !climateKnown ? noData("Климат", "s-climate", "mdi:air-conditioner") : ["mdi:air-conditioner", climate ? "Климат работает" : "Климат выключен", climate ? "active" : "muted", "s-climate"],
-        online: unknown("tbox") ? noData("T-Box", "s-online", "mdi:cloud-question") : [online ? "mdi:cloud-check" : "mdi:cloud-off-outline", online ? "T-Box online" : "T-Box offline", online ? "ok" : "warn", "s-online"],
-        gps: unknown("gps") ? noData("GPS", "s-gps", "mdi:crosshairs-question") : ["mdi:crosshairs-gps", gps ? "GPS доступен" : "GPS недоступен", gps ? "ok" : "muted", "s-gps"],
-      }[id];
+        lock: unknown("unlocked")
+          ? ["mdi:lock-question", "Замок —", "muted"]
+          : [unlocked ? "mdi:lock-open-variant" : "mdi:lock", unlocked ? "Разблокирован" : "Закрыт", unlocked ? "warn" : "ok"],
+        engine: unknown("engine")
+          ? ["mdi:engine-outline", "Двигатель —", "muted"]
+          : ["mdi:engine", engine ? "Двигатель работает" : "Двигатель выключен", engine ? "active" : "muted"],
+        climate: !climateKnown
+          ? ["mdi:air-conditioner", "Климат —", "muted"]
+          : ["mdi:air-conditioner", climate ? "Климат включен" : "Климат выключен", climate ? "active" : "muted"],
+        fuel: ["mdi:fuel", this._value("fuel"), "info"],
+        mileage: ["mdi:counter", this._value("mileage"), "info"],
+        doors: unknown("doors")
+          ? ["mdi:car-door", "Двери —", "muted"]
+          : [doors ? "mdi:car-door-open" : "mdi:car-door", doors ? "Двери открыты" : "Двери закрыты", doors ? "warn" : "ok"],
+        windows: unknown("windows")
+          ? ["mdi:car-door", "Окна —", "muted"]
+          : ["mdi:car-door", windows ? "Окна открыты" : "Окна закрыты", windows ? "warn" : "ok"],
+        trunk: unknown("trunk")
+          ? ["mdi:car-back", "Багажник —", "muted"]
+          : ["mdi:car-back", trunk ? "Багажник открыт" : "Багажник закрыт", trunk ? "warn" : "ok"],
+        online: unknown("tbox")
+          ? ["mdi:cloud-question", "T-Box —", "muted"]
+          : [online ? "mdi:cloud-check" : "mdi:cloud-off-outline", online ? "Online" : "Offline", online ? "ok" : "warn"],
+        gps: unknown("gps")
+          ? ["mdi:crosshairs-question", "GPS —", "muted"]
+          : ["mdi:crosshairs-gps", gps ? "GPS есть" : "GPS нет", gps ? "ok" : "muted"],
+      }[id] || null;
     }
 
-    _renderStatuses() {
+    _renderNotifications() {
       const selected = Array.isArray(this._config.statuses) ? this._config.statuses : DEFAULT_STATUSES;
-      return selected.map((id) => {
+      const items = selected.map((id) => {
         const meta = this._statusMeta(id);
         if (!meta) return "";
-        const [icon, label, tone, position] = meta;
-        return `<div class="vehicle-status ${position} ${tone}" title="${this._escape(label)}">${this._icon(icon)}<span>${this._escape(label)}</span></div>`;
-      }).join("");
+        const [icon, label, tone] = meta;
+        return `<span class="notify ${tone}" title="${this._escape(label)}">${this._icon(icon)}<span>${this._escape(label)}</span></span>`;
+      }).filter(Boolean);
+      return items.length ? `<div class="notifications">${items.join("")}</div>` : "";
     }
 
     _infoMeta(id) {
@@ -621,6 +660,9 @@
 
       const onlineKnown = !this._isUnavailable("tbox");
       const online = onlineKnown && this._isOn("tbox");
+      const lockKnown = !this._isUnavailable("unlocked");
+      const unlocked = lockKnown && this._isOn("unlocked");
+      const securityClass = lockKnown ? (unlocked ? "security-unlocked" : "security-locked") : "security-unknown";
       const carColor = this._safeColor();
       this.shadowRoot.innerHTML = `
         <style>
@@ -628,17 +670,33 @@
           * { box-sizing:border-box; }
           ha-card { overflow:hidden; border-radius:var(--ha-card-border-radius,20px); background:var(--ha-card-background,var(--card-background-color)); }
           .wrap { position:relative; padding:18px; color:var(--primary-text-color); }
-          .header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:4px; }
+          .header { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:4px; }
           .header h2 { margin:0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:20px; line-height:1.2; }
+          .connection-stack { display:grid; justify-items:end; gap:5px; flex:none; }
           .connection { display:flex; align-items:center; gap:6px; color:var(--secondary-text-color); font-size:11px; white-space:nowrap; }
           .connection i { width:8px; height:8px; border-radius:50%; background:var(--error-color,#d32f2f); box-shadow:0 0 0 4px color-mix(in srgb,var(--error-color,#d32f2f) 11%,transparent); }
           .connection.online i { background:var(--success-color,#43a047); box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#43a047) 11%,transparent); }
           .connection.unknown i { background:var(--secondary-text-color); box-shadow:none; }
-          .stage { position:relative; min-height:265px; margin-top:6px; border-radius:18px; background:radial-gradient(circle at 50% 42%,color-mix(in srgb,var(--primary-color) 10%,transparent),transparent 58%); overflow:hidden; }
+          .gsm { display:flex; align-items:flex-end; gap:6px; color:var(--secondary-text-color); font-size:10px; }
+          .signal-bars { display:inline-flex; align-items:flex-end; gap:2px; height:15px; }
+          .signal-bars i { display:block; width:4px; border-radius:1px; background:color-mix(in srgb,var(--secondary-text-color) 22%,transparent); }
+          .signal-bars i.on { background:var(--primary-color); }
+          .signal-bars.unknown { align-items:center; }
+
+          .stage { position:relative; min-height:250px; margin-top:6px; border-radius:18px; overflow:hidden; transition:background .25s ease,box-shadow .25s ease; }
+          .stage.security-locked { background:radial-gradient(circle at 50% 45%,color-mix(in srgb,var(--success-color,#43a047) 13%,transparent),transparent 58%); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--success-color,#43a047) 12%,transparent); }
+          .stage.security-unlocked { background:radial-gradient(circle at 50% 45%,color-mix(in srgb,var(--warning-color,#f9a825) 17%,transparent),transparent 58%); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--warning-color,#f9a825) 16%,transparent); }
+          .stage.security-unknown { background:radial-gradient(circle at 50% 42%,color-mix(in srgb,var(--primary-color) 8%,transparent),transparent 58%); }
           .jolion { position:absolute; width:min(86%,500px); height:auto; left:50%; top:50%; transform:translate(-50%,-46%); overflow:visible; }
           .shadow { fill:rgba(0,0,0,.18); }
-          .engine-glow { fill:color-mix(in srgb,var(--warning-color,#f9a825) 28%,transparent); filter:url(#glow); }
-          .body { fill:url(#bodyShade); stroke:color-mix(in srgb,var(--primary-text-color) 45%,transparent); stroke-width:2.2; }
+          .security-glow { filter:url(#glow); opacity:.74; }
+          .security-glow.locked { fill:color-mix(in srgb,var(--success-color,#43a047) 28%,transparent); }
+          .security-glow.unlocked { fill:color-mix(in srgb,var(--warning-color,#f9a825) 30%,transparent); }
+          .security-glow.unknown { fill:transparent; }
+          .engine-glow { fill:color-mix(in srgb,var(--warning-color,#f9a825) 24%,transparent); filter:url(#glow); }
+          .body { fill:url(#bodyShade); stroke:color-mix(in srgb,var(--primary-text-color) 45%,transparent); stroke-width:2.2; transition:stroke .2s ease; }
+          .security-locked .body { stroke:color-mix(in srgb,var(--success-color,#43a047) 62%,var(--primary-text-color)); }
+          .security-unlocked .body { stroke:color-mix(in srgb,var(--warning-color,#f9a825) 70%,var(--primary-text-color)); }
           .hood,.front-face { fill:color-mix(in srgb,var(--gwm-car-color) 82%,white 18%); stroke:color-mix(in srgb,var(--primary-text-color) 38%,transparent); stroke-width:1.6; }
           .glass { fill:url(#glass); stroke:rgba(255,255,255,.24); stroke-width:1.2; }
           .roof-line,.side-line,.door-line,.rear-hatch,.sill,.bumper,.window-divider { fill:none; stroke:color-mix(in srgb,var(--primary-text-color) 34%,transparent); stroke-width:1.4; }
@@ -646,8 +704,11 @@
           .grille { fill:#171b1e; stroke:#555f66; stroke-width:1.2; }
           .grille-bars path { fill:none; stroke:#788188; stroke-width:1; opacity:.9; }
           .haval-badge { fill:#e6e7e8; font-size:7.5px; font-family:Arial,sans-serif; font-weight:700; letter-spacing:.7px; }
-          .headlight,.far-headlight { fill:#e9f5ff; stroke:#c8eaff; stroke-width:1.1; filter:${this._isOn("engine") ? "url(#glow)" : "none"}; }
-          .drl { fill:none; stroke:#f8fbff; stroke-width:3; stroke-linecap:round; }
+          .headlight,.far-headlight { fill:#e9f5ff; stroke:#c8eaff; stroke-width:1.1; filter:none; }
+          .drl { fill:none; stroke:#f8fbff; stroke-width:3; stroke-linecap:round; opacity:.55; }
+          .jolion.lights-on .headlight,.jolion.lights-on .far-headlight { filter:url(#glow); animation:gwm-light-pulse 1.8s ease-in-out infinite alternate; }
+          .jolion.lights-on .drl { opacity:1; filter:url(#glow); }
+          @keyframes gwm-light-pulse { from { opacity:.82; } to { opacity:1; } }
           .mirror { fill:color-mix(in srgb,var(--gwm-car-color) 72%,black 28%); }
           .window-alert { fill:transparent; }
           .warn-window { fill:color-mix(in srgb,var(--error-color,#d32f2f) 20%,transparent); stroke:var(--error-color,#d32f2f); stroke-width:1.4; }
@@ -655,23 +716,24 @@
           .rim { fill:#a7adb1; stroke:#51585d; stroke-width:2; }
           .hub { fill:#525a5f; }
           .spokes { fill:none; stroke:#5f686e; stroke-width:2.4; }
-          .vehicle-status { position:absolute; display:flex; align-items:center; gap:6px; max-width:150px; padding:7px 9px; border-radius:999px; background:color-mix(in srgb,var(--card-background-color) 84%,transparent); border:1px solid color-mix(in srgb,var(--divider-color) 75%,transparent); box-shadow:0 4px 18px rgba(0,0,0,.08); backdrop-filter:blur(8px); font-size:10px; color:var(--secondary-text-color); z-index:2; }
-          .vehicle-status ha-icon { --mdc-icon-size:18px; flex:none; }
-          .vehicle-status span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-          .vehicle-status.ok ha-icon { color:var(--success-color,#43a047); }
-          .vehicle-status.warn ha-icon { color:var(--error-color,#d32f2f); }
-          .vehicle-status.active ha-icon { color:var(--warning-color,#f9a825); }
-          .vehicle-status.muted ha-icon { color:var(--secondary-text-color); }
-          .s-lock { left:8px; top:12px; } .s-engine { right:8px; top:12px; }
-          .s-doors { left:4px; top:92px; } .s-windows { right:4px; top:92px; }
-          .s-trunk { left:12px; bottom:12px; } .s-climate { right:12px; bottom:12px; }
-          .s-online { left:50%; top:8px; transform:translateX(-50%); } .s-gps { left:50%; bottom:8px; transform:translateX(-50%); }
+
+          .notifications { display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-top:7px; }
+          .notify { min-width:0; display:inline-flex; align-items:center; gap:5px; min-height:28px; padding:5px 8px; border-radius:999px; background:color-mix(in srgb,var(--secondary-text-color) 5%,transparent); color:var(--secondary-text-color); font-size:10.5px; line-height:1; }
+          .notify ha-icon { --mdc-icon-size:17px; flex:none; }
+          .notify span { white-space:nowrap; }
+          .notify.ok ha-icon { color:var(--success-color,#43a047); }
+          .notify.warn ha-icon { color:var(--error-color,#d32f2f); }
+          .notify.active ha-icon { color:var(--warning-color,#f9a825); }
+          .notify.info ha-icon { color:var(--primary-color); }
+          .notify.muted ha-icon { color:var(--secondary-text-color); }
+
           .info-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-top:10px; }
           .info-tile { min-width:0; display:flex; align-items:center; gap:8px; padding:10px; border-radius:13px; background:color-mix(in srgb,var(--primary-color) 6%,transparent); }
           .info-tile ha-icon { --mdc-icon-size:20px; color:var(--primary-color); flex:none; }
           .info-tile div { min-width:0; }
           .info-tile small { display:block; color:var(--secondary-text-color); font-size:9.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
           .info-tile strong { display:block; margin-top:2px; font-size:11.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
           .remote-controls { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:16px; padding-top:14px; border-top:1px solid var(--divider-color); }
           .remote-action { appearance:none; border:0; background:transparent; color:var(--primary-text-color); display:flex; flex-direction:column; align-items:center; gap:7px; min-width:0; cursor:pointer; font:inherit; }
           .remote-action > span:last-child { width:100%; font-size:10.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:center; }
@@ -684,26 +746,35 @@
           .remote-action.warn .action-circle ha-icon { color:var(--error-color,#d32f2f); }
           .remote-action.experimental .action-circle { border-style:dashed; }
           .remote-action.busy, .remote-action.disabled { opacity:.48; pointer-events:none; }
+
           @media (max-width:600px) {
             .wrap { padding:14px; }
-            .stage { min-height:245px; }
-            .vehicle-status { max-width:118px; padding:6px 7px; }
-            .vehicle-status span { display:none; }
-            .vehicle-status ha-icon { --mdc-icon-size:21px; }
-            .info-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+            .stage { min-height:235px; }
             .header h2 { font-size:18px; }
+            .notifications { gap:6px; }
+            .notify { padding:6px; min-width:29px; justify-content:center; }
+            .notify span { display:none; }
+            .notify ha-icon { --mdc-icon-size:19px; }
+            .info-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
           }
         </style>
         <ha-card>
           <div class="wrap">
             <div class="header">
               <h2>${this._escape(this._headerTitle())}</h2>
-              <div class="connection ${onlineKnown ? (online ? "online" : "") : "unknown"}"><i></i>${onlineKnown ? (online ? "Online" : "Offline") : "Нет данных"}</div>
+              <div class="connection-stack">
+                <div class="connection ${onlineKnown ? (online ? "online" : "") : "unknown"}">
+                  <i></i>${onlineKnown ? (online ? "Online" : "Offline") : "Нет данных"}
+                </div>
+                <div class="gsm" title="Уровень GSM T-Box">
+                  <span>GSM</span>${this._levelBars(this._rawValue("signal"), 4)}
+                </div>
+              </div>
             </div>
-            <div class="stage">
-              ${this._renderStatuses()}
+            <div class="stage ${securityClass}" title="${lockKnown ? (unlocked ? "Автомобиль разблокирован" : "Автомобиль закрыт") : "Статус замка неизвестен"}">
               ${this._carSvg()}
             </div>
+            ${this._renderNotifications()}
             ${this._renderInfo()}
             ${this._renderControls()}
           </div>
@@ -833,7 +904,7 @@
     window.customCards.push({
       type: "gwm-jolion-remote-card",
       name: "GWM Jolion — пульт",
-      description: "Настраиваемая карточка-пульт GWM Jolion с отдельным изображением автомобиля",
+      description: "Карточка-пульт GWM Jolion с подсветкой замка, компактными статусами и GSM",
       preview: true,
       documentationURL: "https://github.com/IndeecDen/ha-gwm-jolion",
     });
