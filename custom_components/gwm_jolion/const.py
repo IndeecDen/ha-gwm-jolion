@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 DOMAIN = "gwm_jolion"
-VERSION = "0.1.0-alpha.19.6"
+VERSION = "0.1.0-alpha.19.7"
 PLATFORMS = ["button", "sensor", "binary_sensor", "device_tracker", "lock", "climate", "number"]
 
 CONF_PHONE = "phone"
@@ -97,6 +97,10 @@ RAW_SENSOR_MAP: dict[str, SensorDef] = {
     "2102008": SensorDef("tpms_temp_fr_raw", "TPMS температура FR (raw)", icon="mdi:thermometer-alert", code="2102008", diagnostic=True),
     "2102009": SensorDef("tpms_temp_rl_raw", "TPMS температура RL (raw)", icon="mdi:thermometer-alert", code="2102009", diagnostic=True),
     "2102010": SensorDef("tpms_temp_rr_raw", "TPMS температура RR (raw)", icon="mdi:thermometer-alert", code="2102010", diagnostic=True),
+    "2210001": SensorDef("window_2210001_raw", "Окно переднее левое (raw)", icon="mdi:car-door", code="2210001", diagnostic=True),
+    "2210002": SensorDef("window_2210002_raw", "Окно переднее правое (raw)", icon="mdi:car-door", code="2210002", diagnostic=True),
+    "2210003": SensorDef("window_2210003_raw", "Окно заднее левое (raw)", icon="mdi:car-door", code="2210003", diagnostic=True),
+    "2210004": SensorDef("window_2210004_raw", "Окно заднее правое (raw)", icon="mdi:car-door", code="2210004", diagnostic=True),
     "2210010": SensorDef("window_learn_2210010_raw", "Обучение стекла 2210010 (raw)", icon="mdi:car-door", code="2210010", diagnostic=True),
     "2210011": SensorDef("window_learn_2210011_raw", "Обучение стекла 2210011 (raw)", icon="mdi:car-door", code="2210011", diagnostic=True),
     "2210012": SensorDef("window_learn_2210012_raw", "Обучение стекла 2210012 (raw)", icon="mdi:car-door", code="2210012", diagnostic=True),
@@ -104,7 +108,7 @@ RAW_SENSOR_MAP: dict[str, SensorDef] = {
     "2220001": SensorDef("driver_seat_heat_level_raw", "Подогрев сиденья водителя (raw)", icon="mdi:car-seat-heater", code="2220001", diagnostic=True),
     "2220002": SensorDef("passenger_seat_heat_level_raw", "Подогрев сиденья пассажира (raw)", icon="mdi:car-seat-heater", code="2220002", diagnostic=True),
     "2204007": SensorDef("light_2204007_raw", "Свет 2204007 (raw)", icon="mdi:car-light-high", code="2204007", diagnostic=True),
-    "2204008": SensorDef("light_2204008_raw", "Свет 2204008 (raw, неизвестно)", icon="mdi:car-light-alert", code="2204008", diagnostic=True),
+    "2204008": SensorDef("light_2204008_raw", "Дальний свет 2204008 (raw, кандидат)", icon="mdi:car-light-high", code="2204008", diagnostic=True),
     "2204009": SensorDef("left_indicator_raw", "Левый указатель поворота (raw)", icon="mdi:arrow-left-bold", code="2204009", diagnostic=True),
     "2204010": SensorDef("right_indicator_raw", "Правый указатель поворота (raw)", icon="mdi:arrow-right-bold", code="2204010", diagnostic=True),
     "4105008": SensorDef("tbox_signal_raw", "Уровень сигнала T-Box (raw)", icon="mdi:signal", code="4105008", diagnostic=True),
@@ -165,10 +169,10 @@ BINARY_SENSOR_DEFS = (
     ("door_front_right_open", "Дверь передняя правая", "door", False),
     ("door_rear_right_open", "Дверь задняя правая", "door", False),
     ("windows_open", "Окна открыты", "window", False),
-    ("window_2210001_open", "Окно 2210001", "window", True),
-    ("window_2210002_open", "Окно 2210002", "window", True),
-    ("window_2210003_open", "Окно 2210003", "window", True),
-    ("window_2210004_open", "Окно 2210004", "window", True),
+    ("window_2210001_open", "Окно переднее левое", "window", True),
+    ("window_2210002_open", "Окно переднее правое", "window", True),
+    ("window_2210003_open", "Окно заднее левое", "window", True),
+    ("window_2210004_open", "Окно заднее правое", "window", True),
     ("trunk_open", "Багажник открыт", "door", False),
     ("vehicle_unlocked", "Автомобиль разблокирован", "lock", False),
     ("climate_on", "Климат работает", "running", False),

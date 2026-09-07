@@ -9,6 +9,20 @@
 - 🧪 экспериментальная функция;
 - ⏳ запланировано.
 
+## 0.1.0-alpha.19.7 — recovered field-test / four-window mapping
+
+- ✅ восстановлена полная 68-record JSONL-сессия `alpha.19.5`;
+- ✅ `2210001=FL`, `2210002=FR`, `2210003=RL`, `2210004=RR` физически закреплены marker-тестом;
+- ✅ raw sensors всех четырёх окон добавлены как diagnostics;
+- ✅ remote-card использует отдельные raw/binary состояния всех четырёх окон;
+- ✅ `2202001` подтверждён как climate `0=OFF / 1=ON`;
+- ✅ ACC-тест выполнен: `2016001` остаётся `0`, RUNNING=`2`; отдельный ACC code не найден;
+- 🟢 `2204008` — кандидат дальнего света после `LIGHT_HIGH: 0→1`; нужен отдельный медленный повторный тест перед включением headlights animation;
+- 🟡 отдельные live-status steering/rear/front-defrost в этом STATUS-наборе не подтверждены;
+- ⏳ повторно проверить T5 `0x08` на физическое движение окон;
+- ⏳ найти достоверный hood telemetry signal.
+
+
 ## 0.1.0-alpha.19.6 — wide SUV remote-card / visible status values
 
 Этот раздел имеет приоритет над `alpha.19.5` для текущего визуального поведения карточки-пульта.
@@ -27,11 +41,11 @@
 - ✅ `Defrost` добавлен как опциональная статусная плитка в visual editor;
 - ✅ regression-тесты проверяют широкую геометрию, FR/RR сверху, FL/RL снизу, петли, driver-window placement и наличие текстовых значений топлива/пробега;
 - 🟢 подтверждённое водительское окно `2210001` остаётся на FL со шкалой `1=closed`, `3=partial`, `2=full open`;
-- ⏳ физически закрепить позиции `2210002..2210004` отдельным marker-тестом;
+- ✅ позиции `2210002..2210004` физически закреплены recovered marker-тестом `alpha.19.5`;
 - ⏳ фары: подключить анимацию только после физического подтверждения `2204007/2204008`;
 - ⏳ капот: подключить анимацию только после обнаружения достоверного hood telemetry signal;
 - ⏳ повторно проверить T5 `0x08` для физического закрытия/открытия окон;
-- ⏳ проверить `VEHICLE_SLEEP → DOOR_WAKE → IGNITION_ACC → ENGINE_RUNNING → ENGINE_STOPPED → VEHICLE_LOCKED` и поиск отдельного ACC-сигнала / `2016001=1`.
+- ✅ последовательность `VEHICLE_SLEEP → DOOR_WAKE → IGNITION_ACC → ENGINE_RUNNING → ENGINE_STOPPED → VEHICLE_LOCKED` проверена: отдельный ACC-код не найден, `2016001=1` не наблюдалось.
 
 ## 0.1.0-alpha.19.5 — corrected large remote-card layout
 
@@ -64,7 +78,7 @@
 - ✅ `vehicleBasicsInfo.leftFrontSeat/rightFrontSeat` признаны preset/config значениями и больше не используются как live fallback;
 - ✅ окна переведены на multistate decoder: `1=closed`, `2/3=not closed`, остальные значения unknown;
 - ✅ `2210001` физически подтверждён как переднее левое / водительское окно: `1=closed`, `3=partial`, `2=full open`;
-- ⏳ физически закрепить позиции `2210002..2210004` отдельным marker-тестом;
+- ✅ позиции `2210002..2210004` физически закреплены recovered marker-тестом `alpha.19.5`;
 - ✅ `custom:gwm-jolion-remote-card` переведена на SVG вид сверху и получила locked/unlocked glow, Online/GSM и анимации.
 
 ## 0. Базовая интеграция

@@ -10,7 +10,7 @@ def _source() -> str:
 
 def test_remote_card_version_and_horizontal_orientation() -> None:
     source = _source()
-    assert 'CARD_VERSION = "0.1.0-alpha.19.6"' in source
+    assert 'CARD_VERSION = "0.1.0-alpha.19.7"' in source
     assert 'viewBox="0 0 1100 520"' in source
     assert "капот слева, багажник справа" in source.lower()
     assert "правая сторона автомобиля сверху, левая снизу" in source
@@ -51,6 +51,9 @@ def test_door_entity_mapping_is_not_swapped() -> None:
 def test_confirmed_driver_window_stays_on_front_left_door() -> None:
     source = _source()
     assert 'window1Raw: "_window_2210001_raw"' in source
+    assert 'window2Raw: "_window_2210002_raw"' in source
+    assert 'window3Raw: "_window_2210003_raw"' in source
+    assert 'window4Raw: "_window_2210004_raw"' in source
     assert 'class="door door-fl bottom-side' in source
     assert 'class="door-window driver-window"' in source
     assert "if (value === 1) return 0" in source

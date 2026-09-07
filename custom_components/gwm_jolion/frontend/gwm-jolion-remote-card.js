@@ -1,6 +1,6 @@
-/* GWM Jolion Remote Card v0.1.0-alpha.19.6 */
+/* GWM Jolion Remote Card v0.1.0-alpha.19.7 */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.19.6";
+  const CARD_VERSION = "0.1.0-alpha.19.7";
   const INTEGRATION = "gwm_jolion";
   const DEFAULT_CONTROLS = ["lock", "engine", "climate", "trunk", "refresh"];
   const DEFAULT_INFO = [];
@@ -54,6 +54,12 @@
     windows: "_windows_open",
     window1: "_window_2210001_open",
     window1Raw: "_window_2210001_raw",
+    window2: "_window_2210002_open",
+    window2Raw: "_window_2210002_raw",
+    window3: "_window_2210003_open",
+    window3Raw: "_window_2210003_raw",
+    window4: "_window_2210004_open",
+    window4Raw: "_window_2210004_raw",
     trunk: "_trunk_open",
     unlocked: "_vehicle_unlocked",
     climateOn: "_climate_on",
@@ -414,6 +420,19 @@
       return null;
     }
 
+    _windowVisual(openKey, rawKey) {
+      const rawLevel = this._windowLevel(this._raw(rawKey));
+      const level = rawLevel === null
+        ? (this._isUnavailable(openKey) ? null : this._isOn(openKey) ? 1 : 0)
+        : rawLevel;
+      return {
+        level,
+        open: level !== null && level > 0,
+        opacity: level === null ? 0.94 : Math.max(0.08, 0.96 - level * 0.88),
+        scale: level === null ? 1 : Math.max(0.18, 1 - level * 0.76),
+      };
+    }
+
     _doorState(key) {
       return !this._isUnavailable(key) && this._isOn(key);
     }
@@ -473,14 +492,11 @@
       const aggregateDoors = this._isOn("doors");
       const specificKnown = ["doorFl", "doorFr", "doorRl", "doorRr"].some((key) => !this._isUnavailable(key));
       const unknownDoorOpen = aggregateDoors && !specificKnown;
-      const anyWindows = this._isOn("windows");
-
-      const flWindowLevelRaw = this._windowLevel(this._raw("window1Raw"));
-      const flWindowLevel = flWindowLevelRaw === null
-        ? (this._isUnavailable("window1") ? null : this._isOn("window1") ? 1 : 0)
-        : flWindowLevelRaw;
-      const flGlassOpacity = flWindowLevel === null ? 0.94 : Math.max(0.08, 0.96 - flWindowLevel * 0.88);
-      const flGlassScale = flWindowLevel === null ? 1 : Math.max(0.18, 1 - flWindowLevel * 0.76);
+      const windowFl = this._windowVisual("window1", "window1Raw");
+      const windowFr = this._windowVisual("window2", "window2Raw");
+      const windowRl = this._windowVisual("window3", "window3Raw");
+      const windowRr = this._windowVisual("window4", "window4Raw");
+      const anyWindows = this._isOn("windows") || [windowFl, windowFr, windowRl, windowRr].some((item) => item.open);
 
       return `
         <div class="car-scene ${lockClass} ${engine ? "engine-on" : ""} ${climate ? "climate-on" : ""} ${trunk ? "trunk-open" : ""} ${anyWindows ? "windows-open" : ""} ${unknownDoorOpen ? "unknown-door-open" : ""}">
@@ -603,25 +619,25 @@
 
               <g class="door door-fr top-side ${doors.fr ? "open" : ""}">
                 <path class="door-panel" d="M410 111 L586 78 L586 166 L410 188 Z"/>
-                <path class="door-window" d="M435 119 L565 95 L565 151 L435 168 Z"/>
+                <path class="door-window ${windowFr.open ? "window-open" : ""}" d="M435 119 L565 95 L565 151 L435 168 Z" style="opacity:${windowFr.opacity.toFixed(2)};transform:scaleY(${windowFr.scale.toFixed(2)})"/>
               </g>
               <circle class="hinge hinge-fr" cx="410" cy="150" r="5"/>
 
               <g class="door door-rr top-side ${doors.rr ? "open" : ""}">
                 <path class="door-panel" d="M602 76 L828 89 L828 177 L602 166 Z"/>
-                <path class="door-window generic-window" d="M625 94 L805 104 L805 158 L625 151 Z"/>
+                <path class="door-window ${windowRr.open ? "window-open" : ""}" d="M625 94 L805 104 L805 158 L625 151 Z" style="opacity:${windowRr.opacity.toFixed(2)};transform:scaleY(${windowRr.scale.toFixed(2)})"/>
               </g>
               <circle class="hinge hinge-rr" cx="602" cy="121" r="5"/>
 
               <g class="door door-fl bottom-side ${doors.fl ? "open" : ""}">
                 <path class="door-panel" d="M410 409 L586 442 L586 354 L410 332 Z"/>
-                <path class="door-window driver-window" d="M435 401 L565 425 L565 369 L435 352 Z" style="opacity:${flGlassOpacity.toFixed(2)};transform:scaleY(${flGlassScale.toFixed(2)})"/>
+                <path class="door-window driver-window ${windowFl.open ? "window-open" : ""}" d="M435 401 L565 425 L565 369 L435 352 Z" style="opacity:${windowFl.opacity.toFixed(2)};transform:scaleY(${windowFl.scale.toFixed(2)})"/>
               </g>
               <circle class="hinge hinge-fl" cx="410" cy="370" r="5"/>
 
               <g class="door door-rl bottom-side ${doors.rl ? "open" : ""}">
                 <path class="door-panel" d="M602 444 L828 431 L828 343 L602 354 Z"/>
-                <path class="door-window generic-window" d="M625 426 L805 416 L805 362 L625 369 Z"/>
+                <path class="door-window ${windowRl.open ? "window-open" : ""}" d="M625 426 L805 416 L805 362 L625 369 Z" style="opacity:${windowRl.opacity.toFixed(2)};transform:scaleY(${windowRl.scale.toFixed(2)})"/>
               </g>
               <circle class="hinge hinge-rl" cx="602" cy="399" r="5"/>
 
@@ -1100,7 +1116,7 @@
             stroke:rgba(255,64,72,.88);
             animation:unknownDoorPulse 1.2s ease-in-out infinite;
           }
-          .windows-open .generic-window{
+          .door-window.window-open{
             stroke:rgba(57,173,255,.86);
             animation:windowPulse 1.3s ease-in-out infinite;
           }

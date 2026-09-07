@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.0-alpha.19.7
+
+Полевой protocol-релиз по восстановленной JSONL-сессии `alpha.19.5` с 68 записями и marker-тестами.
+
+### Confirmed telemetry
+
+- физически закреплены все четыре окна: `2210001=FL`, `2210002=FR`, `2210003=RL`, `2210004=RR`;
+- для FL подтверждена шкала `1=closed`, `3=partial`, `2=full open`; для FR/RL/RR надёжно пойманы `1=closed` и `2=full open`, поэтому generic decoder сохраняет консервативное `2/3=not closed`;
+- `2202001` переведён в confirmed climate state: `0=OFF`, `1=ON`;
+- marker ACC подтвердил, что `2016001` остаётся `0` в ACC, а RUNNING даёт `0→2`, STOPPED — `2→0`; отдельный ACC signal не найден;
+- `2204008` повышен из unknown в `known_unverified` как кандидат дальнего света: после `LIGHT_HIGH` пойман `0→1`, затем возврат `1→0`;
+- быстрые steering/rear/front-defrost маркеры не выявили отдельных live status-кодов в 43-item STATUS; front defrost активирует общий climate code и не используется как отдельный status.
+
+### Home Assistant / remote card
+
+- raw telemetry `2210001..2210004` теперь создаёт diagnostic sensors с физическими friendly names;
+- существующие window binary-sensor unique IDs сохранены, их названия заменены на физические позиции;
+- remote-card обнаруживает raw/binary entities всех четырёх окон и анимирует соответствующие стёкла отдельно;
+- фары по-прежнему не активируются по engine и не включаются по кандидату `2204008` до повторного light-test;
+- frontend cache key и версия обновлены до `0.1.0-alpha.19.7`.
+
+### Capture recovery
+
+- README уточняет, что новый setup/reload создаёт новый timestamped JSONL, но старые capture-файлы в `/config/gwm_jolion_protocol_capture/` не удаляются; стандартная диагностика показывает текущую активную сессию.
+
+
 ## 0.1.0-alpha.19.6
 
 UX-релиз `custom:gwm-jolion-remote-card` по результатам реального скриншота `alpha.19.5`. Протокол автомобиля и remote payload не изменялись.
