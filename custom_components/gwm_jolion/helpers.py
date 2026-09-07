@@ -13,31 +13,14 @@ from .vehicle_data import describe_structure
 
 _LOGGER = logging.getLogger(__name__)
 
-# Values from these top-level getLastStatus fields are useful for protocol analysis
-# and are not vehicle/account identifiers or exact coordinates.
 _STATUS_SAFE_META_KEYS = (
-    "acquisitionTime",
-    "uploadTime",
-    "updateTime",
-    "oilQty",
-    "percentageOfOil",
-    "charge",
-    "serviceStatus",
-    "deviceType",
-    "command",
+    "acquisitionTime", "uploadTime", "updateTime", "oilQty", "percentageOfOil", "charge",
+    "serviceStatus", "deviceType", "command",
 )
 
-# findStatus layouts differ between vehicles. Keep only explicitly safe scalar
-# values, while the structure inventory below exposes names/types of other fields.
 _TBOX_SAFE_META_KEYS = (
-    "status",
-    "signal",
-    "signalLevel",
-    "networkType",
-    "network",
-    "acquisitionTime",
-    "uploadTime",
-    "updateTime",
+    "status", "signal", "signalLevel", "networkType", "network",
+    "acquisitionTime", "uploadTime", "updateTime",
 )
 
 
@@ -72,6 +55,34 @@ def _any_present_equals(state: dict[str, Any], keys: tuple[str, ...], value: int
     if not present:
         return None
     return any(item == value for item in present)
+
+
+def _window_open_from_raw(state: dict[str, Any], key: str) -> bool | None:
+    """Decode only window states proven by field capture.
+
+    Raw 1 is closed. Raw 2 and 3 are non-closed states. Exact physical meaning
+    of 2 vs 3 is confirmed for 2210001 only and is intentionally not encoded
+    into the generic binary sensor.
+    """
+    value = state.get(key)
+    if value is None:
+        return None
+    if value == 1:
+        return False
+    if value in {2, 3}:
+        return True
+    return None
+
+
+def _any_window_open(state: dict[str, Any], keys: tuple[str, ...]) -> bool | None:
+    values = [_window_open_from_raw(state, key) for key in keys if state.get(key) is not None]
+    if not values:
+        return None
+    if any(value is True for value in values):
+        return True
+    if all(value is False for value in values):
+        return False
+    return None
 
 
 def _seconds_to_minutes(value: Any) -> int | float | None:
@@ -115,10 +126,7 @@ def merge_vehicle_basics(state: dict[str, Any], basics: dict[str, Any]) -> None:
         "frontDefrostTime": ("front_defrost_saved_runtime", _seconds_to_minutes),
         "backDefrostStatus": ("rear_defrost_status_basics_raw", value_to_number),
         "rearDefrostTime": ("rear_defrost_saved_runtime", _seconds_to_minutes),
-        "frontWindshieldFullScreenHeatingTime": (
-            "front_windscreen_heat_saved_runtime",
-            _seconds_to_minutes,
-        ),
+        "frontWindshieldFullScreenHeatingTime": ("front_windscreen_heat_saved_runtime", _seconds_to_minutes),
         "steeringWheelHeatingTime": ("steering_wheel_heat_saved_runtime", _seconds_to_minutes),
         "airPurifierStatus": ("air_purifier_status_raw", value_to_number),
         "airPurifierTime": ("purifier_runtime", _seconds_to_minutes),
@@ -130,13 +138,9 @@ def merge_vehicle_basics(state: dict[str, Any], basics: dict[str, Any]) -> None:
         if cloud_key in merged and merged[cloud_key] is not None:
             state[state_key] = converter(merged[cloud_key])
 
-    # Main telemetry signals remain authoritative. Seat values from
-    # vehicleBasicsInfo are used only as a fallback when the live signal is absent.
-    if state.get("driver_seat_heat_level_raw") is None and merged.get("leftFrontSeat") is not None:
-        state["driver_seat_heat_level_raw"] = value_to_number(merged["leftFrontSeat"])
-    if state.get("passenger_seat_heat_level_raw") is None and merged.get("rightFrontSeat") is not None:
-        state["passenger_seat_heat_level_raw"] = value_to_number(merged["rightFrontSeat"])
-
+    # leftFrontSeat/rightFrontSeat from vehicleBasicsInfo are saved remote-control
+    # presets, not live heater states. Live 2220001/2220002 telemetry is the only
+    # source for the live seat heat level; absent live telemetry stays unavailable.
     _LOGGER.debug("vehicleBasicsInfo keys: %s", sorted(merged.keys()))
 
 
@@ -185,11 +189,11 @@ def build_state(status: dict[str, Any], tbox: dict[str, Any], basics: dict[str, 
     state["door_rear_left_open"] = _bool_from_raw(state, "door_rear_left_raw")
     state["door_front_right_open"] = _bool_from_raw(state, "door_front_right_raw")
     state["door_rear_right_open"] = _bool_from_raw(state, "door_rear_right_raw")
-    state["windows_open"] = _any_present_equals(state, window_keys, 0)
-    state["window_2210001_open"] = _bool_from_raw(state, "window_2210001_raw", 0)
-    state["window_2210002_open"] = _bool_from_raw(state, "window_2210002_raw", 0)
-    state["window_2210003_open"] = _bool_from_raw(state, "window_2210003_raw", 0)
-    state["window_2210004_open"] = _bool_from_raw(state, "window_2210004_raw", 0)
+    state["windows_open"] = _any_window_open(state, window_keys)
+    state["window_2210001_open"] = _window_open_from_raw(state, "window_2210001_raw")
+    state["window_2210002_open"] = _window_open_from_raw(state, "window_2210002_raw")
+    state["window_2210003_open"] = _window_open_from_raw(state, "window_2210003_raw")
+    state["window_2210004_open"] = _window_open_from_raw(state, "window_2210004_raw")
     state["trunk_open"] = _bool_from_raw(state, "trunk_raw")
     state["vehicle_unlocked"] = _bool_from_raw(state, "central_lock_raw")
 
@@ -208,8 +212,6 @@ def build_state(status: dict[str, Any], tbox: dict[str, Any], basics: dict[str, 
     state["tbox_status"] = tbox_status
     state["tbox_online"] = str(tbox_status) == "1" if tbox_status is not None else None
 
-    # Private coordinator-only snapshots used by Protocol Capture. Structure
-    # descriptions contain key names/types only, never raw values.
     state["_seen_signals"] = seen_signals
     state["_unknown_signals"] = unknown_signals
     state["_signal_units"] = signal_units
@@ -220,20 +222,10 @@ def build_state(status: dict[str, Any], tbox: dict[str, Any], basics: dict[str, 
     state["_tbox_structure"] = describe_structure(tbox)
 
     merge_vehicle_basics(state, basics or {})
-
     _LOGGER.debug("TBOX data keys: %s", list(tbox.keys()) if isinstance(tbox, dict) else "none")
     return state
 
 
 def redact_vehicle(vehicle: dict[str, Any]) -> dict[str, Any]:
-    hidden = {
-        "vin",
-        "showedVin",
-        "engineNo",
-        "simIccid",
-        "imsi",
-        "vehicleId",
-        "vehicleNumber",
-        "shareId",
-    }
+    hidden = {"vin", "showedVin", "engineNo", "simIccid", "imsi", "vehicleId", "vehicleNumber", "shareId"}
     return {key: ("***REDACTED***" if key in hidden else value) for key, value in vehicle.items()}
