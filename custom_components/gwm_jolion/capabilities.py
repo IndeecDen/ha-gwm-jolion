@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .entity_surface import PUBLIC_MANUAL_CAPABILITIES
-
 
 class CapabilityStatus(StrEnum):
     CONFIRMED = "confirmed"
@@ -56,13 +54,22 @@ _ALL_MANUAL_CAPABILITY_OPTIONS: dict[str, str] = {
     "air_purifier": "feature_air_purifier",
 }
 
+_PUBLIC_MANUAL_CAPABILITIES = frozenset(
+    {
+        "steering_wheel_heat",
+        "rear_defrost",
+        "seat_heat_driver",
+        "seat_heat_passenger",
+    }
+)
+
 # alpha.20 only asks the user about equipment that currently affects a useful
-# public status or command.  Discovery-only/experimental features remain in the
+# public status or command. Discovery-only/experimental features remain in the
 # protocol model but are no longer shown in the normal Options Flow.
 MANUAL_CAPABILITY_OPTIONS: dict[str, str] = {
     key: value
     for key, value in _ALL_MANUAL_CAPABILITY_OPTIONS.items()
-    if key in PUBLIC_MANUAL_CAPABILITIES
+    if key in _PUBLIC_MANUAL_CAPABILITIES
 }
 
 DEFAULT_MANUAL_CAPABILITIES: dict[str, bool] = {
