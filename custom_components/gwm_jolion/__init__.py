@@ -11,6 +11,7 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import GwmJolionApiClient
@@ -23,6 +24,7 @@ from .const import (
     DEFAULT_ENABLE_REMOTE_CONTROLS, DEFAULT_POLL_INTERVAL, DOMAIN, PLATFORMS,
 )
 from .coordinator import GwmJolionCoordinator
+from .entity_surface import MIGRATION_REMOVE_ENTITY_SUFFIXES, OBSOLETE_OPTION_KEYS
 from .protocol_capture import (
     CAPTURE_DIRECTORY,
     CONF_PROTOCOL_CAPTURE,
@@ -37,21 +39,64 @@ FRONTEND_ASSETS = (
     (
         FRONTEND_DIR / "gwm-jolion-card-editor.js",
         "/gwm-jolion/gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-alpha.19.7",
+        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-alpha.20",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card.js",
         "/gwm-jolion/gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.19.7",
+        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-alpha.20",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-remote-card.js",
         "/gwm-jolion/gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-alpha.19.7",
+        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-alpha.20",
+    ),
+    (
+        FRONTEND_DIR / "gwm-jolion-alpha20.js",
+        "/gwm-jolion/gwm-jolion-alpha20.js",
+        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-alpha.20",
     ),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
 SERVICE_ADD_CAPTURE_MARKER = "add_capture_marker"
+CONFIG_ENTRY_VERSION = 2
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Remove obsolete alpha entities and options once when upgrading to v2."""
+    if entry.version > CONFIG_ENTRY_VERSION:
+        _LOGGER.error(
+            "Cannot migrate GWM Jolion config entry from future version %s",
+            entry.version,
+        )
+        return False
+
+    if entry.version < CONFIG_ENTRY_VERSION:
+        registry = er.async_get(hass)
+        removed: list[str] = []
+        for domain, suffixes in MIGRATION_REMOVE_ENTITY_SUFFIXES.items():
+            for suffix in suffixes:
+                unique_id = f"{entry.entry_id}_{suffix}"
+                entity_id = registry.async_get_entity_id(domain, DOMAIN, unique_id)
+                if entity_id:
+                    registry.async_remove(entity_id)
+                    removed.append(entity_id)
+
+        options = dict(entry.options)
+        for key in OBSOLETE_OPTION_KEYS:
+            options.pop(key, None)
+
+        hass.config_entries.async_update_entry(
+            entry,
+            version=CONFIG_ENTRY_VERSION,
+            options=options,
+        )
+        _LOGGER.info(
+            "Migrated GWM Jolion entity surface to alpha.20: removed %d obsolete registry entries",
+            len(removed),
+        )
+
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -129,6 +174,8 @@ def _coordinators(hass: HomeAssistant) -> list[GwmJolionCoordinator]:
 
 
 def _register_services(hass: HomeAssistant) -> None:
+    """Keep advanced services for compatibility; public UI uses native entities/buttons."""
+
     async def handle_command(call: ServiceCall) -> None:
         coordinators = _coordinators(hass)
         if not coordinators:
