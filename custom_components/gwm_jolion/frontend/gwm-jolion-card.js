@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-alpha.23 */
+/* GWM Jolion Card v0.1.0-beta.1 */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.23";
+  const CARD_VERSION = "0.1.0-beta.1";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -1024,28 +1024,48 @@
     _seatHeatingPanel() {
       const seats = [["driver", "seat_heat_driver", "seatDriver", "Водитель"], ["passenger", "seat_heat_passenger", "seatPassenger", "Пассажир"]].filter(([, feature]) => this._featureEnabled(feature));
       if (!seats.length) return "";
-      this._seatSettings ||= {driver: 0, passenger: 0, operation_time: 5};
-      return `<div class="seat-panel" style="grid-column:1/-1;padding:12px;border:1px solid var(--divider-color);border-radius:12px">
+      this._seatSettings ||= {driver: 3, passenger: 3, operation_time: 5};
+      this._seatEnabled ||= {driver: true, passenger: true};
+      return `<div class="seat-panel">
+        <style>
+          .seat-panel{grid-column:1/-1;padding:14px;border-radius:14px;background:var(--card-background-color)}
+          .seat-row{display:grid;grid-template-columns:minmax(100px,1fr) minmax(100px,1fr);align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--divider-color)}
+          .seat-name{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600}
+          .seat-status{display:block;font-size:11px;color:var(--secondary-text-color);margin-top:4px}
+          .seat-status.on{color:var(--warning-color,#e58b12)}
+          .seat-slider input{width:100%;margin:0;accent-color:var(--primary-color);cursor:pointer}
+          .seat-ticks{display:flex;justify-content:space-between;font-size:11px;color:var(--secondary-text-color);padding:0 5px;margin-top:3px}
+          .seat-panel>.control{width:100%;margin-top:12px}
+          .seat-name input{accent-color:var(--primary-color)}
+        </style>
         <strong>Подогрев сидений</strong>
-        ${seats.map(([key, , sensor, label]) => `<label style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin:10px 0">${label}<span role="status" data-seat-status="${key}" style="font-weight:600;color:${Number(this._rawValue(sensor)) > 0 ? "var(--warning-color, #e58b12)" : "var(--secondary-text-color)"}">${this._escape(this._seatValue(sensor))}</span>
-          <select aria-label="Подогрев: ${label}" data-seat-setting="${key}" style="padding:8px;background:var(--card-background-color);color:var(--primary-text-color)">${[0,1,2,3].map(level => `<option value="${level}" ${this._seatSettings[key] === level ? "selected" : ""}>${level ? `Уровень ${level}` : "Выключить"}</option>`).join("")}</select></label>`).join("")}
-        <label style="display:flex;justify-content:space-between;align-items:center;margin:10px 0">Таймер, мин
-          <input aria-label="Таймер подогрева" data-seat-setting="operation_time" type="number" min="1" max="10" step="1" value="${this._seatSettings.operation_time}" style="width:64px;padding:8px;background:var(--card-background-color);color:var(--primary-text-color)"></label>
-        ${this._control("seat-heating", "mdi:car-seat-heater", "Применить подогрев", "Уровни и таймер", "", !this._entryId || this._busy.has("seat-heating") || this._remoteCommandInProgress())}
+        ${seats.map(([key, , sensor, label]) => `<div class="seat-row">
+          <div><label class="seat-name"><input type="checkbox" data-seat-enable="${key}" aria-label="Включить: ${label}" ${this._seatEnabled[key] ? "checked" : ""}>${label}</label>
+          <span class="seat-status ${Number(this._rawValue(sensor))>0 ? "on" : ""}" role="status" data-seat-status="${key}">${this._escape(this._seatValue(sensor))}</span></div>
+          <div class="seat-slider"><input aria-label="Подогрев: ${label}" data-seat-setting="${key}" type="range" min="1" max="3" step="1" value="${Math.max(1,this._seatSettings[key])}" ${this._seatEnabled[key] ? "" : "disabled"}><div class="seat-ticks"><span>1</span><span>2</span><span>3</span></div></div>
+        </div>`).join("")}
+        <div class="seat-row"><div class="seat-name">Таймер <span data-seat-time>${this._seatSettings.operation_time} мин</span></div>
+        <div class="seat-slider"><input aria-label="Таймер подогрева" data-seat-setting="operation_time" type="range" min="1" max="10" step="1" value="${this._seatSettings.operation_time}"><div class="seat-ticks"><span>1 мин</span><span>10 мин</span></div></div></div>
+        ${this._control("seat-heating", "mdi:car-seat-heater", "Применить", "Уровни и таймер", "", !this._entryId || this._busy.has("seat-heating") || this._remoteCommandInProgress())}
       </div>`;
     }
 
     _bindActions() {
+      this.shadowRoot.querySelectorAll("[data-seat-enable]").forEach(input => input.addEventListener("change", () => {
+        this._seatEnabled[input.dataset.seatEnable] = input.checked;
+        this.shadowRoot.querySelector(`[data-seat-setting="${input.dataset.seatEnable}"]`).disabled = !input.checked;
+      }));
       this.shadowRoot.querySelectorAll("[data-seat-setting]").forEach(input => {
-        input.addEventListener("change", () => {
+        input.addEventListener("input", () => {
           const value = Number(input.value);
           const maximum = input.dataset.seatSetting === "operation_time" ? 10 : 3;
-          const minimum = input.dataset.seatSetting === "operation_time" ? 1 : 0;
+          const minimum = 1;
           if (!Number.isInteger(value) || value < minimum || value > maximum) {
             input.value = this._seatSettings[input.dataset.seatSetting];
             return;
           }
           this._seatSettings[input.dataset.seatSetting] = value;
+          if (input.dataset.seatSetting === "operation_time") this.shadowRoot.querySelector("[data-seat-time]").textContent = `${value} мин`;
         });
       });
       this.shadowRoot.querySelectorAll("[data-action]").forEach((button) =>
@@ -1205,8 +1225,8 @@
       if (action === "seat-heating") {
         if (!this._entryId) return;
         const data = {entry_id: this._entryId, operation_time: this._seatSettings.operation_time};
-        if (this._featureEnabled("seat_heat_driver")) data.driver = this._seatSettings.driver;
-        if (this._featureEnabled("seat_heat_passenger")) data.passenger = this._seatSettings.passenger;
+        if (this._featureEnabled("seat_heat_driver")) data.driver = this._seatEnabled.driver ? this._seatSettings.driver : 0;
+        if (this._featureEnabled("seat_heat_passenger")) data.passenger = this._seatEnabled.passenger ? this._seatSettings.passenger : 0;
         return this._runBusy(action, () => this._hass.callService(INTEGRATION, "set_seat_heating", data));
       }
 
