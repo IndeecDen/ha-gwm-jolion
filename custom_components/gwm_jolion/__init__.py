@@ -42,22 +42,22 @@ FRONTEND_ASSETS = (
     (
         FRONTEND_DIR / "gwm-jolion-card-editor.js",
         "/gwm-jolion/gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-beta.2",
+        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-beta.2.1",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card.js",
         "/gwm-jolion/gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-beta.2",
+        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-beta.2.1",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-remote-card.js",
         "/gwm-jolion/gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-beta.2",
+        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-beta.2.1",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-alpha20.js",
         "/gwm-jolion/gwm-jolion-alpha20.js",
-        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-beta.2",
+        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-beta.2.1",
     ),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
@@ -141,6 +141,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         protocol_capture_enabled=capture_enabled,
         protocol_capture_path=capture_path,
     )
+    await coordinator.async_load_card_settings()
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -225,6 +226,15 @@ def _register_services(hass: HomeAssistant) -> None:
             vol.Optional("passenger"): vol.All(int, vol.Range(min=0, max=3)),
         }))
 
+    async def handle_save_card_settings(call: ServiceCall) -> None:
+        await select_coordinator(call).async_save_card_settings(call.data["settings"])
+
+    if not hass.services.has_service(DOMAIN, "save_card_settings"):
+        hass.services.async_register(DOMAIN, "save_card_settings", handle_save_card_settings, schema=vol.Schema({
+            vol.Required("entry_id"): str,
+            vol.Required("settings"): dict,
+        }))
+
     async def handle_command(call: ServiceCall) -> None:
         coordinators = _coordinators(hass)
         if not coordinators:
@@ -256,7 +266,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         if not _coordinators(hass):
-            for command_key in (*COMMANDS, "set_seat_heating", "start_with_comfort"):
+            for command_key in (*COMMANDS, "set_seat_heating", "start_with_comfort", "save_card_settings"):
                 if hass.services.has_service(DOMAIN, command_key):
                     hass.services.async_remove(DOMAIN, command_key)
             if hass.services.has_service(DOMAIN, SERVICE_ADD_CAPTURE_MARKER):

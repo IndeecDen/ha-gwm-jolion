@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-beta.2 */
+/* GWM Jolion Card v0.1.0-beta.2.1 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.2";
+  const CARD_VERSION = "0.1.0-beta.2.1";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -56,6 +56,7 @@
       this._device = null;
       this._entities = {};
       this._resolving = false;
+      this._settingsToken = null;
       this._resolvedKey = null;
       this._busy = new Set();
       this._engineRuntime = 15;
@@ -420,7 +421,44 @@
         </div>`;
     }
 
+    _restoreCardSettings() {
+      if (!this._entryId) return;
+      if (this._settingsEntry !== this._entryId) {
+        this._settingsEntry = this._entryId;
+        this._settingsToken = null;
+        this._seatSettings = {driver:3, passenger:3, operation_time:5};
+        this._seatEnabled = {driver:true, passenger:true};
+        this._comfortStart = false;
+        this._comfortTemperature = undefined;
+        this._comfortRuntime = undefined;
+        this._engineRuntime = Number(this._config.engine_runtime) || 15;
+      }
+      const saved = this._state("refresh")?.attributes?.card_settings;
+      if (!saved) return;
+      const token = JSON.stringify(saved);
+      if (token === this._settingsToken) return;
+      this._settingsToken = token;
+      for (const [field, property] of [["temperature","_comfortTemperature"],["climate_time","_comfortRuntime"],["engine_time","_engineRuntime"],["comfort_start","_comfortStart"]]) {
+        if (saved[field] !== undefined) this[property] = saved[field];
+      }
+      for (const key of ["driver","passenger"]) {
+        if (saved[key] !== undefined) this._seatSettings[key] = saved[key];
+        if (saved[`${key}_enabled`] !== undefined) this._seatEnabled[key] = saved[`${key}_enabled`];
+      }
+      if (saved.seat_time !== undefined) this._seatSettings.operation_time = saved.seat_time;
+    }
+
+    _saveCardSettings(settings) {
+      if (!this._entryId || !this._hass) return Promise.resolve();
+      const entryId = this._entryId;
+      this._settingsSave = (this._settingsSave || Promise.resolve()).then(() =>
+        this._hass.callService(INTEGRATION, "save_card_settings", {entry_id:entryId, settings})
+      ).catch(error => { console.error("GWM settings save failed", error); alert("Не удалось сохранить настройки карточки. Проверьте подключение к Home Assistant."); });
+      return this._settingsSave;
+    }
+
     _render() {
+      this._restoreCardSettings();
       if (!this.shadowRoot) return;
       if (!this._hass) {
         this.shadowRoot.innerHTML =
@@ -430,12 +468,12 @@
 
       const climate = this._state("climate");
       const targetTemp = Number(
-        (this._comfortStart ? this._comfortTemperature : undefined) ?? climate?.attributes?.temperature ??
+        this._comfortTemperature ?? climate?.attributes?.temperature ??
           climate?.attributes?.target_temp ??
           22
       );
       const runtime = Number(
-        (this._comfortStart ? this._comfortRuntime : undefined) ?? this._state("climateRuntime")?.state ??
+        this._comfortRuntime ?? this._state("climateRuntime")?.state ??
           climate?.attributes?.operation_time_minutes ??
           15
       );
@@ -1054,17 +1092,20 @@
     _bindActions() {
       this.shadowRoot.getElementById("comfort-start")?.addEventListener("change", event => {
         this._comfortStart = event.target.checked;
-        this._comfortTemperature = Number(this._state("climate")?.attributes?.temperature ?? 22);
-        this._comfortRuntime = Number(this._state("climateRuntime")?.state ?? 15);
+        this._saveCardSettings({comfort_start:this._comfortStart});
+        this._comfortTemperature ??= Number(this._state("climate")?.attributes?.temperature ?? 22);
+        this._comfortRuntime ??= Number(this._state("climateRuntime")?.state ?? 15);
         if (!Number.isFinite(this._comfortTemperature)) this._comfortTemperature = 22;
         if (!Number.isFinite(this._comfortRuntime)) this._comfortRuntime = 15;
         this._render();
       });
       this.shadowRoot.querySelectorAll("[data-seat-enable]").forEach(input => input.addEventListener("change", () => {
         this._seatEnabled[input.dataset.seatEnable] = input.checked;
+        this._saveCardSettings({[`${input.dataset.seatEnable}_enabled`]:input.checked});
         this.shadowRoot.querySelector(`[data-seat-setting="${input.dataset.seatEnable}"]`).disabled = !input.checked;
       }));
       this.shadowRoot.querySelectorAll("[data-seat-setting]").forEach(input => {
+        input.addEventListener("change", () => this._saveCardSettings({[input.dataset.seatSetting === "operation_time" ? "seat_time" : input.dataset.seatSetting]:Number(input.value)}));
         input.addEventListener("input", () => {
           const value = Number(input.value);
           const maximum = input.dataset.seatSetting === "operation_time" ? 10 : 3;
@@ -1098,6 +1139,7 @@
 
       const engineRuntime = this.shadowRoot.getElementById("engine-runtime");
       if (engineRuntime) {
+        engineRuntime.addEventListener("change", () => this._saveCardSettings({engine_time:Number(engineRuntime.value)}));
         engineRuntime.addEventListener("input", () => {
           const value = Number(engineRuntime.value);
           if (!Number.isFinite(value)) return;
@@ -1371,16 +1413,19 @@
     async _changeTemperature(step) {
       if (this._comfortStart) {
         this._comfortTemperature = Math.min(32, Math.max(16, this._comfortTemperature + step));
+        this._saveCardSettings({temperature:this._comfortTemperature});
         this._render();
         return;
       }
       const climate = this._state("climate");
       const entityId = this._entities.climate;
       if (!climate || !entityId) return;
-      const current = Number(climate.attributes?.temperature ?? 22);
+      const current = Number(this._comfortTemperature ?? climate.attributes?.temperature ?? 22);
       const min = Number(climate.attributes?.min_temp ?? 16);
       const max = Number(climate.attributes?.max_temp ?? 32);
       const next = Math.min(max, Math.max(min, current + step));
+      this._comfortTemperature = next;
+      this._saveCardSettings({temperature:next});
       await this._runBusy("temperature", () =>
         this._hass.callService("climate", "set_temperature", {
           entity_id: entityId,
@@ -1390,6 +1435,9 @@
     }
 
     async _setRuntime(value) {
+      if (!Number.isInteger(value) || value < 5 || value > 30) return;
+      this._comfortRuntime = value;
+      this._saveCardSettings({climate_time:value});
       if (this._comfortStart) {
         this._comfortRuntime = Math.min(30, Math.max(5, value));
         this._render();

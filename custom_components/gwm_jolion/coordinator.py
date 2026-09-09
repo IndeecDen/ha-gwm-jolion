@@ -16,6 +16,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .api import GwmJolionApiClient, GwmJolionApiError
 from .capabilities import CAPABILITIES, capability_for_command, capability_report
 from .command_safety import remote_start_block_reason
+from homeassistant.helpers.storage import Store
+from .card_settings import validate_settings
+
 from .commands import COMMANDS, UNSUPPORTED_COMMANDS, build_seat_heating_instructions
 from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN, VERSION
 from .protocol import SIGNALS, VerificationStatus, update_signal_change_history
@@ -91,6 +94,9 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_command_time = 0.0
         self._command_lock = asyncio.Lock()
         self.climate_target_temperature = DEFAULT_CLIMATE_TEMPERATURE
+        self.card_settings = {}
+        self._card_settings_store = Store(hass, 1, f"{DOMAIN}_{entry_id}_card_settings")
+        self._card_settings_lock = asyncio.Lock()
         self._comfort_task = None
         self.climate_operation_time = DEFAULT_CLIMATE_RUNTIME
         self.last_command_name: str | None = None
@@ -506,3 +512,26 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         remaining = self.command_cooldown - (time.monotonic() - self._last_command_time)
         if remaining > 0:
             await asyncio.sleep(remaining + 0.1)
+
+    async def async_load_card_settings(self) -> None:
+        saved = await self._card_settings_store.async_load()
+        try:
+            self.card_settings = validate_settings(saved or {})
+        except ValueError:
+            _LOGGER.warning("Ignoring invalid saved card settings")
+            self.card_settings = {}
+        self.climate_target_temperature = self.card_settings.get("temperature", self.climate_target_temperature)
+        self.climate_operation_time = self.card_settings.get("climate_time", self.climate_operation_time)
+
+    async def async_save_card_settings(self, patch: dict) -> None:
+        try:
+            patch = validate_settings(patch)
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+        async with self._card_settings_lock:
+            settings = {**self.card_settings, **patch}
+            await self._card_settings_store.async_save(settings)
+            self.card_settings = settings
+            self.climate_target_temperature = settings.get("temperature", self.climate_target_temperature)
+            self.climate_operation_time = settings.get("climate_time", self.climate_operation_time)
+            self.async_update_listeners()

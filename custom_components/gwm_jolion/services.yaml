@@ -135,3 +135,16 @@ start_with_comfort:
         number:
           min: 0
           max: 3
+
+save_card_settings:
+  name: Сохранить настройки карточки
+  description: Сохраняет выбранные параметры без отправки команд автомобилю.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        text:
+    settings:
+      required: true
+      selector:
+        object:
