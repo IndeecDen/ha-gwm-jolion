@@ -45,3 +45,37 @@ def test_unsupported_heaters_fail_before_network():
     for key in commands.UNSUPPORTED_COMMANDS:
         with pytest.raises(RuntimeError, match='отключено'):
             asyncio.run(scope['async_execute_command'](SimpleNamespace(), key))
+
+
+@pytest.mark.parametrize('fail', [None, 'engine', 'climate', 'seats'])
+def test_comfort_sequence_stops_on_error_and_releases(fail):
+    import ast
+    import asyncio
+    from types import SimpleNamespace
+    path = Path(__file__).resolve().parents[1] / 'custom_components/gwm_jolion/coordinator.py'
+    cls = next(n for n in ast.parse(path.read_text(encoding='utf-8')).body if isinstance(n, ast.ClassDef) and n.name == 'GwmJolionCoordinator')
+    method = next(n for n in cls.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'async_start_with_comfort')
+    scope = dict(asyncio=asyncio, HomeAssistantError=RuntimeError, build_seat_heating_instructions=commands.build_seat_heating_instructions)
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(path), 'exec'), scope)
+    events=[]
+    async def record(stage):
+        events.append(stage)
+        if stage == fail: raise RuntimeError('test failure')
+    async def engine(*args, **kwargs): await record('engine')
+    async def climate(**kwargs):
+        assert kwargs['instructions']['0x04']['airConditioner']['temperature'] == '24'
+        await record('climate')
+    async def seats(*args):
+        assert args == (3, 0, 10)
+        await record('seats')
+    async def pause(): events.append('pause')
+    fake=SimpleNamespace(command_in_progress=False, _comfort_task=None, feature_enabled=lambda k:True,
+        async_update_listeners=lambda:None, async_execute_command=engine, async_send_custom_t5=climate,
+        async_set_seat_heating=seats, _async_comfort_pause=pause)
+    task=scope['async_start_with_comfort'](fake, temperature=24, climate_time=15, engine_time=15, driver=3, passenger=0, seat_time=10)
+    if fail:
+        with pytest.raises(RuntimeError, match='не отменены'): asyncio.run(task)
+    else: asyncio.run(task)
+    expected=['engine','pause','climate','pause','seats']
+    assert events == (expected[:expected.index(fail)+1] if fail else expected)
+    assert fake._comfort_task is None

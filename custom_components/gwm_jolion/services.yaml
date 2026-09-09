@@ -93,3 +93,45 @@ set_seat_heating:
           max: 10
           step: 1
           unit_of_measurement: min
+
+start_with_comfort:
+  name: Запуск с климатом и сиденьями
+  description: Последовательный запуск двигателя, климата и выбранных сидений. При ошибке следующие этапы не выполняются.
+  fields:
+    entry_id:
+      selector:
+        text:
+    temperature:
+      required: true
+      selector:
+        number:
+          min: 16
+          max: 32
+    climate_time:
+      default: 15
+      selector:
+        number:
+          min: 5
+          max: 30
+    engine_time:
+      default: 15
+      selector:
+        number:
+          min: 1
+          max: 30
+    seat_time:
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 10
+    driver:
+      selector:
+        number:
+          min: 0
+          max: 3
+    passenger:
+      selector:
+        number:
+          min: 0
+          max: 3

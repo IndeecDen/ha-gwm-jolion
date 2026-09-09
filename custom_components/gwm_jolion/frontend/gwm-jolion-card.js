@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-beta.1 */
+/* GWM Jolion Card v0.1.0-beta.2 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.1";
+  const CARD_VERSION = "0.1.0-beta.2";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -430,12 +430,12 @@
 
       const climate = this._state("climate");
       const targetTemp = Number(
-        climate?.attributes?.temperature ??
+        (this._comfortStart ? this._comfortTemperature : undefined) ?? climate?.attributes?.temperature ??
           climate?.attributes?.target_temp ??
           22
       );
       const runtime = Number(
-        this._state("climateRuntime")?.state ??
+        (this._comfortStart ? this._comfortRuntime : undefined) ?? this._state("climateRuntime")?.state ??
           climate?.attributes?.operation_time_minutes ??
           15
       );
@@ -916,6 +916,7 @@
             <div class="section">
               <div class="section-title">Климат</div>
               <div class="climate-panel">
+                <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:12px"><input id="comfort-start" type="checkbox" ${this._comfortStart ? "checked" : ""}>Включить климат и сиденья при запуске</label>
                 <div class="climate-top">
                   ${this._control(
                     "climate",
@@ -1051,6 +1052,14 @@
     }
 
     _bindActions() {
+      this.shadowRoot.getElementById("comfort-start")?.addEventListener("change", event => {
+        this._comfortStart = event.target.checked;
+        this._comfortTemperature = Number(this._state("climate")?.attributes?.temperature ?? 22);
+        this._comfortRuntime = Number(this._state("climateRuntime")?.state ?? 15);
+        if (!Number.isFinite(this._comfortTemperature)) this._comfortTemperature = 22;
+        if (!Number.isFinite(this._comfortRuntime)) this._comfortRuntime = 15;
+        this._render();
+      });
       this.shadowRoot.querySelectorAll("[data-seat-enable]").forEach(input => input.addEventListener("change", () => {
         this._seatEnabled[input.dataset.seatEnable] = input.checked;
         this.shadowRoot.querySelector(`[data-seat-setting="${input.dataset.seatEnable}"]`).disabled = !input.checked;
@@ -1152,13 +1161,19 @@
         }
         const message = engineOn
           ? "Остановить двигатель?"
-          : `Запустить двигатель на ${runtime} мин? Перед отправкой интеграция ещё раз проверит состояние автомобиля.`;
+          : `Запустить двигатель на ${runtime} мин${this._comfortStart ? " с выбранным климатом и подогревами (по очереди)" : ""}? Перед отправкой интеграция ещё раз проверит состояние автомобиля.`;
         if (!this._confirm(message)) return;
         return this._runBusy(action, () =>
           this._hass.callService(
             INTEGRATION,
-            engineOn ? "stop_engine" : "start_engine",
-            engineOn ? {} : { operation_time: runtime }
+            engineOn ? "stop_engine" : this._comfortStart ? "start_with_comfort" : "start_engine",
+            engineOn ? {entry_id:this._entryId} : this._comfortStart ? {
+              entry_id:this._entryId, engine_time:runtime,
+              temperature:this._comfortTemperature, climate_time:this._comfortRuntime,
+              seat_time:this._seatSettings?.operation_time ?? 5,
+              ...(this._featureEnabled("seat_heat_driver") ? {driver:this._seatEnabled?.driver ? this._seatSettings.driver : 0} : {}),
+              ...(this._featureEnabled("seat_heat_passenger") ? {passenger:this._seatEnabled?.passenger ? this._seatSettings.passenger : 0} : {}),
+            } : { entry_id:this._entryId, operation_time: runtime }
           )
         );
       }
@@ -1354,6 +1369,11 @@
     }
 
     async _changeTemperature(step) {
+      if (this._comfortStart) {
+        this._comfortTemperature = Math.min(32, Math.max(16, this._comfortTemperature + step));
+        this._render();
+        return;
+      }
       const climate = this._state("climate");
       const entityId = this._entities.climate;
       if (!climate || !entityId) return;
@@ -1370,6 +1390,11 @@
     }
 
     async _setRuntime(value) {
+      if (this._comfortStart) {
+        this._comfortRuntime = Math.min(30, Math.max(5, value));
+        this._render();
+        return;
+      }
       const entityId = this._entities.climateRuntime;
       if (!entityId || !Number.isFinite(value)) return;
       await this._runBusy("runtime", () =>

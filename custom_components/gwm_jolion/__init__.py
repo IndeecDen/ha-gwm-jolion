@@ -42,22 +42,22 @@ FRONTEND_ASSETS = (
     (
         FRONTEND_DIR / "gwm-jolion-card-editor.js",
         "/gwm-jolion/gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-beta.1",
+        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-beta.2",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card.js",
         "/gwm-jolion/gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-beta.1",
+        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-beta.2",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-remote-card.js",
         "/gwm-jolion/gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-beta.1",
+        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-beta.2",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-alpha20.js",
         "/gwm-jolion/gwm-jolion-alpha20.js",
-        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-beta.1",
+        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-beta.2",
     ),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
@@ -207,6 +207,24 @@ def _register_services(hass: HomeAssistant) -> None:
             vol.Optional("operation_time", default=5): vol.All(int, vol.Range(min=1, max=10)),
         }))
 
+    async def handle_comfort_start(call: ServiceCall) -> None:
+        await select_coordinator(call).async_start_with_comfort(
+            temperature=call.data["temperature"], climate_time=call.data["climate_time"],
+            engine_time=call.data["engine_time"], driver=call.data.get("driver"),
+            passenger=call.data.get("passenger"), seat_time=call.data["seat_time"],
+        )
+
+    if not hass.services.has_service(DOMAIN, "start_with_comfort"):
+        hass.services.async_register(DOMAIN, "start_with_comfort", handle_comfort_start, schema=vol.Schema({
+            vol.Optional("entry_id"): str,
+            vol.Required("temperature"): vol.All(int, vol.Range(min=16, max=32)),
+            vol.Optional("climate_time", default=15): vol.All(int, vol.Range(min=5, max=30)),
+            vol.Optional("engine_time", default=15): vol.All(int, vol.Range(min=1, max=30)),
+            vol.Optional("seat_time", default=5): vol.All(int, vol.Range(min=1, max=10)),
+            vol.Optional("driver"): vol.All(int, vol.Range(min=0, max=3)),
+            vol.Optional("passenger"): vol.All(int, vol.Range(min=0, max=3)),
+        }))
+
     async def handle_command(call: ServiceCall) -> None:
         coordinators = _coordinators(hass)
         if not coordinators:
@@ -238,7 +256,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         if not _coordinators(hass):
-            for command_key in (*COMMANDS, "set_seat_heating"):
+            for command_key in (*COMMANDS, "set_seat_heating", "start_with_comfort"):
                 if hass.services.has_service(DOMAIN, command_key):
                     hass.services.async_remove(DOMAIN, command_key)
             if hass.services.has_service(DOMAIN, SERVICE_ADD_CAPTURE_MARKER):

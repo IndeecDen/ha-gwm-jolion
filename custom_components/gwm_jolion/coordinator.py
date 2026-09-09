@@ -91,6 +91,7 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_command_time = 0.0
         self._command_lock = asyncio.Lock()
         self.climate_target_temperature = DEFAULT_CLIMATE_TEMPERATURE
+        self._comfort_task = None
         self.climate_operation_time = DEFAULT_CLIMATE_RUNTIME
         self.last_command_name: str | None = None
         self.last_command_status: str | None = None
@@ -328,7 +329,7 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @property
     def command_in_progress(self) -> bool:
-        return self._command_lock.locked()
+        return self._command_lock.locked() or self._comfort_task is not None
 
     def _ensure_remote_ready(self) -> str:
         if not self.enable_remote_controls:
@@ -353,6 +354,8 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         command_key: str | None = None,
         remote_type: str = "0",
     ) -> dict[str, Any]:
+        if self._comfort_task is not None and self._comfort_task is not asyncio.current_task():
+            raise HomeAssistantError("Выполняется запуск с климатом и сиденьями")
         if self._command_lock.locked():
             raise HomeAssistantError("Другая удалённая команда GWM уже выполняется")
 
@@ -458,3 +461,48 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             name="Подогрев сидений", instructions=instructions, expected_remote_type="0x0A",
             remote_type="" if driver == 0 and passenger == 0 else "0",
         )
+
+    async def async_start_with_comfort(self, *, temperature: int, climate_time: int,
+                                      engine_time: int, driver: int | None,
+                                      passenger: int | None, seat_time: int) -> None:
+        """Run confirmed commands in order, retaining cooldown and remote-start guards."""
+        for value, low, high in ((temperature, 16, 32), (climate_time, 5, 30), (engine_time, 1, 30)):
+            if type(value) is not int or not low <= value <= high:
+                raise HomeAssistantError("Недопустимые настройки запуска")
+        if driver is not None or passenger is not None:
+            try:
+                build_seat_heating_instructions(driver, passenger, seat_time)
+            except ValueError as err:
+                raise HomeAssistantError(str(err)) from err
+            for feature, level in (("seat_heat_driver", driver), ("seat_heat_passenger", passenger)):
+                if level is not None and not self.feature_enabled(feature):
+                    raise HomeAssistantError("Подогрев сиденья отключён в настройках оборудования")
+        if self.command_in_progress:
+            raise HomeAssistantError("Другая команда уже выполняется")
+        self._comfort_task = asyncio.current_task()
+        self.async_update_listeners()
+        stage = "двигатель"
+        try:
+            await self.async_execute_command("start_engine", operation_time=engine_time)
+            await self._async_comfort_pause()
+            stage = "климат"
+            await self.async_send_custom_t5(name="Климат после запуска", instructions={
+                "0x04": {"airConditioner": {"switchOrder": "1", "temperature": str(temperature),
+                                             "operationTime": str(climate_time)}}
+            }, expected_remote_type="0x04")
+            self.climate_target_temperature = temperature
+            self.climate_operation_time = climate_time
+            if driver is not None or passenger is not None:
+                await self._async_comfort_pause()
+                stage = "сиденья"
+                await self.async_set_seat_heating(driver, passenger, seat_time)
+        except Exception as err:
+            raise HomeAssistantError(f"Запуск с настройками остановлен на этапе «{stage}»: {err}. Уже выполненные команды не отменены") from err
+        finally:
+            self._comfort_task = None
+            self.async_update_listeners()
+
+    async def _async_comfort_pause(self) -> None:
+        remaining = self.command_cooldown - (time.monotonic() - self._last_command_time)
+        if remaining > 0:
+            await asyncio.sleep(remaining + 0.1)
