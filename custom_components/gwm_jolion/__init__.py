@@ -42,22 +42,22 @@ FRONTEND_ASSETS = (
     (
         FRONTEND_DIR / "gwm-jolion-card-editor.js",
         "/gwm-jolion/gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-beta.2.1",
+        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-beta.3",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card.js",
         "/gwm-jolion/gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-beta.2.1",
+        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-beta.3",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-remote-card.js",
         "/gwm-jolion/gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-beta.2.1",
+        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-beta.3",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-alpha20.js",
         "/gwm-jolion/gwm-jolion-alpha20.js",
-        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-beta.2.1",
+        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-beta.3",
     ),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
@@ -142,6 +142,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         protocol_capture_path=capture_path,
     )
     await coordinator.async_load_card_settings()
+    await coordinator.async_load_profiles()
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -213,12 +214,14 @@ def _register_services(hass: HomeAssistant) -> None:
             temperature=call.data["temperature"], climate_time=call.data["climate_time"],
             engine_time=call.data["engine_time"], driver=call.data.get("driver"),
             passenger=call.data.get("passenger"), seat_time=call.data["seat_time"],
+            climate_enabled=call.data["climate_enabled"],
         )
 
     if not hass.services.has_service(DOMAIN, "start_with_comfort"):
         hass.services.async_register(DOMAIN, "start_with_comfort", handle_comfort_start, schema=vol.Schema({
             vol.Optional("entry_id"): str,
             vol.Required("temperature"): vol.All(int, vol.Range(min=16, max=32)),
+            vol.Optional("climate_enabled", default=True): bool,
             vol.Optional("climate_time", default=15): vol.All(int, vol.Range(min=5, max=30)),
             vol.Optional("engine_time", default=15): vol.All(int, vol.Range(min=1, max=30)),
             vol.Optional("seat_time", default=5): vol.All(int, vol.Range(min=1, max=10)),
@@ -233,6 +236,21 @@ def _register_services(hass: HomeAssistant) -> None:
         hass.services.async_register(DOMAIN, "save_card_settings", handle_save_card_settings, schema=vol.Schema({
             vol.Required("entry_id"): str,
             vol.Required("settings"): dict,
+        }))
+
+    async def handle_profile(call: ServiceCall) -> None:
+        await select_coordinator(call).async_manage_profile(
+            call.data["action"], profile_id=call.data.get("profile_id", ""),
+            name=call.data.get("name", ""), settings=call.data.get("settings"),
+        )
+
+    if not hass.services.has_service(DOMAIN, "manage_preparation_profile"):
+        hass.services.async_register(DOMAIN, "manage_preparation_profile", handle_profile, schema=vol.Schema({
+            vol.Required("entry_id"): str,
+            vol.Required("action"): vol.In(["create", "update", "copy", "delete", "select"]),
+            vol.Optional("profile_id"): str,
+            vol.Optional("name"): str,
+            vol.Optional("settings"): dict,
         }))
 
     async def handle_command(call: ServiceCall) -> None:
@@ -266,7 +284,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         if not _coordinators(hass):
-            for command_key in (*COMMANDS, "set_seat_heating", "start_with_comfort", "save_card_settings"):
+            for command_key in (*COMMANDS, "set_seat_heating", "start_with_comfort", "save_card_settings", "manage_preparation_profile"):
                 if hass.services.has_service(DOMAIN, command_key):
                     hass.services.async_remove(DOMAIN, command_key)
             if hass.services.has_service(DOMAIN, SERVICE_ADD_CAPTURE_MARKER):

@@ -48,7 +48,8 @@ def test_unsupported_heaters_fail_before_network():
 
 
 @pytest.mark.parametrize('fail', [None, 'engine', 'climate', 'seats'])
-def test_comfort_sequence_stops_on_error_and_releases(fail):
+@pytest.mark.parametrize('climate_enabled', [True, False])
+def test_comfort_sequence_stops_on_error_and_releases(fail, climate_enabled):
     import ast
     import asyncio
     from types import SimpleNamespace
@@ -72,10 +73,11 @@ def test_comfort_sequence_stops_on_error_and_releases(fail):
     fake=SimpleNamespace(command_in_progress=False, _comfort_task=None, feature_enabled=lambda k:True,
         async_update_listeners=lambda:None, async_execute_command=engine, async_send_custom_t5=climate,
         async_set_seat_heating=seats, _async_comfort_pause=pause)
-    task=scope['async_start_with_comfort'](fake, temperature=24, climate_time=15, engine_time=15, driver=3, passenger=0, seat_time=10)
+    if not climate_enabled and fail == 'climate': fail = None
+    task=scope['async_start_with_comfort'](fake, temperature=24, climate_time=15, engine_time=15, driver=3, passenger=0, seat_time=10, climate_enabled=climate_enabled)
     if fail:
         with pytest.raises(RuntimeError, match='не отменены'): asyncio.run(task)
     else: asyncio.run(task)
-    expected=['engine','pause','climate','pause','seats']
+    expected=['engine','pause','climate','pause','seats'] if climate_enabled else ['engine','pause','seats']
     assert events == (expected[:expected.index(fail)+1] if fail else expected)
     assert fake._comfort_task is None

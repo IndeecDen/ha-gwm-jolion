@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-beta.2.1 */
+/* GWM Jolion Card v0.1.0-beta.3 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.2.1";
+  const CARD_VERSION = "0.1.0-beta.3";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -429,6 +429,10 @@
         this._seatSettings = {driver:3, passenger:3, operation_time:5};
         this._seatEnabled = {driver:true, passenger:true};
         this._comfortStart = false;
+        this._climateEnabled = true;
+        this._selectedProfile = "";
+        this._profileEditor = false;
+        this._profileNameDraft = null;
         this._comfortTemperature = undefined;
         this._comfortRuntime = undefined;
         this._engineRuntime = Number(this._config.engine_runtime) || 15;
@@ -438,7 +442,8 @@
       const token = JSON.stringify(saved);
       if (token === this._settingsToken) return;
       this._settingsToken = token;
-      for (const [field, property] of [["temperature","_comfortTemperature"],["climate_time","_comfortRuntime"],["engine_time","_engineRuntime"],["comfort_start","_comfortStart"]]) {
+      if ((saved.selected_profile || "") !== this._selectedProfile) this._profileNameDraft = null;
+      for (const [field, property] of [["temperature","_comfortTemperature"],["climate_time","_comfortRuntime"],["engine_time","_engineRuntime"],["comfort_start","_comfortStart"],["climate_enabled","_climateEnabled"],["selected_profile","_selectedProfile"]]) {
         if (saved[field] !== undefined) this[property] = saved[field];
       }
       for (const key of ["driver","passenger"]) {
@@ -449,12 +454,96 @@
     }
 
     _saveCardSettings(settings) {
+      this._updateProfileSummary();
       if (!this._entryId || !this._hass) return Promise.resolve();
       const entryId = this._entryId;
       this._settingsSave = (this._settingsSave || Promise.resolve()).then(() =>
         this._hass.callService(INTEGRATION, "save_card_settings", {entry_id:entryId, settings})
       ).catch(error => { console.error("GWM settings save failed", error); alert("Не удалось сохранить настройки карточки. Проверьте подключение к Home Assistant."); });
       return this._settingsSave;
+    }
+
+    _profileDraft() {
+      const number = (value, fallback, min, max) => Number.isInteger(Number(value)) && Number(value) >= min && Number(value) <= max ? Number(value) : fallback;
+      return {
+        engine_time:number(this._engineRuntime,15,5,30),
+        temperature:number(this._comfortTemperature ?? this._state("climate")?.attributes?.temperature,22,16,32),
+        climate_time:number(this._comfortRuntime ?? this._state("climateRuntime")?.state,15,5,30),
+        climate_enabled:this._climateEnabled !== false,
+        driver_enabled:this._seatEnabled?.driver !== false,
+        passenger_enabled:this._seatEnabled?.passenger !== false,
+        driver:number(this._seatSettings?.driver,3,1,3),
+        passenger:number(this._seatSettings?.passenger,3,1,3),
+        seat_time:number(this._seatSettings?.operation_time,5,1,10),
+      };
+    }
+
+    _profiles() { return this._state("refresh")?.attributes?.preparation_profiles || []; }
+
+    _profileSummary() {
+      const d = this._profileDraft();
+      const seat = key => this._featureEnabled(`seat_heat_${key}`) ? (d[`${key}_enabled`] ? d[key] : "выкл") : "нет";
+      return `Двигатель ${d.engine_time} мин · ${d.climate_enabled ? `Климат ${d.temperature} °C / ${d.climate_time} мин` : "Климат: пропустить"} · Сиденья ${seat("driver")} / ${seat("passenger")} · ${d.seat_time} мин`;
+    }
+
+    _updateProfileSummary() {
+      const selected = this._profiles().find(p => p.id === this._selectedProfile);
+      const d = this._profileDraft();
+      const changed = selected && (Object.keys(d).some(key => d[key] !== selected.settings[key]) || (this._profileNameDraft !== null && this._profileNameDraft !== undefined && this._profileNameDraft !== selected.name));
+      const status = this.shadowRoot?.querySelector("[data-profile-status]");
+      if (status) status.textContent = selected ? (changed ? "Изменён" : "Сохранён") : "Текущие настройки";
+      const summary = this.shadowRoot?.querySelector("[data-profile-summary]");
+      if (summary) summary.textContent = this._profileSummary();
+    }
+
+    _profilePanel() {
+      const profiles = this._profiles();
+      const selected = profiles.find(p => p.id === this._selectedProfile);
+      const d = this._profileDraft();
+      const range = (key,label,min,max,unit="") => `<label class="profile-field"><span>${label}<b>${d[key]}${unit}</b></span><input aria-label="Профиль: ${label}" data-profile-field="${key}" type="range" min="${min}" max="${max}" step="1" value="${d[key]}"></label>`;
+      const check = (key,label) => `<label class="profile-check"><input data-profile-field="${key}" type="checkbox" ${d[key] ? "checked" : ""}>${label}</label>`;
+      const busy = this._busy.has("profiles");
+      return `<div class="section preparation">
+        <div class="section-title">Подготовка автомобиля <small data-profile-status></small></div>
+        <fieldset ${busy ? "disabled" : ""}>
+          <div class="profile-toolbar"><select aria-label="Профиль подготовки" id="profile-select"><option value="">Текущие настройки</option>${profiles.map(p => `<option value="${this._escape(p.id)}" ${p.id === this._selectedProfile ? "selected" : ""}>${this._escape(p.name)}</option>`).join("")}</select><button type="button" id="profile-configure" aria-expanded="${!!this._profileEditor}">Настроить</button></div>
+          <p data-profile-summary></p>
+          ${this._profileEditor ? `<div class="profile-editor">
+            <label class="profile-field">Название профиля<input id="profile-name" maxlength="40" value="${this._escape(this._profileNameDraft ?? selected?.name ?? "")}" placeholder="Например, Зима"></label>
+            ${range("engine_time","Время двигателя",5,30," мин")}
+            ${check("climate_enabled","Включать климат при подготовке")}
+            ${range("temperature","Температура",16,32," °C")}${range("climate_time","Время климата",5,30," мин")}
+            ${["driver","passenger"].filter(key => this._featureEnabled(`seat_heat_${key}`)).map(key => check(`${key}_enabled`,key === "driver" ? "Подогрев водителя" : "Подогрев пассажира") + range(key,key === "driver" ? "Мощность водителя" : "Мощность пассажира",1,3)).join("")}
+            ${range("seat_time","Время подогрева",1,10," мин")}
+            <div class="profile-buttons"><button type="button" data-profile-operation="create" ${profiles.length >= 20 ? "disabled" : ""}>Сохранить как новый</button>
+            ${selected ? `<button type="button" data-profile-operation="update">Сохранить изменения</button><button type="button" data-profile-operation="select">Вернуть сохранённое</button><button type="button" data-profile-operation="copy" ${profiles.length >= 20 ? "disabled" : ""}>Копировать</button><button type="button" data-profile-operation="delete">Удалить</button>` : ""}</div>
+          </div>` : ""}
+        </fieldset>
+        <button type="button" id="preparation-start" ${!this._entryId || this._busy.size || this._remoteCommandInProgress() || this._isUnavailable("engine") || this._isOn("engine") ? "disabled" : ""}>${this._busy.has("preparation") ? "Подготовка…" : "Запустить подготовку"}</button>
+        <small>Выбор и настройка профиля не отправляют команды автомобилю.</small>
+      </div>`;
+    }
+
+    async _manageProfile(action, profileId = this._selectedProfile) {
+      const selected = this._profiles().find(p => p.id === profileId);
+      if (action === "delete" && !window.confirm(`Удалить профиль «${selected?.name}»?`)) return;
+      const nameInput = this.shadowRoot.getElementById("profile-name");
+      const name = action === "copy" ? `${selected?.name || "Профиль"} — копия`.slice(0,40) : nameInput?.value.trim();
+      if (["create","update"].includes(action) && !name) { nameInput?.focus(); return; }
+      const settings = this._profileDraft();
+      const entryId = this._entryId;
+      return this._runBusy("profiles", async () => {
+        await this._settingsSave;
+        await this._hass.callService(INTEGRATION,"manage_preparation_profile",{entry_id:entryId,action,profile_id:profileId || "",...(["create","update","copy"].includes(action) ? {name} : {}),...(["create","update"].includes(action) ? {settings} : {})});
+        this._profileNameDraft = null;
+      });
+    }
+
+    _preparationData() {
+      const d = this._profileDraft();
+      return {entry_id:this._entryId,engine_time:d.engine_time,temperature:d.temperature,climate_time:d.climate_time,climate_enabled:d.climate_enabled,seat_time:d.seat_time,
+        ...(this._featureEnabled("seat_heat_driver") ? {driver:d.driver_enabled ? d.driver : 0} : {}),
+        ...(this._featureEnabled("seat_heat_passenger") ? {passenger:d.passenger_enabled ? d.passenger : 0} : {})};
     }
 
     _render() {
@@ -827,6 +916,24 @@
           .level.flat i { width:5px; }
           .level i.on { background:var(--primary-color); }
           .level.unknown { align-items:center; }
+          .preparation { padding:16px; border-radius:18px; background:var(--secondary-background-color, #292f33); }
+          .preparation fieldset { border:0; margin:0; padding:0; min-width:0; }
+          .preparation .section-title { display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; }
+          [data-profile-status] { text-transform:none; letter-spacing:normal; }
+          .preparation small, .preparation p { color:var(--secondary-text-color); font-size:12px; line-height:1.5; }
+          .profile-toolbar { display:flex; flex-wrap:wrap; gap:8px; }
+          .profile-toolbar select { flex:1; min-width:120px; }
+          .preparation button, .preparation select, #profile-name { font:inherit; font-size:13px; color:var(--primary-text-color); background:var(--card-background-color,#303539); border:1px solid var(--divider-color,#555); border-radius:10px; padding:10px; box-sizing:border-box; }
+          .preparation button { cursor:pointer; }
+          .preparation button:disabled { opacity:.45; cursor:default; }
+          .preparation input { accent-color:var(--primary-color,#03a9f4); }
+          .profile-editor { display:grid; gap:14px; padding:12px 0; }
+          .profile-field { display:grid; gap:8px; font-size:13px; min-width:0; }
+          .profile-field span { display:flex; justify-content:space-between; gap:8px; }
+          .profile-field input { width:100%; min-width:0; }
+          .profile-check { display:flex; align-items:center; gap:8px; font-size:13px; }
+          .profile-buttons { display:flex; flex-wrap:wrap; gap:8px; }
+          #preparation-start { display:block; width:100%; margin:8px 0; background:var(--primary-color,#03a9f4); color:var(--text-primary-color,#fff); font-weight:600; }
           @media (max-width:600px) {
             .wrap { padding:14px; }
             .controls,
@@ -876,6 +983,7 @@
                 : ""
             }
 
+            ${this._profilePanel()}
             <div class="section">
               <div class="section-title">Управление</div>
               <div class="controls">
@@ -1090,6 +1198,35 @@
     }
 
     _bindActions() {
+      this._updateProfileSummary();
+      this.shadowRoot.getElementById("profile-select")?.addEventListener("change", event => this._manageProfile("select",event.target.value));
+      this.shadowRoot.getElementById("profile-configure")?.addEventListener("click", () => {this._profileEditor = !this._profileEditor; this._render();});
+      this.shadowRoot.getElementById("profile-name")?.addEventListener("input", event => {this._profileNameDraft = event.target.value; this._updateProfileSummary();});
+      this.shadowRoot.querySelectorAll("[data-profile-operation]").forEach(button => button.addEventListener("click", () => this._manageProfile(button.dataset.profileOperation)));
+      this.shadowRoot.querySelectorAll("[data-profile-field]").forEach(input => {
+        input.addEventListener("input", () => {
+          const label = input.previousElementSibling?.querySelector("b");
+          if (label) label.textContent = `${input.value}${input.dataset.profileField === "temperature" ? " °C" : input.dataset.profileField.endsWith("time") ? " мин" : ""}`;
+        });
+        input.addEventListener("change", () => {
+          const key = input.dataset.profileField;
+          const value = input.type === "checkbox" ? input.checked : Number(input.value);
+          if (input.type !== "checkbox" && (!Number.isInteger(value) || value < Number(input.min) || value > Number(input.max))) return;
+          const properties = {engine_time:"_engineRuntime",temperature:"_comfortTemperature",climate_time:"_comfortRuntime",climate_enabled:"_climateEnabled"};
+          if (properties[key]) this[properties[key]] = value;
+          else if (key.endsWith("_enabled")) this._seatEnabled[key.replace("_enabled","")] = value;
+          else this._seatSettings[key === "seat_time" ? "operation_time" : key] = value;
+          this._comfortStart = true;
+          this._saveCardSettings({[key]:value,comfort_start:true});
+          this._render();
+        });
+      });
+      this.shadowRoot.getElementById("preparation-start")?.addEventListener("click", () => {
+        if (!this._entryId || this._busy.size || this._remoteCommandInProgress() || this._isUnavailable("engine") || this._isOn("engine")) return;
+        const data = this._preparationData();
+        if (!this._confirm(`Запустить подготовку? ${this._profileSummary()}. Команды выполняются по очереди.`)) return;
+        this._runBusy("preparation", () => this._hass.callService(INTEGRATION,"start_with_comfort",data));
+      });
       this.shadowRoot.getElementById("comfort-start")?.addEventListener("change", event => {
         this._comfortStart = event.target.checked;
         this._saveCardSettings({comfort_start:this._comfortStart});
@@ -1209,13 +1346,7 @@
           this._hass.callService(
             INTEGRATION,
             engineOn ? "stop_engine" : this._comfortStart ? "start_with_comfort" : "start_engine",
-            engineOn ? {entry_id:this._entryId} : this._comfortStart ? {
-              entry_id:this._entryId, engine_time:runtime,
-              temperature:this._comfortTemperature, climate_time:this._comfortRuntime,
-              seat_time:this._seatSettings?.operation_time ?? 5,
-              ...(this._featureEnabled("seat_heat_driver") ? {driver:this._seatEnabled?.driver ? this._seatSettings.driver : 0} : {}),
-              ...(this._featureEnabled("seat_heat_passenger") ? {passenger:this._seatEnabled?.passenger ? this._seatSettings.passenger : 0} : {}),
-            } : { entry_id:this._entryId, operation_time: runtime }
+            engineOn ? {entry_id:this._entryId} : this._comfortStart ? this._preparationData() : { entry_id:this._entryId, operation_time: runtime }
           )
         );
       }
@@ -1411,7 +1542,7 @@
     }
 
     async _changeTemperature(step) {
-      if (this._comfortStart) {
+      if (this._comfortStart || this._selectedProfile) {
         this._comfortTemperature = Math.min(32, Math.max(16, this._comfortTemperature + step));
         this._saveCardSettings({temperature:this._comfortTemperature});
         this._render();
@@ -1438,7 +1569,7 @@
       if (!Number.isInteger(value) || value < 5 || value > 30) return;
       this._comfortRuntime = value;
       this._saveCardSettings({climate_time:value});
-      if (this._comfortStart) {
+      if (this._comfortStart || this._selectedProfile) {
         this._comfortRuntime = Math.min(30, Math.max(5, value));
         this._render();
         return;

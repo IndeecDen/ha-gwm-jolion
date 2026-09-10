@@ -98,6 +98,12 @@ start_with_comfort:
   name: Запуск с климатом и сиденьями
   description: Последовательный запуск двигателя, климата и выбранных сидений. При ошибке следующие этапы не выполняются.
   fields:
+    climate_enabled:
+      name: Включать климат
+      description: Если выключено, этап климата пропускается; работающий климат не выключается.
+      default: true
+      selector:
+        boolean:
     entry_id:
       selector:
         text:
@@ -146,5 +152,36 @@ save_card_settings:
         text:
     settings:
       required: true
+      selector:
+        object:
+
+manage_preparation_profile:
+  name: Управление профилями подготовки
+  description: Создание, сохранение, копирование, удаление и выбор профилей. Команды автомобилю не отправляются. Создание и копирование выбирают новый профиль.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        text:
+    action:
+      required: true
+      selector:
+        select:
+          options:
+            - create
+            - update
+            - copy
+            - delete
+            - select
+    profile_id:
+      description: Идентификатор профиля. Для select пустая строка снимает выбор.
+      selector:
+        text:
+    name:
+      description: Название от 1 до 40 символов для create, update и copy.
+      selector:
+        text:
+    settings:
+      description: Полный набор для create и update — temperature, climate_time, engine_time, climate_enabled, driver_enabled, passenger_enabled, driver, passenger, seat_time.
       selector:
         object:

@@ -18,6 +18,7 @@ from .capabilities import CAPABILITIES, capability_for_command, capability_repor
 from .command_safety import remote_start_block_reason
 from homeassistant.helpers.storage import Store
 from .card_settings import validate_settings
+from .preparation_profiles import change_profiles, initial_profiles, validate_profiles
 
 from .commands import COMMANDS, UNSUPPORTED_COMMANDS, build_seat_heating_instructions
 from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN, VERSION
@@ -97,6 +98,9 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.card_settings = {}
         self._card_settings_store = Store(hass, 1, f"{DOMAIN}_{entry_id}_card_settings")
         self._card_settings_lock = asyncio.Lock()
+        self.preparation_profiles = []
+        self._profiles_store = Store(hass, 1, f"{DOMAIN}_{entry_id}_preparation_profiles")
+        self._profiles_lock = asyncio.Lock()
         self._comfort_task = None
         self.climate_operation_time = DEFAULT_CLIMATE_RUNTIME
         self.last_command_name: str | None = None
@@ -470,8 +474,11 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_start_with_comfort(self, *, temperature: int, climate_time: int,
                                       engine_time: int, driver: int | None,
-                                      passenger: int | None, seat_time: int) -> None:
+                                      passenger: int | None, seat_time: int,
+                                      climate_enabled: bool = True) -> None:
         """Run confirmed commands in order, retaining cooldown and remote-start guards."""
+        if type(climate_enabled) is not bool:
+            raise HomeAssistantError("Недопустимый режим климата")
         for value, low, high in ((temperature, 16, 32), (climate_time, 5, 30), (engine_time, 1, 30)):
             if type(value) is not int or not low <= value <= high:
                 raise HomeAssistantError("Недопустимые настройки запуска")
@@ -490,14 +497,15 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         stage = "двигатель"
         try:
             await self.async_execute_command("start_engine", operation_time=engine_time)
-            await self._async_comfort_pause()
-            stage = "климат"
-            await self.async_send_custom_t5(name="Климат после запуска", instructions={
-                "0x04": {"airConditioner": {"switchOrder": "1", "temperature": str(temperature),
-                                             "operationTime": str(climate_time)}}
-            }, expected_remote_type="0x04")
-            self.climate_target_temperature = temperature
-            self.climate_operation_time = climate_time
+            if climate_enabled:
+                await self._async_comfort_pause()
+                stage = "климат"
+                await self.async_send_custom_t5(name="Климат после запуска", instructions={
+                    "0x04": {"airConditioner": {"switchOrder": "1", "temperature": str(temperature),
+                                                 "operationTime": str(climate_time)}}
+                }, expected_remote_type="0x04")
+                self.climate_target_temperature = temperature
+                self.climate_operation_time = climate_time
             if driver is not None or passenger is not None:
                 await self._async_comfort_pause()
                 stage = "сиденья"
@@ -522,6 +530,40 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.card_settings = {}
         self.climate_target_temperature = self.card_settings.get("temperature", self.climate_target_temperature)
         self.climate_operation_time = self.card_settings.get("climate_time", self.climate_operation_time)
+
+    async def async_load_profiles(self) -> None:
+        saved = await self._profiles_store.async_load()
+        try:
+            self.preparation_profiles = validate_profiles(saved) if saved is not None else initial_profiles()
+        except ValueError:
+            _LOGGER.warning("Ignoring invalid saved preparation profiles")
+            self.preparation_profiles = []
+        if saved is None:
+            await self._profiles_store.async_save(self.preparation_profiles)
+
+    async def async_manage_profile(self, action: str, *, profile_id: str = "",
+                                   name: str = "", settings: dict | None = None) -> None:
+        """Only manage local storage; never invoke the vehicle API."""
+        async with self._profiles_lock:
+            try:
+                if action == "select":
+                    profile = next((p for p in self.preparation_profiles if p["id"] == profile_id), None)
+                    if profile_id and profile is None:
+                        raise ValueError("Профиль не найден. Обновите карточку")
+                    patch = {**profile["settings"], "comfort_start": True} if profile else {}
+                    await self.async_save_card_settings({**patch, "selected_profile": profile_id})
+                    return
+                profiles = change_profiles(self.preparation_profiles, action, profile_id=profile_id, name=name, settings=settings)
+            except ValueError as err:
+                raise HomeAssistantError(str(err)) from err
+            await self._profiles_store.async_save(profiles)
+            self.preparation_profiles = profiles
+            if action in ("create", "copy"):
+                profile = profiles[-1]
+                await self.async_save_card_settings({**profile["settings"], "selected_profile": profile["id"], "comfort_start": True})
+            if action == "delete" and self.card_settings.get("selected_profile") == profile_id:
+                await self.async_save_card_settings({"selected_profile": ""})
+            self.async_update_listeners()
 
     async def async_save_card_settings(self, patch: dict) -> None:
         try:

@@ -55,6 +55,7 @@ class GwmJolionRefreshButton(GwmJolionEntity, ButtonEntity):
         last_capture = self.coordinator.protocol_capture_last_record_time
         return {
             "card_settings": dict(self.coordinator.card_settings),
+            "preparation_profiles": self.coordinator.preparation_profiles,
             "last_successful_update": last_update.isoformat() if last_update else None,
             "command_in_progress": self.coordinator.command_in_progress,
             "last_command_name": self.coordinator.last_command_name,
