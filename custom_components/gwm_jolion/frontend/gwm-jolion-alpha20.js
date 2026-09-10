@@ -1,6 +1,6 @@
 /* GWM Jolion alpha.20 entity-surface compatibility layer */
 (() => {
-  const VERSION = "0.1.0-beta.4";
+  const VERSION = "0.1.0-beta.5";
   const SAFE_CAPABILITIES = new Set([
     "seat_heat_driver",
     "seat_heat_passenger",

@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-beta.4 */
+/* GWM Jolion Card v0.1.0-beta.5 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.4";
+  const CARD_VERSION = "0.1.0-beta.5";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -944,6 +944,11 @@
           .preparation .profile-choice.selected { border-color:var(--primary-color,#03a9f4); background:color-mix(in srgb,var(--primary-color,#03a9f4) 22%,var(--card-background-color,#303539)); box-shadow:inset 0 0 0 1px var(--primary-color,#03a9f4); font-weight:700; }
           .profile-visibility { display:grid; gap:8px; padding-bottom:16px; font-size:13px; }
           .profile-choice:focus-visible { outline:2px solid var(--primary-color,#03a9f4); outline-offset:3px; }
+          .climate-toggle { width:100%; display:flex; align-items:center; justify-content:space-between; border:0; padding:10px 0; background:none; color:var(--secondary-text-color); font-family:inherit; cursor:pointer; text-align:left; }
+          .climate-toggle::after { content:"⌄"; font-size:20px; }
+          .climate-toggle[aria-expanded="true"]::after { content:"⌃"; }
+          .climate-toggle:focus-visible { outline:2px solid var(--primary-color); outline-offset:3px; border-radius:6px; }
+          .climate-panel[hidden] { display:none; }
           @media (prefers-reduced-motion:reduce) { .preparation .profile-choice { transition:none; } }
           #preparation-start { display:block; width:100%; margin:8px 0; background:var(--primary-color,#03a9f4); color:var(--text-primary-color,#fff); font-weight:600; }
           @media (max-width:600px) {
@@ -1071,8 +1076,8 @@
             </div>
 
             <div class="section">
-              <div class="section-title">Климат</div>
-              <div class="climate-panel">
+              ${this._config.collapse_climate ? `<button type="button" id="climate-toggle" class="section-title climate-toggle" aria-expanded="${this._climateExpanded === true}" aria-controls="climate-content">Климат</button>` : `<div class="section-title">Климат</div>`}
+              <div id="climate-content" class="climate-panel" ${this._config.collapse_climate && this._climateExpanded !== true ? "hidden" : ""}>
                 <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:12px"><input id="comfort-start" type="checkbox" ${this._comfortStart ? "checked" : ""}>Включить климат и сиденья при запуске</label>
                 <div class="climate-top">
                   ${this._control(
@@ -1210,6 +1215,11 @@
     }
 
     _bindActions() {
+      this.shadowRoot.getElementById("climate-toggle")?.addEventListener("click", event => {
+        this._climateExpanded = !this._climateExpanded;
+        event.currentTarget.setAttribute("aria-expanded", String(this._climateExpanded));
+        this.shadowRoot.getElementById("climate-content").hidden = !this._climateExpanded;
+      });
       this._updateProfileSummary();
       this.shadowRoot.getElementById("profile-select")?.addEventListener("change", event => this._manageProfile("select",event.target.value));
       this.shadowRoot.querySelectorAll("[data-profile-choice]").forEach(button => button.addEventListener("click", () => this._manageProfile("select",button.dataset.profileChoice)));

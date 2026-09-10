@@ -1,6 +1,6 @@
-/* GWM Jolion primary card visual editor v0.1.0-beta.4 */
+/* GWM Jolion primary card visual editor v0.1.0-beta.5 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.4";
+  const CARD_VERSION = "0.1.0-beta.5";
 
   const CONTROL_OPTIONS = [
     ["engine", "Двигатель"],
@@ -215,6 +215,10 @@
             <span>Подтверждать удалённые команды</span>
           </label>
           <div id="preparation-profiles"></div>
+          <label class="check">
+            <input id="collapse-climate" type="checkbox" ${this._config.collapse_climate ? "checked" : ""}>
+            <span>Сворачивать блок климата</span>
+          </label>
           ${this._renderGroup("Кнопки управления", "controls", CONTROL_OPTIONS)}
           ${this._renderGroup("Датчики и информация", "info", INFO_OPTIONS)}
           ${this._renderGroup("Дополнительные панели", "details", DETAIL_OPTIONS)}
@@ -225,6 +229,9 @@
 
       this.shadowRoot.querySelectorAll("[data-list]").forEach((input) => {
         input.addEventListener("change", () => this._toggleList(input.dataset.list, input.dataset.value, input.checked));
+      });
+      this.shadowRoot.getElementById("collapse-climate")?.addEventListener("change", event => {
+        this._emit({...this._config, collapse_climate:event.target.checked});
       });
       this.shadowRoot.getElementById("confirm-controls")?.addEventListener("change", (event) => {
         this._emit({ ...this._config, confirm_controls: event.target.checked });
