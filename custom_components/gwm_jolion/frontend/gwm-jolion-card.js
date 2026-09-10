@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-beta.3 */
+/* GWM Jolion Card v0.1.0-beta.4 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.3";
+  const CARD_VERSION = "0.1.0-beta.4";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -82,6 +82,7 @@
         this._engineRuntime = Math.min(30, Math.max(5, configuredRuntime));
       }
       this._resolvedKey = null;
+      this._settingsToken = null;
       if (this._hass) this._resolveEntities();
       this._render();
     }
@@ -431,7 +432,6 @@
         this._comfortStart = false;
         this._climateEnabled = true;
         this._selectedProfile = "";
-        this._profileEditor = false;
         this._profileNameDraft = null;
         this._comfortTemperature = undefined;
         this._comfortRuntime = undefined;
@@ -480,6 +480,11 @@
 
     _profiles() { return this._state("refresh")?.attributes?.preparation_profiles || []; }
 
+    _visibleProfiles() {
+      const ids = this._config.visible_profiles;
+      return this._profiles().filter(profile => !Array.isArray(ids) || ids.includes(profile.id));
+    }
+
     _profileSummary() {
       const d = this._profileDraft();
       const seat = key => this._featureEnabled(`seat_heat_${key}`) ? (d[`${key}_enabled`] ? d[key] : "выкл") : "нет";
@@ -502,13 +507,14 @@
       const d = this._profileDraft();
       const range = (key,label,min,max,unit="") => `<label class="profile-field"><span>${label}<b>${d[key]}${unit}</b></span><input aria-label="Профиль: ${label}" data-profile-field="${key}" type="range" min="${min}" max="${max}" step="1" value="${d[key]}"></label>`;
       const check = (key,label) => `<label class="profile-check"><input data-profile-field="${key}" type="checkbox" ${d[key] ? "checked" : ""}>${label}</label>`;
-      const busy = this._busy.has("profiles");
+      const busy = this._busy.has("profiles") || !this._entryId || this._resolving;
       return `<div class="section preparation">
-        <div class="section-title">Подготовка автомобиля <small data-profile-status></small></div>
+        <div class="section-title">${this._profileEditorHost ? "Профили подготовки" : "Подготовка автомобиля"} <small data-profile-status></small></div>
         <fieldset ${busy ? "disabled" : ""}>
-          <div class="profile-toolbar"><select aria-label="Профиль подготовки" id="profile-select"><option value="">Текущие настройки</option>${profiles.map(p => `<option value="${this._escape(p.id)}" ${p.id === this._selectedProfile ? "selected" : ""}>${this._escape(p.name)}</option>`).join("")}</select><button type="button" id="profile-configure" aria-expanded="${!!this._profileEditor}">Настроить</button></div>
+          ${this._profileEditorHost ? `<div class="profile-visibility"><b>Кнопки профилей в карточке</b>${profiles.map(p => `<label class="profile-check"><input type="checkbox" data-profile-visible="${this._escape(p.id)}" ${this._visibleProfiles().some(visible => visible.id === p.id) ? "checked" : ""}>${this._escape(p.name)}</label>`).join("")}<small>Отметьте профили для показа под климатом. Снятие флажка скрывает кнопку только в этой карточке.</small></div>
+          <div class="profile-toolbar"><select aria-label="Профиль подготовки" id="profile-select"><option value="">Текущие настройки</option>${profiles.map(p => `<option value="${this._escape(p.id)}" ${p.id === this._selectedProfile ? "selected" : ""}>${this._escape(p.name)}</option>`).join("")}</select></div>` : `<div class="profile-choices" role="group" aria-label="Профили подготовки">${this._visibleProfiles().map(p => `<button type="button" data-profile-choice="${this._escape(p.id)}" aria-pressed="${p.id === this._selectedProfile}" class="profile-choice ${p.id === this._selectedProfile ? "selected" : ""}">${this._escape(p.name)}</button>`).join("")}</div>`}
           <p data-profile-summary></p>
-          ${this._profileEditor ? `<div class="profile-editor">
+          ${this._profileEditorHost ? `<div class="profile-editor">
             <label class="profile-field">Название профиля<input id="profile-name" maxlength="40" value="${this._escape(this._profileNameDraft ?? selected?.name ?? "")}" placeholder="Например, Зима"></label>
             ${range("engine_time","Время двигателя",5,30," мин")}
             ${check("climate_enabled","Включать климат при подготовке")}
@@ -519,8 +525,8 @@
             ${selected ? `<button type="button" data-profile-operation="update">Сохранить изменения</button><button type="button" data-profile-operation="select">Вернуть сохранённое</button><button type="button" data-profile-operation="copy" ${profiles.length >= 20 ? "disabled" : ""}>Копировать</button><button type="button" data-profile-operation="delete">Удалить</button>` : ""}</div>
           </div>` : ""}
         </fieldset>
-        <button type="button" id="preparation-start" ${!this._entryId || this._busy.size || this._remoteCommandInProgress() || this._isUnavailable("engine") || this._isOn("engine") ? "disabled" : ""}>${this._busy.has("preparation") ? "Подготовка…" : "Запустить подготовку"}</button>
-        <small>Выбор и настройка профиля не отправляют команды автомобилю.</small>
+        ${this._profileEditorHost ? "" : `<button type="button" id="preparation-start" ${!this._entryId || this._busy.size || this._remoteCommandInProgress() || this._isUnavailable("engine") || this._isOn("engine") ? "disabled" : ""}>${this._busy.has("preparation") ? "Подготовка…" : "Запустить подготовку"}</button>`}
+        <small>${this._profileEditorHost ? "Профили сохраняются кнопками выше сразу для всех карточек этого автомобиля. Команды автомобилю не отправляются. Отмена редактора карточки не отменяет сохранение профиля." : "Редактирование профилей — в настройках карточки."}</small>
       </div>`;
     }
 
@@ -933,6 +939,12 @@
           .profile-field input { width:100%; min-width:0; }
           .profile-check { display:flex; align-items:center; gap:8px; font-size:13px; }
           .profile-buttons { display:flex; flex-wrap:wrap; gap:8px; }
+          .profile-choices { display:flex; flex-wrap:wrap; gap:8px; }
+          .preparation .profile-choice { flex:1 1 auto; min-width:72px; max-width:100%; overflow-wrap:anywhere; transition:background-color .15s, border-color .15s; }
+          .preparation .profile-choice.selected { border-color:var(--primary-color,#03a9f4); background:color-mix(in srgb,var(--primary-color,#03a9f4) 22%,var(--card-background-color,#303539)); box-shadow:inset 0 0 0 1px var(--primary-color,#03a9f4); font-weight:700; }
+          .profile-visibility { display:grid; gap:8px; padding-bottom:16px; font-size:13px; }
+          .profile-choice:focus-visible { outline:2px solid var(--primary-color,#03a9f4); outline-offset:3px; }
+          @media (prefers-reduced-motion:reduce) { .preparation .profile-choice { transition:none; } }
           #preparation-start { display:block; width:100%; margin:8px 0; background:var(--primary-color,#03a9f4); color:var(--text-primary-color,#fff); font-weight:600; }
           @media (max-width:600px) {
             .wrap { padding:14px; }
@@ -946,7 +958,7 @@
           }
         </style>
 
-        <ha-card>
+        ${this._profileEditorHost ? this._profilePanel() : `<ha-card>
           <div class="wrap">
             <div class="header">
               <div class="title">
@@ -983,7 +995,6 @@
                 : ""
             }
 
-            ${this._profilePanel()}
             <div class="section">
               <div class="section-title">Управление</div>
               <div class="controls">
@@ -1127,6 +1138,7 @@
               </div>
             </div>
 
+            ${this._profilePanel()}
             <div class="section">
               <div class="section-title">Шины</div>
               <div class="tires">
@@ -1163,7 +1175,7 @@
               </div>
             </div>
           </div>
-        </ha-card>`;
+        </ha-card>`}`;
 
       this._bindActions();
     }
@@ -1200,7 +1212,12 @@
     _bindActions() {
       this._updateProfileSummary();
       this.shadowRoot.getElementById("profile-select")?.addEventListener("change", event => this._manageProfile("select",event.target.value));
-      this.shadowRoot.getElementById("profile-configure")?.addEventListener("click", () => {this._profileEditor = !this._profileEditor; this._render();});
+      this.shadowRoot.querySelectorAll("[data-profile-choice]").forEach(button => button.addEventListener("click", () => this._manageProfile("select",button.dataset.profileChoice)));
+      this.shadowRoot.querySelectorAll("[data-profile-visible]").forEach(input => input.addEventListener("change", () => {
+        const visible = new Set(this._visibleProfiles().map(profile => profile.id));
+        if (input.checked) visible.add(input.dataset.profileVisible); else visible.delete(input.dataset.profileVisible);
+        this.dispatchEvent(new CustomEvent("profile-visibility-changed", {detail:{profiles:[...visible]},bubbles:true,composed:true}));
+      }));
       this.shadowRoot.getElementById("profile-name")?.addEventListener("input", event => {this._profileNameDraft = event.target.value; this._updateProfileSummary();});
       this.shadowRoot.querySelectorAll("[data-profile-operation]").forEach(button => button.addEventListener("click", () => this._manageProfile(button.dataset.profileOperation)));
       this.shadowRoot.querySelectorAll("[data-profile-field]").forEach(input => {

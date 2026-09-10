@@ -1,6 +1,6 @@
-/* GWM Jolion primary card visual editor v0.1.0-alpha.17 */
+/* GWM Jolion primary card visual editor v0.1.0-beta.4 */
 (() => {
-  const CARD_VERSION = "0.1.0-alpha.17";
+  const CARD_VERSION = "0.1.0-beta.4";
 
   const CONTROL_OPTIONS = [
     ["engine", "Двигатель"],
@@ -9,11 +9,6 @@
     ["windows", "Окна"],
     ["climate", "Климат / кондиционер"],
     ["refresh", "Обновить данные"],
-    ["steering", "Обогрев руля"],
-    ["rear_defrost", "Обогрев заднего стекла"],
-    ["front_defrost", "Передний defrost / обдув лобового"],
-    ["sunroof", "Панорамная крыша / люк"],
-    ["sunshade", "Шторка панорамной крыши"],
   ];
 
   const INFO_OPTIONS = [
@@ -32,7 +27,6 @@
     ["last_update", "Время последнего обновления"],
     ["seat_driver", "Подогрев сиденья водителя"],
     ["seat_passenger", "Подогрев сиденья пассажира"],
-    ["windscreen_heat", "Электрообогрев лобового — статус"],
   ];
 
   const DETAIL_OPTIONS = [
@@ -45,18 +39,9 @@
   const DEFAULT_INFO = INFO_OPTIONS.map(([value]) => value);
   const DEFAULT_DETAILS = DETAIL_OPTIONS.map(([value]) => value);
 
-  const FEATURE_BY_CONTROL = {
-    steering: "steering_wheel_heat",
-    rear_defrost: "rear_defrost",
-    front_defrost: "front_defrost",
-    sunroof: "sunroof",
-    sunshade: "sunshade",
-  };
-
   const FEATURE_BY_INFO = {
     seat_driver: "seat_heat_driver",
     seat_passenger: "seat_heat_passenger",
-    windscreen_heat: "front_windscreen_heat",
   };
 
   const escapeHtml = (value) => String(value ?? "")
@@ -76,6 +61,7 @@
 
     set hass(hass) {
       this._hass = hass;
+      this._syncProfileEditor();
     }
 
     setConfig(config) {
@@ -87,6 +73,11 @@
         engine_runtime: 15,
         ...config,
       };
+      for (const [key, supported] of [["controls", DEFAULT_CONTROLS], ["info", DEFAULT_INFO], ["details", DEFAULT_DETAILS]]) {
+        if (Array.isArray(this._config[key])) {
+          this._config[key] = this._config[key].filter(value => supported.includes(value));
+        }
+      }
       this._render();
     }
 
@@ -101,10 +92,42 @@
       return entity?.attributes || {};
     }
 
+    _syncProfileEditor() {
+      const mount = this.shadowRoot.querySelector("#preparation-profiles");
+      if (!mount) return;
+      if (!customElements.get("gwm-jolion-card")) {
+        if (!this._waitingForCard) {
+          this._waitingForCard = true;
+          customElements.whenDefined("gwm-jolion-card").then(() => {
+            this._waitingForCard = false;
+            this._syncProfileEditor();
+          });
+        }
+        return;
+      }
+      if (!this._profileEditor) {
+        this._profileEditor = document.createElement("gwm-jolion-card");
+        // Share vehicle resolution and profile storage with the dashboard card.
+        // This instance renders only profile settings, without vehicle controls.
+        this._profileEditor._profileEditorHost = true;
+        this._profileEditor.addEventListener("profile-visibility-changed", event => {
+          event.stopPropagation();
+          this._emit({...this._config, visible_profiles:event.detail.profiles});
+        });
+      }
+      const token = JSON.stringify(this._config);
+      if (token !== this._profileConfigToken) {
+        this._profileConfigToken = token;
+        this._profileEditor.setConfig(this._config);
+      }
+      if (this._hass) this._profileEditor.hass = this._hass;
+      if (this._profileEditor.parentElement !== mount) mount.append(this._profileEditor);
+    }
+
     _available(option, kind) {
       const flags = this._featureFlags();
       const capability = kind === "controls"
-        ? FEATURE_BY_CONTROL[option]
+        ? undefined
         : FEATURE_BY_INFO[option];
       if (!capability || !(capability in flags)) return true;
       return flags[capability] !== false;
@@ -191,11 +214,14 @@
             <input id="confirm-controls" type="checkbox" ${this._config.confirm_controls !== false ? "checked" : ""}>
             <span>Подтверждать удалённые команды</span>
           </label>
+          <div id="preparation-profiles"></div>
           ${this._renderGroup("Кнопки управления", "controls", CONTROL_OPTIONS)}
           ${this._renderGroup("Датчики и информация", "info", INFO_OPTIONS)}
           ${this._renderGroup("Дополнительные панели", "details", DETAIL_OPTIONS)}
           <div class="note">Настройки комплектации в GWM Jolion → Настроить имеют приоритет. Отсутствующее оборудование нельзя принудительно показать карточкой. Существующие карточки без этих параметров продолжают показывать полный прежний набор элементов.</div>
         </div>`;
+
+      this._syncProfileEditor();
 
       this.shadowRoot.querySelectorAll("[data-list]").forEach((input) => {
         input.addEventListener("change", () => this._toggleList(input.dataset.list, input.dataset.value, input.checked));
