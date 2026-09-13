@@ -1,6 +1,6 @@
 /* GWM Jolion alpha.20 entity-surface compatibility layer */
 (() => {
-  const VERSION = "0.1.0-beta.5";
+  const VERSION = "0.1.0-beta.6";
   const SAFE_CAPABILITIES = new Set([
     "seat_heat_driver",
     "seat_heat_passenger",
@@ -166,7 +166,9 @@
       const originalResolve = proto._resolveEntities;
       if (typeof originalResolve === "function") {
         proto._resolveEntities = async function alpha20ResolveEntities(...args) {
+          const previousEntities = this._entities;
           await originalResolve.apply(this, args);
+          if (this._entities === previousEntities) return;
           const entities = this._entities || {};
           const oldFl = entities.windowFl;
           const oldFr = entities.windowFr;

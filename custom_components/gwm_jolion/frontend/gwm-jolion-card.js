@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-beta.5 */
+/* GWM Jolion Card v0.1.0-beta.6 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.5";
+  const CARD_VERSION = "0.1.0-beta.6";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -72,6 +72,10 @@
     }
 
     setConfig(config) {
+      if ((config.device_id || "") !== (this._config.device_id || "") || (config.entity || "") !== (this._config.entity || "")) {
+        this._entryId = undefined;
+        this._entities = {};
+      }
       this._config = {
         confirm_controls: true,
         engine_runtime: 15,
@@ -88,9 +92,10 @@
     }
 
     set hass(hass) {
+      if (this._hass?.connection !== hass?.connection) this._resolvedKey = null;
       this._hass = hass;
       const key = `${this._config.device_id || ""}|${this._config.entity || ""}`;
-      if (this._resolvedKey !== key && !this._resolving) {
+      if (this._resolvedKey !== key && !this._resolving && !this._resolveRetryTimer) {
         this._resolveEntities();
       }
       this._render();
@@ -100,19 +105,35 @@
       return 10;
     }
 
+    _awaitResponse(promise, milliseconds = 15000) {
+      let timer;
+      return Promise.race([promise, new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Home Assistant не ответил вовремя. Обновите данные перед повторной командой: её результат может быть неизвестен.")), milliseconds);
+      })]).finally(() => clearTimeout(timer));
+    }
+
+    disconnectedCallback() {
+      clearTimeout(this._resolveRetryTimer);
+      this._resolveRetryTimer = null;
+    }
+
     async _resolveEntities() {
       if (!this._hass || this._resolving) return;
+      clearTimeout(this._resolveRetryTimer);
+      this._resolveRetryTimer = null;
       this._resolving = true;
+      const config = {...this._config};
+      const resolveKey = `${config.device_id || ""}|${config.entity || ""}`;
       try {
-        const registry = await this._hass.callWS({
+        const registry = await this._awaitResponse(this._hass.callWS({
           type: "config/entity_registry/list",
-        });
+        }));
         this._entityRegistry = Array.isArray(registry) ? registry : [];
 
-        let deviceId = this._config.device_id || null;
-        if (!deviceId && this._config.entity) {
+        let deviceId = config.device_id || null;
+        if (!deviceId && config.entity) {
           const selected = this._entityRegistry.find(
-            (entry) => entry.entity_id === this._config.entity
+            (entry) => entry.entity_id === config.entity
           );
           deviceId = selected?.device_id || null;
         }
@@ -131,9 +152,11 @@
           ? gwmEntries.filter((entry) => entry.device_id === deviceId)
           : gwmEntries;
 
-        const devices = await this._hass.callWS({
+        const devices = await this._awaitResponse(this._hass.callWS({
           type: "config/device_registry/list",
-        });
+        }));
+        if (resolveKey !== `${this._config.device_id || ""}|${this._config.entity || ""}`) return;
+        if (!Array.isArray(devices)) throw new Error("Реестр устройств Home Assistant недоступен");
         this._device = Array.isArray(devices)
           ? devices.find((device) => device.id === deviceId) || null
           : null;
@@ -162,11 +185,15 @@
               /refresh|obnov/i.test(entry.entity_id)
           )?.entity_id;
 
-        this._resolvedKey = `${this._config.device_id || ""}|${this._config.entity || ""}`;
+        if (!this._entryId || !Object.keys(this._entities).length) throw new Error("Автомобиль пока не найден в Home Assistant");
+        this._resolvedKey = resolveKey;
       } catch (err) {
         console.error("[GWM Jolion Card] entity discovery failed", err);
       } finally {
         this._resolving = false;
+        if (this._resolvedKey !== `${this._config.device_id || ""}|${this._config.entity || ""}`) {
+          this._resolveRetryTimer = setTimeout(() => { this._resolveRetryTimer = null; if (this.isConnected) this._resolveEntities(); }, 10000);
+        }
         this._render();
       }
     }
@@ -458,7 +485,7 @@
       if (!this._entryId || !this._hass) return Promise.resolve();
       const entryId = this._entryId;
       this._settingsSave = (this._settingsSave || Promise.resolve()).then(() =>
-        this._hass.callService(INTEGRATION, "save_card_settings", {entry_id:entryId, settings})
+        this._awaitResponse(this._hass.callService(INTEGRATION, "save_card_settings", {entry_id:entryId, settings}), 30000)
       ).catch(error => { console.error("GWM settings save failed", error); alert("Не удалось сохранить настройки карточки. Проверьте подключение к Home Assistant."); });
       return this._settingsSave;
     }
@@ -1326,7 +1353,7 @@
       this._busy.add(key);
       this._render();
       try {
-        await fn();
+        await this._awaitResponse(Promise.resolve().then(fn), key === "profiles" ? 30000 : key === "refresh" ? 150000 : (key === "preparation" || (key === "engine" && this._comfortStart)) ? 1800000 : 600000);
         if (onSuccess) onSuccess();
       } catch (err) {
         console.error(`[GWM Jolion Card] ${key} failed`, err);

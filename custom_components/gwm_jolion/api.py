@@ -76,8 +76,11 @@ class GwmJolionApiClient:
         self._access_token: str | None = None
         self._login_lock = asyncio.Lock()
 
-    async def async_login(self) -> None:
+    async def async_login(self, *, failed_token: str | None = None) -> None:
         async with self._login_lock:
+            # Another request may already have renewed the rejected token.
+            if self._access_token is not None and self._access_token != failed_token:
+                return
             body = {
                 "account": self._phone,
                 "password": self._password,
@@ -97,7 +100,7 @@ class GwmJolionApiClient:
             data = payload.get("data") or {}
             token = data.get("accessToken")
             if not token:
-                raise ConfigEntryAuthFailed("GWM login did not return accessToken")
+                raise GwmJolionApiError("GWM login did not return accessToken")
             self._access_token = str(token)
 
     async def async_update(self) -> dict[str, Any]:
@@ -362,6 +365,7 @@ class GwmJolionApiClient:
         body_json = json.dumps(body, ensure_ascii=False, separators=(",", ":")) if body is not None else ""
         query = urlencode(params, doseq=False)
         url = BASE_URL + path + ("?" + query if query else "")
+        request_token = self._access_token
         headers = self._headers(method, path, url, body_json, with_token, vin_header)
         try:
             async with self._session.request(
@@ -372,19 +376,25 @@ class GwmJolionApiClient:
                 timeout=30,
             ) as response:
                 text = await response.text()
-        except ClientError as err:
+                status = response.status
+        except (ClientError, TimeoutError) as err:
             raise GwmJolionApiError(f"Cannot connect to GWM RU: {err}") from err
+        if status == 429 or status >= 500:
+            raise GwmJolionApiError(f"GWM temporarily unavailable (HTTP {status})", code=str(status))
         try:
-            payload = json.loads(text)
+            payload = {"code": "401"} if status == 401 else json.loads(text)
         except json.JSONDecodeError as err:
-            raise GwmJolionApiError(f"Invalid GWM response: {text[:200]}") from err
+            raise GwmJolionApiError(f"Invalid GWM JSON response (HTTP {status})") from err
+        if not isinstance(payload, dict):
+            raise GwmJolionApiError("Invalid GWM response structure")
+        if "code" not in payload:
+            raise GwmJolionApiError("GWM response has no result code")
         code = str(payload.get("code"))
-        if code == "000000":
+        if code == "000000" and status < 400:
             return payload
         if with_token and is_auth_error_code(code):
             if retry_auth:
-                self._access_token = None
-                await self.async_login()
+                await self.async_login(failed_token=request_token)
                 return await self._request(
                     method,
                     path,
@@ -395,7 +405,11 @@ class GwmJolionApiClient:
                     retry_auth=False,
                 )
             description = str(payload.get("description") or payload.get("message") or code)
-            raise ConfigEntryAuthFailed(description)
+            if self._access_token == request_token:
+                self._access_token = None
+            # A rejected session after successful login is recoverable next poll.
+            # Only a rejected login should start Home Assistant reauthentication.
+            raise GwmJolionApiError("GWM rejected the renewed session", code=code)
         description = str(payload.get("description") or payload.get("message") or code)
         _LOGGER.debug("GWM error: code=%s description=%s path=%s", code, description, path)
         if not with_token:

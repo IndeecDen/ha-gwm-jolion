@@ -11,7 +11,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import GwmJolionApiClient, GwmJolionApiError
 from .capabilities import CAPABILITIES, capability_for_command, capability_report
@@ -113,8 +113,44 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.signal_change_history: list[dict[str, Any]] = []
         self._signal_history_last_values: dict[str, Any] = {}
         self.seen_signal_codes: set[str] = set()
+        self.update_health = {"consecutive_failures": 0, "last_error": None, "duration_seconds": None}
 
     async def _async_update_data(self) -> dict[str, Any]:
+        started = time.monotonic()
+        source = self._next_update_source
+        try:
+            async with asyncio.timeout(120):
+                data = await self._async_update_data_impl()
+            self.update_health["consecutive_failures"] = 0
+            return data
+        except Exception as err:
+            self.update_health["consecutive_failures"] += 1
+            error = {"type": type(err).__name__, "code": str(getattr(err, "code", "") or "")[:32],
+                     "time": datetime.now(timezone.utc).isoformat()}
+            self.update_health["last_error"] = error
+            if self.protocol_capture_enabled and self.protocol_capture_path:
+                record = {"schema": 2, "type": "refresh_error", "time": error["time"],
+                          "seq": self.protocol_capture_sequence + 1,
+                          "integration_version": VERSION, "source": source, "error": error,
+                          "consecutive_failures": self.update_health["consecutive_failures"]}
+                try:
+                    async with asyncio.timeout(5):
+                        await self.hass.async_add_executor_job(append_jsonl, self.protocol_capture_path, record)
+                    self.protocol_capture_sequence = record["seq"]
+                    self.protocol_capture_last_record_time = datetime.fromisoformat(error["time"])
+                    self.protocol_capture_last_source = source
+                    self.protocol_capture_last_changes_count = 0
+                    self.protocol_capture_last_error = None
+                except Exception:
+                    self.protocol_capture_last_error = "Cannot write refresh error"
+                    _LOGGER.warning("Cannot write GWM refresh failure to protocol capture")
+            if isinstance(err, ConfigEntryAuthFailed):
+                raise
+            raise UpdateFailed(f"GWM refresh failed ({type(err).__name__}); next poll will retry") from err
+        finally:
+            self.update_health["duration_seconds"] = round(time.monotonic() - started, 3)
+
+    async def _async_update_data_impl(self) -> dict[str, Any]:
         source = self._next_update_source
         self._next_update_source = "poll"
         data = await self.client.async_update()
@@ -292,7 +328,12 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Request a refresh and tag the next successful update with its source."""
         self._next_update_source = source
         try:
-            await self.async_request_refresh()
+            if source == "remote_start_guard":
+                await self.async_refresh()
+            else:
+                await self.async_request_refresh()
+            if not self.last_update_success:
+                raise HomeAssistantError("Не удалось обновить данные GWM. Дождитесь успешного обновления")
         finally:
             if self._next_update_source == source:
                 self._next_update_source = "poll"
@@ -399,6 +440,11 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         security_pin=self.security_pin,
                         remote_type=remote_type,
                     )
+                except asyncio.CancelledError:
+                    self.last_command_status = "error"
+                    self.last_command_result_code = "cancelled"
+                    self.last_command_result_message = "Ожидание прервано; результат команды неизвестен. Обновите данные автомобиля"
+                    raise
                 except Exception as err:
                     self.last_command_status = "error"
                     error_code = getattr(err, "code", None)

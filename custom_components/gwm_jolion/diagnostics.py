@@ -66,6 +66,7 @@ def _base_diagnostics_payload(
         "vehicle_basics": _redact(data.get("vehicle_basics") or {}),
         "vehicle_basics_diagnostics": _redact(data.get("vehicle_basics_diagnostics") or {}),
         "coordinator": {
+            "update_health": dict(coordinator.update_health),
             "last_successful_update": last_update.isoformat() if last_update else None,
             "seen_signal_codes": sorted(coordinator.seen_signal_codes),
             "unknown_signal_history": _redact(coordinator.unknown_signal_history),
