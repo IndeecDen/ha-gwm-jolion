@@ -26,6 +26,7 @@ async def async_setup_entry(
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[ButtonEntity] = [GwmJolionRefreshButton(coordinator)]
     if coordinator.enable_remote_controls and coordinator.security_pin:
+        entities.append(GwmJolionStartSelectedProfileButton(coordinator))
         entities.extend(
             GwmJolionCommandButton(coordinator, COMMANDS[key])
             for key in PUBLIC_COMMAND_BUTTON_KEYS
@@ -69,6 +70,34 @@ class GwmJolionRefreshButton(GwmJolionEntity, ButtonEntity):
             "protocol_capture_last_marker": self.coordinator.protocol_capture_last_marker,
             "protocol_capture_last_error": self.coordinator.protocol_capture_last_error,
         }
+
+
+class GwmJolionStartSelectedProfileButton(GwmJolionEntity, ButtonEntity):
+    """Automation-friendly entry point using the selected profile of this vehicle."""
+
+    _attr_name = "Запустить выбранный профиль"
+    _attr_icon = "mdi:car-clock"
+
+    def __init__(self, coordinator: GwmJolionCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry_id}_start_selected_profile"
+
+    @property
+    def available(self) -> bool:
+        return bool(super().available and self.coordinator.enable_remote_controls
+                    and self.coordinator.security_pin and not self.coordinator.command_in_progress
+                    and any(p["id"] == self.coordinator.card_settings.get("selected_profile")
+                            for p in self.coordinator.preparation_profiles))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        selected = self.coordinator.card_settings.get("selected_profile")
+        profile = next((p for p in self.coordinator.preparation_profiles if p["id"] == selected), None)
+        return {"selected_profile_id": selected or None,
+                "selected_profile_name": profile["name"] if profile else None}
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_start_selected_profile()
 
 
 class GwmJolionCommandButton(GwmJolionEntity, ButtonEntity):

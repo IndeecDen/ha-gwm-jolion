@@ -18,7 +18,7 @@ from .capabilities import CAPABILITIES, capability_for_command, capability_repor
 from .command_safety import remote_start_block_reason
 from homeassistant.helpers.storage import Store
 from .card_settings import validate_settings
-from .preparation_profiles import change_profiles, initial_profiles, validate_profiles
+from .preparation_profiles import change_profiles, initial_profiles, validate_profiles, profile_settings
 
 from .commands import COMMANDS, UNSUPPORTED_COMMANDS, build_seat_heating_instructions
 from .const import DEFAULT_CLIMATE_RUNTIME, DEFAULT_CLIMATE_TEMPERATURE, DOMAIN, VERSION
@@ -516,6 +516,27 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return await self.async_send_custom_t5(
             name="Подогрев сидений", instructions=instructions, expected_remote_type="0x0A",
             remote_type="" if driver == 0 and passenger == 0 else "0",
+        )
+
+    async def async_start_selected_profile(self) -> None:
+        """Snapshot the selected vehicle's current draft and run normal guarded preparation."""
+        selected_id = self.card_settings.get("selected_profile")
+        profile = next((item for item in self.preparation_profiles if item["id"] == selected_id), None)
+        if profile is None:
+            raise HomeAssistantError("Выберите профиль подготовки в карточке GWM Jolion")
+        try:
+            settings = profile_settings({key: self.card_settings.get(key, value)
+                                         for key, value in profile["settings"].items()})
+        except ValueError as err:
+            raise HomeAssistantError(f"Некорректные настройки выбранного профиля: {err}") from err
+        await self.async_start_with_comfort(
+            temperature=settings["temperature"], climate_time=settings["climate_time"],
+            engine_time=settings["engine_time"], climate_enabled=settings["climate_enabled"],
+            driver=(settings["driver"] if settings["driver_enabled"] else 0)
+            if self.feature_enabled("seat_heat_driver") else None,
+            passenger=(settings["passenger"] if settings["passenger_enabled"] else 0)
+            if self.feature_enabled("seat_heat_passenger") else None,
+            seat_time=settings["seat_time"],
         )
 
     async def async_start_with_comfort(self, *, temperature: int, climate_time: int,
