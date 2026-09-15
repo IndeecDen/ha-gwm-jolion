@@ -33,6 +33,18 @@ async def async_setup_entry(
             if key in COMMANDS and coordinator.command_enabled(key)
         )
     async_add_entities(entities)
+    if coordinator.enable_remote_controls and coordinator.security_pin:
+        known_profiles: set[str] = set()
+
+        def add_profile_buttons() -> None:
+            new_profiles = [p for p in coordinator.preparation_profiles if p["id"] not in known_profiles]
+            if new_profiles:
+                known_profiles.update(p["id"] for p in new_profiles)
+                async_add_entities([GwmJolionStartSelectedProfileButton(coordinator, profile_id=p["id"])
+                                    for p in new_profiles])
+
+        entry.async_on_unload(coordinator.async_add_listener(add_profile_buttons))
+        add_profile_buttons()
 
 
 class GwmJolionRefreshButton(GwmJolionEntity, ButtonEntity):
@@ -78,26 +90,42 @@ class GwmJolionStartSelectedProfileButton(GwmJolionEntity, ButtonEntity):
     _attr_name = "Запустить выбранный профиль"
     _attr_icon = "mdi:car-clock"
 
-    def __init__(self, coordinator: GwmJolionCoordinator) -> None:
+    def __init__(self, coordinator: GwmJolionCoordinator, *, profile_id: str | None = None) -> None:
         super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.entry_id}_start_selected_profile"
+        self._profile_id = profile_id
+        self._attr_unique_id = (f"{coordinator.entry_id}_start_profile_{profile_id}" if profile_id is not None
+                                else f"{coordinator.entry_id}_start_selected_profile")
+
+    @property
+    def profile_id(self) -> str | None:
+        return self._profile_id if self._profile_id is not None else self.coordinator.card_settings.get("selected_profile")
+
+    @property
+    def name(self) -> str:
+        if self._profile_id is None:
+            return self._attr_name
+        profile = next((p for p in self.coordinator.preparation_profiles if p["id"] == self._profile_id), None)
+        return f"Запустить профиль: {profile['name']}" if profile else "Запустить профиль: удалён"
 
     @property
     def available(self) -> bool:
         return bool(super().available and self.coordinator.enable_remote_controls
                     and self.coordinator.security_pin and not self.coordinator.command_in_progress
-                    and any(p["id"] == self.coordinator.card_settings.get("selected_profile")
+                    and any(p["id"] == self.profile_id
                             for p in self.coordinator.preparation_profiles))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        selected = self.coordinator.card_settings.get("selected_profile")
+        selected = self.profile_id
         profile = next((p for p in self.coordinator.preparation_profiles if p["id"] == selected), None)
         return {"selected_profile_id": selected or None,
                 "selected_profile_name": profile["name"] if profile else None}
 
     async def async_press(self) -> None:
-        await self.coordinator.async_start_selected_profile()
+        if self._profile_id is None:
+            await self.coordinator.async_start_selected_profile()
+        else:
+            await self.coordinator.async_start_selected_profile(profile_id=self._profile_id)
 
 
 class GwmJolionCommandButton(GwmJolionEntity, ButtonEntity):

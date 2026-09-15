@@ -126,6 +126,8 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:
             self.update_health["consecutive_failures"] += 1
             error = {"type": type(err).__name__, "code": str(getattr(err, "code", "") or "")[:32],
+                     "endpoint": getattr(err, "endpoint", None), "category": getattr(err, "category", None),
+                     "http_status": getattr(err, "http_status", None),
                      "time": datetime.now(timezone.utc).isoformat()}
             self.update_health["last_error"] = error
             if self.protocol_capture_enabled and self.protocol_capture_path:
@@ -518,14 +520,14 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             remote_type="" if driver == 0 and passenger == 0 else "0",
         )
 
-    async def async_start_selected_profile(self) -> None:
-        """Snapshot the selected vehicle's current draft and run normal guarded preparation."""
-        selected_id = self.card_settings.get("selected_profile")
+    async def async_start_selected_profile(self, *, profile_id: str | None = None) -> None:
+        """Run the current draft, or an explicitly named profile's saved snapshot."""
+        selected_id = self.card_settings.get("selected_profile") if profile_id is None else profile_id
         profile = next((item for item in self.preparation_profiles if item["id"] == selected_id), None)
         if profile is None:
-            raise HomeAssistantError("Выберите профиль подготовки в карточке GWM Jolion")
+            raise HomeAssistantError("Выберите профиль подготовки в карточке GWM Jolion" if profile_id is None else "Профиль подготовки удалён или не найден")
         try:
-            settings = profile_settings({key: self.card_settings.get(key, value)
+            settings = profile_settings({key: self.card_settings.get(key, value) if profile_id is None else value
                                          for key, value in profile["settings"].items()})
         except ValueError as err:
             raise HomeAssistantError(f"Некорректные настройки выбранного профиля: {err}") from err

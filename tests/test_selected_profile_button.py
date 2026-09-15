@@ -36,6 +36,25 @@ def test_uses_current_draft_and_omits_absent_equipment():
     asyncio.run(run())
 
 
+def test_explicit_profile_uses_saved_values_without_changing_selection():
+    async def run():
+        calls=[]
+        async def launch(**kwargs): calls.append(kwargs)
+        obj=SimpleNamespace(preparation_profiles=profiles.initial_profiles(),
+            card_settings={"selected_profile":"winter","temperature":31,"driver":1},
+            feature_enabled=lambda feature:True,async_start_with_comfort=launch)
+        before=dict(obj.card_settings)
+        await start_method()(obj,profile_id="summer")
+        assert calls[-1]["temperature"]==20 and calls[-1]["driver"]==0
+        assert obj.card_settings==before
+        obj.card_settings={}
+        await start_method()(obj,profile_id="winter")
+        assert calls[-1]["temperature"]==26 and calls[-1]["driver"]==3
+        with pytest.raises(RuntimeError):await start_method()(obj,profile_id="deleted")
+        assert len(calls)==2
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("settings", [{}, {"selected_profile":"deleted"}, {"selected_profile":"winter", "temperature":99}])
 def test_missing_or_invalid_profile_never_launches(settings):
     obj=SimpleNamespace(preparation_profiles=profiles.initial_profiles(),card_settings=settings)
@@ -52,7 +71,7 @@ def test_button_availability_attributes_and_press():
     scope=dict(GwmJolionEntity=Entity, ButtonEntity=type("Button",(),{}), GwmJolionCoordinator=object, Any=object)
     exec(compile(ast.Module(body=[node],type_ignores=[]),"button","exec"),scope)
     calls=[]
-    async def launch(): calls.append("launch")
+    async def launch(**kwargs): calls.append(kwargs or "launch")
     obj=SimpleNamespace(entry_id="car-one",last_update_success=True,enable_remote_controls=True,security_pin="test",command_in_progress=False,
         preparation_profiles=profiles.initial_profiles(),card_settings={"selected_profile":"winter"},async_start_selected_profile=launch)
     button=scope[node.name](obj)
@@ -66,3 +85,40 @@ def test_button_availability_attributes_and_press():
         setattr(obj,field,old)
     obj.card_settings={}
     assert not button.available and button.extra_state_attributes["selected_profile_name"] is None
+    named=scope[node.name](obj,profile_id="winter")
+    assert named.available and named.name == "Запустить профиль: Зима"
+    stable_id=named._attr_unique_id
+    asyncio.run(named.async_press())
+    assert calls[-1] == {"profile_id":"winter"}
+    obj.preparation_profiles[0]["name"]="Мороз"
+    assert named.name == "Запустить профиль: Мороз" and named._attr_unique_id == stable_id
+    obj.preparation_profiles=[]
+    assert not named.available
+
+
+def test_profile_buttons_added_once_and_listener_unloaded():
+    node=next(n for n in ast.parse((ROOT / "button.py").read_text(encoding="utf-8")).body
+              if isinstance(n, ast.AsyncFunctionDef) and n.name == "async_setup_entry")
+    listeners=[]
+    cleanup=[]
+    added=[]
+    def subscribe(callback):
+        listeners.append(callback)
+        return lambda:listeners.remove(callback)
+    obj=SimpleNamespace(enable_remote_controls=True,security_pin="test",
+                        preparation_profiles=profiles.initial_profiles(),async_add_listener=subscribe)
+    scope=dict(HomeAssistant=object,ConfigEntry=object,AddEntitiesCallback=object,DOMAIN="gwm",
+               ButtonEntity=object,GwmJolionCoordinator=object,COMMANDS={},PUBLIC_COMMAND_BUTTON_KEYS=[],
+               GwmJolionRefreshButton=lambda c:"refresh",
+               GwmJolionStartSelectedProfileButton=lambda c,profile_id=None:profile_id or "selected")
+    exec(compile(ast.Module(body=[node],type_ignores=[]),"setup","exec"),scope)
+    asyncio.run(scope[node.name](SimpleNamespace(data={"gwm":{"car":obj}}),
+                                SimpleNamespace(entry_id="car",async_on_unload=cleanup.append),added.extend))
+    assert added == ["refresh","selected","winter","summer","driver"]
+    listeners[0]()
+    assert len(added)==5
+    obj.preparation_profiles.append({"id":"custom","name":"Свой"})
+    listeners[0]()
+    assert added[-1]=="custom" and len(added)==6
+    cleanup[0]()
+    assert not listeners

@@ -1,6 +1,6 @@
-/* GWM Jolion primary card visual editor v0.1.0-beta.7 */
+/* GWM Jolion primary card visual editor v0.1.0-beta.8 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.7";
+  const CARD_VERSION = "0.1.0-beta.8";
 
   const CONTROL_OPTIONS = [
     ["engine", "Двигатель"],

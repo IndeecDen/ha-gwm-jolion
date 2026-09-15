@@ -16,7 +16,10 @@ ROOT = Path(__file__).resolve().parents[1] / "custom_components/gwm_jolion"
 
 class AuthFailed(Exception): pass
 class ApiError(Exception):
-    def __init__(self, message, *, code=None): super().__init__(message); self.code = code
+    def __init__(self, message, *, code=None, **context):
+        super().__init__(message)
+        self.code = code
+        self.__dict__.update(context)
 class UpdateFailed(Exception): pass
 
 
@@ -44,7 +47,7 @@ def methods(file, classname, names, scope):
 
 
 def client(reply):
-    scope = dict(asyncio=asyncio, json=json, urlencode=urlencode, BASE_URL="https://example.invalid", ENDPOINT_LOGIN="login",
+    scope = dict(asyncio=asyncio, time=time, json=json, urlencode=urlencode, BASE_URL="https://example.invalid", ENDPOINT_LOGIN="login",
         ClientError=ConnectionError, GwmJolionApiError=ApiError, ConfigEntryAuthFailed=AuthFailed,
         is_auth_error_code=lambda code: code in {"401", "308001"}, _LOGGER=logging.getLogger(__name__))
     cls = type("Client", (), methods("api.py", "GwmJolionApiClient", ["async_login", "_ensure_login", "_request"], scope))
@@ -81,6 +84,45 @@ def test_parallel_expired_token_renews_once():
         obj = client(reply)
         await asyncio.gather(obj._request("GET", "status"), obj._request("GET", "status"))
         assert len(logins) == 1 and obj._access_token == "new"
+    asyncio.run(run())
+
+
+def test_field_error_550004_recovers_reads_with_one_shared_login():
+    async def run():
+        logins=[]
+        async def reply(url, headers):
+            if url.endswith("login"):
+                logins.append(1)
+                await asyncio.sleep(.005)
+                return 200, {"code":"000000", "data":{"accessToken":"fresh"}}
+            if headers["token"] == "old":
+                await asyncio.sleep(.001)
+                return 200, {"code":"550004"}
+            return 200, {"code":"000000", "data":{}}
+        obj=client(reply)
+        results=await asyncio.gather(obj._request("GET","status"),obj._request("GET","status"))
+        assert len(logins)==1 and all(r["code"]=="000000" for r in results)
+    asyncio.run(run())
+
+
+def test_persistent_550004_is_bounded_and_never_replays_post():
+    async def run():
+        calls=[]
+        async def reply(url,headers):
+            calls.append(url)
+            if url.endswith("login"):return 200,{"code":"000000","data":{"accessToken":"fresh"}}
+            return 200,{"code":"550004"}
+        obj=client(reply)
+        with pytest.raises(ApiError) as err: await obj._request("GET","status")
+        assert calls==["https://example.invalidstatus","https://example.invalidlogin","https://example.invalidstatus"]
+        assert err.value.endpoint=="status" and err.value.http_status==200
+        with pytest.raises(ApiError): await obj._request("GET","status")
+        assert len(calls)==4  # No second login during cooldown.
+        with pytest.raises(ApiError): await obj._request("POST","command")
+        assert len(calls)==5  # Exactly one send, no login/replay.
+        obj._last_read_recovery-=301
+        with pytest.raises(ApiError): await obj._request("GET","status")
+        assert len(calls)==8  # Recovery is permitted again after cooldown.
     asyncio.run(run())
 
 

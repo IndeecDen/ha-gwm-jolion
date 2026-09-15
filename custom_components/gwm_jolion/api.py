@@ -50,9 +50,14 @@ _LOGGER = logging.getLogger(__name__)
 class GwmJolionApiError(HomeAssistantError):
     """Raised when the GWM cloud returns an error."""
 
-    def __init__(self, message: str, *, code: str | None = None) -> None:
+    def __init__(self, message: str, *, code: str | None = None,
+                 endpoint: str | None = None, category: str | None = None,
+                 http_status: int | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.endpoint = endpoint
+        self.category = category
+        self.http_status = http_status
 
 
 class GwmJolionApiClient:
@@ -378,20 +383,34 @@ class GwmJolionApiClient:
                 text = await response.text()
                 status = response.status
         except (ClientError, TimeoutError) as err:
-            raise GwmJolionApiError(f"Cannot connect to GWM RU: {err}") from err
+            raise GwmJolionApiError("Cannot connect to GWM RU", endpoint=path,
+                                    category="timeout" if isinstance(err, TimeoutError) else "network") from err
         if status == 429 or status >= 500:
-            raise GwmJolionApiError(f"GWM temporarily unavailable (HTTP {status})", code=str(status))
+            raise GwmJolionApiError(f"GWM temporarily unavailable (HTTP {status})", code=str(status), endpoint=path, category="http", http_status=status)
         try:
             payload = {"code": "401"} if status == 401 else json.loads(text)
         except json.JSONDecodeError as err:
-            raise GwmJolionApiError(f"Invalid GWM JSON response (HTTP {status})") from err
+            raise GwmJolionApiError(f"Invalid GWM JSON response (HTTP {status})", endpoint=path, category="invalid_json", http_status=status) from err
         if not isinstance(payload, dict):
-            raise GwmJolionApiError("Invalid GWM response structure")
+            raise GwmJolionApiError("Invalid GWM response structure", endpoint=path, category="invalid_structure", http_status=status)
         if "code" not in payload:
-            raise GwmJolionApiError("GWM response has no result code")
+            raise GwmJolionApiError("GWM response has no result code", endpoint=path, category="missing_code", http_status=status)
         code = str(payload.get("code"))
         if code == "000000" and status < 400:
             return payload
+        # Field logs: read requests start failing with 550004 after ~24h,
+        # and a new login restores polling. Its exact server meaning is unknown.
+        # Recover reads only; never replay a vehicle command for this code.
+        if with_token and method.upper() == "GET" and code == "550004" and retry_auth:
+            async with self._login_lock:
+                pass  # Let an already-running renewal finish before comparing tokens.
+            now = time.monotonic()
+            if request_token != self._access_token or now - getattr(self, "_last_read_recovery", float("-inf")) >= 300:
+                if request_token == self._access_token:
+                    self._last_read_recovery = now
+                    await self.async_login(failed_token=request_token)
+                return await self._request(method, path, params=params, body=body,
+                                           with_token=with_token, vin_header=vin_header, retry_auth=False)
         if with_token and is_auth_error_code(code):
             if retry_auth:
                 await self.async_login(failed_token=request_token)
@@ -409,12 +428,12 @@ class GwmJolionApiClient:
                 self._access_token = None
             # A rejected session after successful login is recoverable next poll.
             # Only a rejected login should start Home Assistant reauthentication.
-            raise GwmJolionApiError("GWM rejected the renewed session", code=code)
+            raise GwmJolionApiError("GWM rejected the renewed session", code=code, endpoint=path, category="session", http_status=status)
         description = str(payload.get("description") or payload.get("message") or code)
         _LOGGER.debug("GWM error: code=%s description=%s path=%s", code, description, path)
         if not with_token:
             raise ConfigEntryAuthFailed(description)
-        raise GwmJolionApiError(description, code=code)
+        raise GwmJolionApiError(description, code=code, endpoint=path, category="api", http_status=status)
 
     def _headers(
         self,
