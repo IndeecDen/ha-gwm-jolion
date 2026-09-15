@@ -8,7 +8,7 @@
           "phone": "Phone",
           "password": "Password",
           "gps_interval": "GPS update interval, seconds",
-          "poll_interval": "Polling interval, seconds",
+          "poll_interval": "Equipment polling interval",
           "enable_remote_controls": "Enable remote controls",
           "security_pin": "Vehicle security PIN"
         }
@@ -36,7 +36,7 @@
         "description": "PIN: {pin_status}. Protocol capture creates a JSONL session under /config/gwm_jolion_protocol_capture, and the current session is also embedded into standard Home Assistant diagnostics. Automatic capture records exclude VIN, exact location, tokens, account data and device identifiers. Optional equipment can also be configured below.",
         "data": {
           "gps_interval": "GPS update interval, seconds",
-          "poll_interval": "Polling interval, seconds",
+          "poll_interval": "Equipment polling interval",
           "enable_remote_controls": "Enable remote controls",
           "command_cooldown_seconds": "Delay between commands, seconds",
           "protocol_capture_enabled": "GWM protocol capture (JSONL log)",
