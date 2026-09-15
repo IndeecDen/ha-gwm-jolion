@@ -10,7 +10,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_GPS_INTERVAL, CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
+from .gps import GwmGpsCoordinator
 from .coordinator import GwmJolionCoordinator
 from .entity import GwmJolionEntity
 
@@ -27,7 +28,10 @@ def _coordinate(value: Any) -> float | None:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([GwmJolionLocationTracker(coordinator)])
+    interval = int(entry.options.get(CONF_GPS_INTERVAL, entry.options.get(
+        CONF_POLL_INTERVAL, entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL))))
+    gps = GwmGpsCoordinator(coordinator, max(30, min(3600, interval)))
+    async_add_entities([GwmJolionLocationTracker(gps)])
 
 
 class GwmJolionLocationTracker(GwmJolionEntity, TrackerEntity):
@@ -35,7 +39,7 @@ class GwmJolionLocationTracker(GwmJolionEntity, TrackerEntity):
     _attr_source_type = SourceType.GPS
     _attr_icon = "mdi:car"
 
-    def __init__(self, coordinator: GwmJolionCoordinator) -> None:
+    def __init__(self, coordinator: GwmGpsCoordinator) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.entry_id}_location"
 

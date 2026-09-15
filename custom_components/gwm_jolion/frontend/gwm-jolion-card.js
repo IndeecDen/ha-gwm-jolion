@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-beta.8 */
+/* GWM Jolion Card v0.1.0-beta.9 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.8";
+  const CARD_VERSION = "0.1.0-beta.9";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {

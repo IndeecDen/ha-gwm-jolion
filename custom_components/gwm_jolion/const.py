@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 DOMAIN = "gwm_jolion"
-VERSION = "0.1.0-beta.8"
+VERSION = "0.1.0-beta.9"
 PLATFORMS = ["button", "sensor", "binary_sensor", "device_tracker", "lock", "climate", "number"]
 
 CONF_PHONE = "phone"
@@ -14,6 +14,7 @@ CONF_COUNTRY = "country"
 CONF_COUNTRY_CODE = "country_code"
 CONF_DEVICE_ID = "device_id"
 CONF_POLL_INTERVAL = "poll_interval"
+CONF_GPS_INTERVAL = "gps_interval"
 CONF_ENABLE_REMOTE_CONTROLS = "enable_remote_controls"
 CONF_COMMAND_COOLDOWN = "command_cooldown_seconds"
 CONF_SECURITY_PIN = "security_pin"

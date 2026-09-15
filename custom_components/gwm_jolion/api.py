@@ -108,6 +108,13 @@ class GwmJolionApiClient:
                 raise GwmJolionApiError("GWM login did not return accessToken")
             self._access_token = str(token)
 
+    async def async_get_location(self, vin: str) -> dict[str, Any]:
+        """Read coordinates without vehicle discovery or extra telemetry calls."""
+        await self._ensure_login()
+        status = await self._get_last_status(vin)
+        return {"latitude": status.get("latitude"), "longitude": status.get("longitude"),
+                "gps_accuracy": 50}
+
     async def async_update(self) -> dict[str, Any]:
         await self._ensure_login()
         vehicles = await self._get_vehicles()
