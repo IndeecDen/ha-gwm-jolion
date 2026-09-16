@@ -25,6 +25,7 @@ def register(hass):
     vol.Required("entity_id"): str,
     vol.Required("start"): str,
     vol.Required("end"): str,
+    vol.Optional("odometer_entity"): str,
 })
 @websocket_api.async_response
 async def get_trips(hass, connection, msg):
@@ -38,7 +39,27 @@ async def get_trips(hass, connection, msg):
         connection.send_error(msg["id"], "not_found", "Выберите местоположение автомобиля GWM Jolion")
         return
     try:
-        result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone)
+        archive = None
+        if "recorder" in getattr(hass.config, "components", set()):
+            registry = er.async_get(hass)
+            odometer = msg.get("odometer_entity") or registry.async_get_entity_id("sensor", DOMAIN, f"{entry.config_entry_id}_mileage_total")
+            if odometer:
+                sensor = registry.async_get(odometer)
+                if (not sensor or sensor.platform != DOMAIN or sensor.config_entry_id != entry.config_entry_id
+                        or not odometer.startswith("sensor.") or not connection.user.permissions.check_entity(odometer, POLICY_READ)):
+                    connection.send_error(msg["id"], "unauthorized", "Нет доступа к выбранному датчику пробега этого автомобиля")
+                    return
+            from .trips_recorder import read_history
+            try:
+                archive = await read_history(hass, entity_id, odometer, msg["start"], msg["end"])
+            except ValueError:
+                raise
+            except Exception:
+                _LOGGER.warning("Recorder history unavailable; using local trip history")
+        if archive is None:
+            result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone)
+        else:
+            result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone, archive)
     except ValueError:
         connection.send_error(msg["id"], "invalid_dates", "Проверьте даты: максимальный период 366 дней")
     except Exception:

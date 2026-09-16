@@ -96,6 +96,30 @@ def summarize(rows, start, end, zone):
             "start":start, "end":end}
 
 
+def with_archive(rows, archive, start, end, zone):
+    """Use older Recorder samples before local capture, never add distances twice."""
+    gps, odo = archive
+    cutoff = rows[0][0] if rows else math.inf
+    route = [row for row in gps if row[0] < cutoff] + [(r[0], r[1], r[2], None) for r in rows]
+    local_odo = [(r[0], None, None, r[3]) for r in rows if r[3] is not None]
+    odo_cutoff = local_odo[0][0] if local_odo else math.inf
+    mileage = [row for row in odo if row[0] < odo_cutoff] + local_odo
+    result = summarize(sorted(route), start, end, zone)
+    daily = {day["date"]:day for day in result["days"]}
+    for day in summarize(sorted(mileage), start, end, zone)["days"]:
+        if day["odo_pairs"]:
+            daily[day["date"]] = day
+    result["days"] = sorted(daily.values(), key=lambda day:day["date"])
+    result["km"] = round(sum(day["km"] for day in daily.values()), 2)
+    methods = {day["method"] for day in daily.values()}
+    result["method"] = next(iter(methods)) if len(methods)==1 else "mixed"
+    times = [r[0] for r in route] + [r[0] for r in mileage]
+    result["samples"] = len(set(times))
+    result["first"] = min(times) if times else None
+    result["last"] = max(times) if times else None
+    return result
+
+
 class TripHistory:
     def __init__(self, hass, entry_id, retention=90):
         self.hass = hass
@@ -123,15 +147,15 @@ class TripHistory:
         async with self.lock:
             await self.hass.async_add_executor_job(self._append, stamp, location)
 
-    def _query(self, start, end, zone):
+    def _query(self, start, end, zone, archive=None):
         low, high = period(start, end, zone)
         with self._connect() as db:
             rows = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts >= ? AND ts < ? ORDER BY ts", (low, high)).fetchall()
         db.close()
-        result = summarize(rows, start, end, zone)
+        result = with_archive(rows, archive, start, end, zone) if archive is not None else summarize(rows, start, end, zone)
         result["retention_days"] = self.retention
         return result
 
-    async def query(self, start, end, zone):
+    async def query(self, start, end, zone, archive=None):
         async with self.lock:
-            return await self.hass.async_add_executor_job(self._query, start, end, zone)
+            return await self.hass.async_add_executor_job(self._query, start, end, zone, archive)

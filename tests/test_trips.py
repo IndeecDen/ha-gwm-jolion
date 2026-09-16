@@ -5,6 +5,8 @@ from datetime import datetime
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
+from functools import partial
+from datetime import timezone
 
 import pytest
 
@@ -89,4 +91,47 @@ def test_history_permission_and_entry_binding():
         entry.platform="other"
         await scope["get_trips"](hass,connection,msg)
         assert errors[-1][1]=="not_found" and len(calls)==1
+        entry.platform="gwm_jolion"
+        hass.config.components={"recorder"}
+        scope["er"]=SimpleNamespace(async_get=lambda hass:SimpleNamespace(async_get=lambda entity:entry,async_get_entity_id=lambda *args:"sensor.car_odometer"))
+        connection.user.permissions.check_entity=lambda entity,*args:entity.startswith("device_tracker.")
+        await scope["get_trips"](hass,connection,msg)
+        assert errors[-1][1]=="unauthorized" and len(calls)==1
     asyncio.run(run())
+
+
+def test_archive_only_and_overlap_do_not_double_count():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    gps=[(base,55,37,None),(base+60,55,37.01,None),(base+120,55,37.02,None)]
+    odo=[(base,None,None,100),(base+60,None,None,101),(base+120,None,None,102)]
+    result=trips.with_archive([], (gps,odo), "2026-09-16","2026-09-16","UTC")
+    assert result["km"]==2 and result["method"]=="odometer" and len(result["segments"][0])==3
+    result=trips.with_archive([(base+60,55,37.01,101),(base+120,55,37.02,102)],(gps,odo),"2026-09-16","2026-09-16","UTC")
+    assert result["km"]==2 and len(result["segments"][0])==3
+    result=trips.with_archive([],([],odo),"2026-09-16","2026-09-16","UTC")
+    assert result["km"]==2 and not result["segments"] and result["samples"]==3
+
+
+def test_recorder_coordinates_attributes_invalid_states_and_miles():
+    node=next(n for n in ast.parse((ROOT/"trips_recorder.py").read_text(encoding="utf-8")).body if isinstance(n,ast.FunctionDef))
+    scope={"number":trips.number}
+    exec(compile(ast.Module(body=[node],type_ignores=[]),"recorder","exec"),scope)
+    now=datetime.fromisoformat("2026-09-16T12:00:00+00:00")
+    def state(value,attrs):return SimpleNamespace(last_updated=now,state=value,attributes=attrs)
+    gps,odo=scope["observations"]({"tracker":[state("not_home",{"latitude":55,"longitude":37}),state("unavailable",{"latitude":55,"longitude":37})],"sensor":[state("100",{"unit_of_measurement":"mi"}),state("unknown",{})]},"tracker","sensor")
+    assert gps[0][1:3]==(55,37) and gps[1][1:3]==(None,None)
+    assert odo[0][3]==pytest.approx(160.9344) and odo[1][3] is None
+
+
+def test_recorder_query_keeps_attribute_only_gps_changes():
+    node=next(n for n in ast.parse((ROOT/"trips_recorder.py").read_text(encoding="utf-8")).body if isinstance(n,ast.AsyncFunctionDef))
+    captured={}
+    def history_query(*args,**kwargs):captured.update(kwargs);captured["ids"]=args[3];return {}
+    async def executor(job):return job()
+    scope={"datetime":datetime,"timezone":timezone,"partial":partial,"period":trips.period,
+           "get_instance":lambda hass:SimpleNamespace(async_add_executor_job=executor),
+           "history":SimpleNamespace(get_significant_states=history_query),"observations":lambda *args:([],[])}
+    exec(compile(ast.Module(body=[node],type_ignores=[]),"recorder_query","exec"),scope)
+    result=asyncio.run(scope["read_history"](SimpleNamespace(config=SimpleNamespace(time_zone="UTC")),"device_tracker.car","sensor.car","2026-09-16","2026-09-16"))
+    assert result==([],[]) and captured["ids"]==["device_tracker.car","sensor.car"]
+    assert not captured["significant_changes_only"] and not captured["no_attributes"] and not captured["minimal_response"]
