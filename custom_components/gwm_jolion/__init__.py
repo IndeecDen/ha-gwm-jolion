@@ -45,27 +45,27 @@ FRONTEND_ASSETS = (
     (
         FRONTEND_DIR / "gwm-jolion-trips-card.js",
         "/gwm-jolion/gwm-jolion-trips-card.js",
-        "/gwm-jolion/gwm-jolion-trips-card.js?v=0.1.0-beta.12.1",
+        "/gwm-jolion/gwm-jolion-trips-card.js?v=0.1.0-beta.13",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card-editor.js",
         "/gwm-jolion/gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-beta.12.1",
+        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-beta.13",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card.js",
         "/gwm-jolion/gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-beta.12.1",
+        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-beta.13",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-remote-card.js",
         "/gwm-jolion/gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-beta.12.1",
+        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-beta.13",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-alpha20.js",
         "/gwm-jolion/gwm-jolion-alpha20.js",
-        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-beta.12.1",
+        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-beta.13",
     ),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
@@ -183,6 +183,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     await hass.http.async_register_static_paths(
         [StaticPathConfig(static_url, str(path), False) for path, static_url, _ in available_assets]
         + [StaticPathConfig("/gwm-jolion/leaflet", str(FRONTEND_DIR / "leaflet"), True)]
+        + [StaticPathConfig("/gwm-jolion/maplibre", str(FRONTEND_DIR / "maplibre"), True)]
     )
     for _, _, frontend_url in available_assets:
         frontend.add_extra_js_url(hass, frontend_url)

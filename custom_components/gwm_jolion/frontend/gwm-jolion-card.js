@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-beta.12.1 */
+/* GWM Jolion Card v0.1.0-beta.13 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.12.1";
+  const CARD_VERSION = "0.1.0-beta.13";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -553,7 +553,7 @@
           </div>` : ""}
         </fieldset>
         ${this._profileEditorHost ? "" : `<button type="button" id="preparation-start" ${!this._entryId || this._busy.size || this._remoteCommandInProgress() || this._isUnavailable("engine") || this._isOn("engine") ? "disabled" : ""}>${this._busy.has("preparation") ? "Подготовка…" : "Запустить подготовку"}</button>`}
-        <small>${this._profileEditorHost ? "Профили сохраняются кнопками выше сразу для всех карточек этого автомобиля. Команды автомобилю не отправляются. Отмена редактора карточки не отменяет сохранение профиля." : "Редактирование профилей — в настройках карточки."}</small>
+        ${this._profileEditorHost ? "<small>Профили сохраняются кнопками выше сразу для всех карточек этого автомобиля. Команды автомобилю не отправляются. Отмена редактора карточки не отменяет сохранение профиля.</small>" : ""}
       </div>`;
     }
 
@@ -1194,10 +1194,6 @@
                 <span class="system-item">
                   ${this._icon("mdi:crosshairs-gps")}
                   GPS ${this._labelBool("gps", "есть", "нет")}
-                </span>
-                <span class="system-item" title="oilQty: уровень моторного масла GWM, шкала 0–8">
-                  ${this._icon("mdi:oil")}
-                  Масло ${this._levelBars(this._rawValue("oilQty"), 8, "flat")}
                 </span>
                 ${
                   this._state("lastCommand")

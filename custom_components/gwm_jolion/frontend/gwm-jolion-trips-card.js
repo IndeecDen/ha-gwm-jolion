@@ -1,6 +1,17 @@
-/* GWM Jolion Trips Card v0.1.0-beta.12.1 */
+/* GWM Jolion Trips Card v0.1.0-beta.13 */
 (() => {
   let leaflet;
+  const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
+  let vectorMaps;
+  function loadScript(src){return new Promise((resolve,reject)=>{
+    const script=document.createElement('script');const timer=setTimeout(()=>{script.remove();reject(new Error('Не удалось загрузить оформление карты'));},15000);
+    script.src=src;script.onload=()=>{clearTimeout(timer);resolve();};script.onerror=()=>{clearTimeout(timer);script.remove();reject(new Error('Не удалось загрузить оформление карты'));};document.head.append(script);
+  });}
+  function loadVector(L){return vectorMaps ||= (async()=>{
+    window.GwmTripsLeaflet=L;
+    if(!window.GwmTripsMapLibre){const previous=window.maplibregl;await loadScript('/gwm-jolion/maplibre/maplibre-gl.js');window.GwmTripsMapLibre=window.maplibregl;window.maplibregl=previous;}
+    if(!L.maplibreGL)await loadScript('/gwm-jolion/maplibre/leaflet-maplibre-gl.js');
+  })().catch(error=>{vectorMaps=null;throw error;});}
   const loadMap = () => leaflet ||= new Promise((resolve, reject) => {
     const script = document.createElement('script');
     const timer = setTimeout(() => { script.remove(); leaflet = null; reject(new Error('Не удалось загрузить карту')); }, 15000);
@@ -21,11 +32,12 @@
   class TripsCard extends HTMLElement {
     static getConfigElement() { return document.createElement('gwm-jolion-trips-card-editor'); }
     static getStubConfig(hass) {
-      return {entity: Object.keys(hass.states).find(id => id.startsWith('device_tracker.') && id.endsWith('_location')) || '', title:'Поездки'};
+      return {entity: Object.keys(hass.states).find(id => id.startsWith('device_tracker.') && id.endsWith('_location')) || '', title:'Поездки',map_style:'positron'};
     }
     constructor() {
       super(); this.attachShadow({mode:'open'}); this._mode='today'; this._serial=0;
       this.shadowRoot.innerHTML = `<link rel="stylesheet" href="/gwm-jolion/leaflet/leaflet.css">
+      <link rel="stylesheet" href="/gwm-jolion/maplibre/maplibre-gl.css">
       <style>
         :host{display:block}ha-card{overflow:hidden}.content{padding:10px 14px 12px}
         .shortcuts,.dates,.summary{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -60,10 +72,31 @@
       this._resize=new ResizeObserver(()=>this._map?.invalidateSize());this._resize.observe(this);
       this._load();
     }
-    disconnectedCallback(){ clearInterval(this._timer);this._resize?.disconnect();this._serial++; }
+    disconnectedCallback(){ clearInterval(this._timer);this._resize?.disconnect();this._serial++;this._map?.remove();this._map=null;this._base=null;this._layer=null;this._baseStyle=null;this._fitKey=null; }
     getCardSize(){return 6;}
     _calendar(open){this.shadowRoot.querySelector('.dates').hidden=!open;this.shadowRoot.querySelector('#calendar').setAttribute('aria-expanded',String(open));if(open)this.shadowRoot.querySelector('#start').focus();}
     _highlight(){this.shadowRoot.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===this._mode));this.shadowRoot.querySelector('#calendar').classList.toggle('active',this._mode==='custom');}
+    _osm(L){return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,referrerPolicy:'strict-origin-when-cross-origin',attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'})
+      .on('tileerror',()=>{this.shadowRoot.querySelector('.map-status').textContent='Подложка карты недоступна.';});}
+    async _setBasemap(L,serial){
+      const style=this._config.map_style || 'positron';
+      if(!Object.hasOwn(STYLES,style))throw new Error('Выберите оформление карты в настройках.');
+      if(this._baseStyle===style)return;
+      const status=this.shadowRoot.querySelector('.map-status');
+      try{
+        if(style!=='osm')await loadVector(L);
+        if(serial!==this._serial || !this.isConnected)return;
+        if(this._base)this._map.removeLayer(this._base);this._base=null;status.textContent='';
+        this._base=style==='osm'?this._osm(L):L.maplibreGL({style:`https://tiles.openfreemap.org/styles/${style}`,attributionControl:{customAttribution:'<a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a> · © <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'}});
+        this._base.addTo(this._map);this._baseStyle=style;
+        this._base.getMaplibreMap?.().on('error',()=>{if(this._baseStyle===style)status.textContent='Не удалось загрузить часть карты. Можно выбрать OpenStreetMap.';});
+      }catch(error){
+        if(serial!==this._serial || !this.isConnected)return;
+        if(this._base && this._map.hasLayer(this._base))this._map.removeLayer(this._base);
+        this._base=this._osm(L).addTo(this._map);this._baseStyle=style;
+        status.textContent='OpenFreeMap недоступна. Показана OpenStreetMap.';
+      }
+    }
     async _load(){
       if(!this.isConnected || !this._hass || !this._config)return;
       const serial=++this._serial;
@@ -92,10 +125,9 @@
         const L=await loadMap();if(serial!==this._serial || !this.isConnected)return;
         if(!this._map){
           this._map=L.map(root.querySelector('.map'),{scrollWheelZoom:false}).setView([20,0],2);
-          L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,referrerPolicy:'strict-origin-when-cross-origin',attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'})
-            .on('tileerror',()=>{root.querySelector('.map-status').textContent='Подложка карты недоступна. Проверьте подключение к интернету.';}).addTo(this._map);
           this._layer=L.featureGroup().addTo(this._map);
         }
+        await this._setBasemap(L,serial);if(serial!==this._serial || !this.isConnected)return;
         this._layer.clearLayers();
         for(const segment of data.segments){if(segment.length>1)L.polyline(segment,{color:'#009fce',weight:4,opacity:.85}).addTo(this._layer);else if(segment.length)L.circleMarker(segment[0],{radius:4,color:'#009fce'}).addTo(this._layer);}
         const points=data.segments.flat();
@@ -106,7 +138,7 @@
     }
   }
   class TripsEditor extends HTMLElement{
-    setConfig(config){this._config=config;for(const [key,field] of Object.entries(this._fields || {}))field.value=config[key] || '';this._render();}
+    setConfig(config){this._config=config;for(const [key,field] of Object.entries(this._fields || {}))field.value=config[key] || (key==='map_style'?'positron':'');this._render();}
     set hass(value){this._hass=value;for(const field of Object.values(this._fields || {}))field.hass=value;this._render();}
     _render(){if(!this._config || !this._hass || this._fields)return;this._fields={};
       for(const [key,domain,title] of [['entity','device_tracker','Местоположение автомобиля'],['odometer_entity','sensor','Пробег (необязательно, определяется автоматически)']]){
@@ -114,6 +146,9 @@
         const field=document.createElement('ha-selector');field.hass=this._hass;field.selector={entity:{domain}};field.value=this._config[key] || '';field.style.display='block';field.style.marginBottom='16px';this._fields[key]=field;
         field.addEventListener('value-changed',e=>{this._config={...this._config,[key]:e.detail.value || ''};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(label,field);
       }
+      const label=document.createElement('label');label.textContent='Оформление карты';
+      const field=document.createElement('ha-selector');field.hass=this._hass;field.selector={select:{mode:'dropdown',options:Object.entries(STYLES).map(([value,label])=>({value,label}))}};field.value=this._config.map_style || 'positron';this._fields.map_style=field;
+      field.addEventListener('value-changed',e=>{this._config={...this._config,map_style:e.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(label,field);
     }
   }
   if(!customElements.get('gwm-jolion-trips-card'))customElements.define('gwm-jolion-trips-card',TripsCard);

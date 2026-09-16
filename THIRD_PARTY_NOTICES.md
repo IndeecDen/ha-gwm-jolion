@@ -1,5 +1,11 @@
 # Third-party notices
 
+## OpenFreeMap and MapLibre
+
+The trips card supports [OpenFreeMap](https://openfreemap.org/quick_start/) styles and tiles, with visible attribution to OpenFreeMap, OpenMapTiles and OpenStreetMap contributors.
+
+Bundled [MapLibre GL JS 5.24.0](https://github.com/maplibre/maplibre-gl-js) is distributed under BSD 3-Clause; see [LICENSE.txt](custom_components/gwm_jolion/frontend/maplibre/LICENSE.txt). Bundled [MapLibre GL Leaflet 0.1.4](https://github.com/maplibre/maplibre-gl-leaflet) is distributed under ISC; see [LICENSE.leaflet](custom_components/gwm_jolion/frontend/maplibre/LICENSE.leaflet). The adapter's browser globals are scoped to this card to avoid conflicts with Home Assistant maps, and removal tolerates failed WebGL initialization. Thanks to all MapLibre, OpenFreeMap and OpenMapTiles contributors.
+
 ## Leaflet and OpenStreetMap
 
 The trips card uses [Leaflet 1.9.4](https://github.com/Leaflet/Leaflet/tree/v1.9.4), distributed under the BSD 2-Clause License. Copyright (c) 2010–2023 Volodymyr Agafonkin; Copyright (c) 2010–2011 CloudMade. The complete license is bundled in [frontend/leaflet/LICENSE](custom_components/gwm_jolion/frontend/leaflet/LICENSE).

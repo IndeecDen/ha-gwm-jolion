@@ -1,6 +1,6 @@
-/* GWM Jolion primary card visual editor v0.1.0-beta.12.1 */
+/* GWM Jolion primary card visual editor v0.1.0-beta.13 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.12.1";
+  const CARD_VERSION = "0.1.0-beta.13";
 
   const CONTROL_OPTIONS = [
     ["engine", "Двигатель"],
@@ -22,7 +22,6 @@
     ["tbox", "T-Box в разделе «Система»"],
     ["gsm", "Уровень GSM"],
     ["gps", "GPS"],
-    ["oil", "Уровень масла GWM"],
     ["last_command", "Последняя удалённая команда"],
     ["last_update", "Время последнего обновления"],
     ["seat_driver", "Подогрев сиденья водителя"],
@@ -349,7 +348,7 @@
     const systemSection = sectionByTitle(root, "Система");
     const system = systemSection?.querySelector(".system");
     const systemItems = [...(system?.querySelectorAll(".system-item") || [])];
-    const systemKeys = ["tbox", "gsm", "gps", "oil", "last_command"];
+    const systemKeys = ["tbox", "gsm", "gps", "last_command"];
     systemKeys.forEach((key, index) => setVisible(systemItems[index], info.has(key)));
 
     let updateItem = system?.querySelector('[data-gwm-extra="last-update"]');
