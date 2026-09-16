@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 import logging
+import time
 
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -35,4 +36,10 @@ class GwmGpsCoordinator(DataUpdateCoordinator):
                 f"GPS update failed ({getattr(err, 'category', None) or type(err).__name__}, "
                 f"code={getattr(err, 'code', None) or 'unknown'})"
             ) from err
+        history = getattr(self.parent, "trip_history", None)
+        if history:
+            try:
+                await history.append(time.time(), location)
+            except Exception:
+                _LOGGER.warning("Unable to save GWM trip observation; GPS update remains available")
         return {**self.parent.data, "location": location}

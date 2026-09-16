@@ -41,6 +41,7 @@
           "command_cooldown_seconds": "Delay between commands, seconds",
           "protocol_capture_enabled": "GWM protocol capture (JSONL log)",
           "security_pin": "New vehicle security PIN",
+          "trip_retention_days": "Trip history retention, days",
           "clear_security_pin": "Remove saved PIN",
           "feature_sunroof": "Panoramic roof / sunroof",
           "feature_sunshade": "Panoramic roof sunshade",

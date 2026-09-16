@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -27,6 +28,8 @@ from .const import (
     DEFAULT_ENABLE_REMOTE_CONTROLS, DEFAULT_POLL_INTERVAL, DOMAIN, PLATFORMS,
 )
 from .coordinator import GwmJolionCoordinator
+from .trips import TripHistory
+from .trips_ws import register as register_trips
 from .entity_surface import MIGRATION_REMOVE_ENTITY_SUFFIXES, OBSOLETE_OPTION_KEYS
 from .protocol_capture import (
     CAPTURE_DIRECTORY,
@@ -40,24 +43,29 @@ _LOGGER = logging.getLogger(__name__)
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_ASSETS = (
     (
+        FRONTEND_DIR / "gwm-jolion-trips-card.js",
+        "/gwm-jolion/gwm-jolion-trips-card.js",
+        "/gwm-jolion/gwm-jolion-trips-card.js?v=0.1.0-beta.11",
+    ),
+    (
         FRONTEND_DIR / "gwm-jolion-card-editor.js",
         "/gwm-jolion/gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-beta.10",
+        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-beta.11",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card.js",
         "/gwm-jolion/gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-beta.10",
+        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-beta.11",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-remote-card.js",
         "/gwm-jolion/gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-beta.10",
+        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-beta.11",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-alpha20.js",
         "/gwm-jolion/gwm-jolion-alpha20.js",
-        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-beta.10",
+        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-beta.11",
     ),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
@@ -144,7 +152,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_load_card_settings()
     await coordinator.async_load_profiles()
     await coordinator.async_config_entry_first_refresh()
+    coordinator.trip_history = TripHistory(hass, entry.entry_id, options.get("trip_retention_days", 90))
+    try:
+        await coordinator.trip_history.append(time.time(), {
+            **(coordinator.data.get("location") or {}),
+            "odometer": (coordinator.data.get("state") or {}).get("mileage_total"),
+        })
+    except Exception:
+        _LOGGER.warning("Unable to save initial trip observation")
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    register_trips(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _register_services(hass)
     return True
@@ -165,6 +182,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
 
     await hass.http.async_register_static_paths(
         [StaticPathConfig(static_url, str(path), False) for path, static_url, _ in available_assets]
+        + [StaticPathConfig("/gwm-jolion/leaflet", str(FRONTEND_DIR / "leaflet"), True)]
     )
     for _, _, frontend_url in available_assets:
         frontend.add_extra_js_url(hass, frontend_url)

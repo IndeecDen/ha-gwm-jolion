@@ -125,6 +125,7 @@ class GwmJolionOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
             options = dict(self.config_entry.options)
+            options["trip_retention_days"] = int(user_input.get("trip_retention_days", options.get("trip_retention_days", 90)))
             options[CONF_GPS_INTERVAL] = int(user_input.get(CONF_GPS_INTERVAL, options.get(CONF_GPS_INTERVAL, options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL))))
             options[CONF_POLL_INTERVAL] = user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
             options[CONF_ENABLE_REMOTE_CONTROLS] = user_input.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)
@@ -142,6 +143,7 @@ class GwmJolionOptionsFlow(config_entries.OptionsFlowWithReload):
         has_pin = bool(current.get(CONF_SECURITY_PIN))
         feature_defaults = resolve_manual_capabilities(dict(current))
         schema: dict[vol.Marker, Any] = {
+            vol.Optional("trip_retention_days", default=current.get("trip_retention_days", 90)): vol.All(int, vol.Range(min=30, max=365)),
             vol.Optional(CONF_GPS_INTERVAL, default=current.get(CONF_GPS_INTERVAL, current.get(CONF_POLL_INTERVAL, self.config_entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)))): POLL_INTERVAL_SELECTOR,
             vol.Optional(CONF_POLL_INTERVAL, default=current.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)): POLL_INTERVAL_SELECTOR,
             vol.Optional(CONF_ENABLE_REMOTE_CONTROLS, default=current.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)): bool,

@@ -41,6 +41,7 @@
           "command_cooldown_seconds": "Задержка между командами, секунд",
           "protocol_capture_enabled": "Режим поиска GWM-кодов (JSONL-журнал)",
           "security_pin": "Новый PIN безопасности",
+          "trip_retention_days": "Хранение истории поездок, дней",
           "clear_security_pin": "Удалить сохранённый PIN",
           "feature_sunroof": "Панорамная крыша / люк",
           "feature_sunshade": "Шторка панорамной крыши",

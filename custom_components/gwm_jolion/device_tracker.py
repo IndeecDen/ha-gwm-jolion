@@ -31,6 +31,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     interval = int(entry.options.get(CONF_GPS_INTERVAL, entry.options.get(
         CONF_POLL_INTERVAL, entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL))))
     gps = GwmGpsCoordinator(coordinator, max(30, min(3600, interval)))
+    # Keep recording when the map/entity is not currently displayed; detach on unload.
+    entry.async_on_unload(gps.async_add_listener(lambda: None))
     async_add_entities([GwmJolionLocationTracker(gps)])
 
 

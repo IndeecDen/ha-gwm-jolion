@@ -1,5 +1,11 @@
 # Third-party notices
 
+## Leaflet and OpenStreetMap
+
+The trips card uses [Leaflet 1.9.4](https://github.com/Leaflet/Leaflet/tree/v1.9.4), distributed under the BSD 2-Clause License. Copyright (c) 2010–2023 Volodymyr Agafonkin; Copyright (c) 2010–2011 CloudMade. The complete license is bundled in [frontend/leaflet/LICENSE](custom_components/gwm_jolion/frontend/leaflet/LICENSE).
+
+Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under ODbL. Visible map tiles are requested by the browser from OpenStreetMap; trip history is stored locally. Thanks to all Leaflet authors and OpenStreetMap contributors.
+
 Parts of the GWM protocol client and Home Assistant integration structure are adapted from MIT-licensed projects.
 
 ## roblencheg/HAVAL_H3

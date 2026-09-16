@@ -113,7 +113,7 @@ class GwmJolionApiClient:
         await self._ensure_login()
         status = await self._get_last_status(vin)
         return {"latitude": status.get("latitude"), "longitude": status.get("longitude"),
-                "gps_accuracy": 50}
+                "gps_accuracy": 50, "odometer": build_state(status, {}, {}).get("mileage_total")}
 
     async def async_update(self) -> dict[str, Any]:
         await self._ensure_login()
