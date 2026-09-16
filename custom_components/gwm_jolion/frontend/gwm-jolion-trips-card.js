@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.1.0-beta.12 */
+/* GWM Jolion Trips Card v0.1.0-beta.12.1 */
 (() => {
   let leaflet;
   const loadMap = () => leaflet ||= new Promise((resolve, reject) => {
