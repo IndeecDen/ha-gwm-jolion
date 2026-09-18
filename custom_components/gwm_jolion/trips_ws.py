@@ -1,5 +1,6 @@
 """Authenticated trip history access scoped to the selected tracker."""
 import logging
+import asyncio
 
 import voluptuous as vol
 from homeassistant.auth.permissions.const import POLICY_READ
@@ -51,7 +52,8 @@ async def get_trips(hass, connection, msg):
                     return
             from .trips_recorder import read_history
             try:
-                archive = await read_history(hass, entity_id, odometer, msg["start"], msg["end"])
+                async with asyncio.timeout(10):
+                    archive = await read_history(hass, entity_id, odometer, msg["start"], msg["end"])
             except ValueError:
                 raise
             except Exception:

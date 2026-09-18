@@ -1,6 +1,7 @@
 """Calendar, persistence, gaps and authorization of trip history."""
 import ast
 import asyncio
+import logging
 from datetime import datetime
 import importlib.util
 from pathlib import Path
@@ -35,7 +36,7 @@ def test_odometer_midnight_reset_gaps_and_gps_fallback():
     rows = [(base,55,37,100),(base+60,55,37.01,101),(base+120,55,37.02,102),
             (base+180,55,37.03,1),(base+240,55,37.04,2),(base+1000,55,37.05,3)]
     result = trips.summarize(rows,"2026-09-15","2026-09-16","UTC")
-    assert result["days"][1]["km"] == 3  # No midnight or odometer-reset jump.
+    assert result["days"][1]["km"] == 2  # Midnight retained; regressing readings ignored.
     assert result["days"][1]["gaps"] == 1
     assert len(result["segments"]) == 3
     rows = [(base,55,37,None),(base+60,55,37.01,None),(base+120,0,100,None)]
@@ -49,6 +50,7 @@ def test_invalid_fix_breaks_route_and_empty_is_explicit():
     rows=[(base,55,37,None),(base+60,None,None,None),(base+120,55,37.01,None)]
     result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
     assert len(result["segments"])==2 and result["km"]==0
+    assert result["gaps"]==[[[55,37],[55,37.01]]]
     result=trips.summarize([],"2026-09-16","2026-09-16","UTC")
     assert result["samples"]==0 and result["last"] is None
 
@@ -135,3 +137,57 @@ def test_recorder_query_keeps_attribute_only_gps_changes():
     result=asyncio.run(scope["read_history"](SimpleNamespace(config=SimpleNamespace(time_zone="UTC")),"device_tracker.car","sensor.car","2026-09-16","2026-09-16"))
     assert result==([],[]) and captured["ids"]==["device_tracker.car","sensor.car"]
     assert not captured["significant_changes_only"] and not captured["no_attributes"] and not captured["minimal_response"]
+
+
+def test_delayed_odometer_catches_up_across_missing_readings_and_midnight():
+    base=stamp("2026-09-16T23:55:00+00:00")
+    rows=[(base,55,37,1000),(base+60,None,None,None),(base+300,55,37,1000),
+          (base+600,56,38,1084),(base+630,56,38,1000),(base+660,56,38,1084)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-17","UTC")
+    assert result["km"]==84 and result["days"][1]["km"]==84
+    assert result["gaps"]  # The missing road is indicated, not counted as GPS distance.
+
+
+def test_archive_fills_holes_after_local_capture_started():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    local=[(base,55,37,100),(base+3600,56,38,184)]
+    gps=[(base+1200,55.2,37.2,None),(base+2400,55.5,37.5,None)]
+    odo=[(base+1200,None,None,125),(base+2400,None,None,150)]
+    result=trips.with_archive(local,(gps,odo),"2026-09-16","2026-09-16","UTC")
+    assert result["km"]==84
+    assert sum(map(len,result["segments"]))==4
+
+
+def test_previous_day_baseline_counts_first_morning_trip(tmp_path):
+    hass=SimpleNamespace(config=SimpleNamespace(path=lambda *args:str(tmp_path.joinpath(*args))))
+    history=trips.TripHistory(hass,"car")
+    history._append(stamp("2026-09-15T23:50:00+00:00"),{"odometer":100})
+    history._append(stamp("2026-09-16T08:00:00+00:00"),{"odometer":120})
+    result=history._query("2026-09-16","2026-09-16","UTC")
+    assert result["km"]==20 and result["samples"]==1
+
+
+def test_slow_recorder_falls_back_to_local_history():
+    node=next(n for n in ast.parse((ROOT/"trips_ws.py").read_text(encoding="utf-8")).body if isinstance(n,ast.AsyncFunctionDef))
+    node.decorator_list=[]
+    class InjectRecorder(ast.NodeTransformer):
+        def visit_ImportFrom(self,node):
+            return ast.copy_location(ast.Pass(),node)
+    node=InjectRecorder().visit(node)
+    entry=SimpleNamespace(config_entry_id="car",platform="gwm_jolion")
+    registry=SimpleNamespace(async_get=lambda entity:entry,async_get_entity_id=lambda *args:None)
+    cancelled=[]
+    async def slow(*args):
+        try: await asyncio.sleep(100)
+        finally: cancelled.append(True)
+    scope={"DOMAIN":"gwm_jolion","POLICY_READ":"read","er":SimpleNamespace(async_get=lambda hass:registry),
+           "read_history":slow,"asyncio":SimpleNamespace(timeout=lambda seconds:asyncio.timeout(0.01)),"_LOGGER":logging.getLogger(__name__)}
+    exec(compile(ast.Module(body=[node],type_ignores=[]),"ws","exec"),scope)
+    async def run():
+        results=[];errors=[]
+        async def query(*args):return {"km":84}
+        hass=SimpleNamespace(data={"gwm_jolion":{"car":SimpleNamespace(trip_history=SimpleNamespace(query=query))}},config=SimpleNamespace(time_zone="UTC",components={"recorder"}))
+        connection=SimpleNamespace(user=SimpleNamespace(permissions=SimpleNamespace(check_entity=lambda *args:True)),send_error=lambda *args:errors.append(args),send_result=lambda *args:results.append(args))
+        await scope["get_trips"](hass,connection,{"id":1,"entity_id":"device_tracker.car","start":"2026-09-16","end":"2026-09-16"})
+        assert results==[(1,{"km":84})] and not errors and cancelled
+    asyncio.run(run())

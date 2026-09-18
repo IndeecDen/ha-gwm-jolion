@@ -26,20 +26,29 @@ class GwmGpsCoordinator(DataUpdateCoordinator):
         self.async_set_updated_data(dict(parent.data))
 
     async def _async_update_data(self):
+        health = getattr(self.parent, "gps_update_health", None)
+        if health is None:
+            health = self.parent.gps_update_health = {"consecutive_failures": 0}
         try:
             async with asyncio.timeout(60):
                 location = await self.parent.client.async_get_location(self.parent.data["vin"])
         except ConfigEntryAuthFailed:
             raise
         except (GwmJolionApiError, TimeoutError) as err:
+            health["consecutive_failures"] += 1
+            health["last_error"] = {"code": getattr(err, "code", None), "category": getattr(err, "category", None) or type(err).__name__, "time": time.time()}
             raise UpdateFailed(
                 f"GPS update failed ({getattr(err, 'category', None) or type(err).__name__}, "
                 f"code={getattr(err, 'code', None) or 'unknown'})"
             ) from err
+        health["consecutive_failures"] = 0
+        health["last_success"] = time.time()
         history = getattr(self.parent, "trip_history", None)
         if history:
             try:
                 await history.append(time.time(), location)
+                health["history_write_failed"] = False
             except Exception:
+                health["history_write_failed"] = True
                 _LOGGER.warning("Unable to save GWM trip observation; GPS update remains available")
         return {**self.parent.data, "location": location}

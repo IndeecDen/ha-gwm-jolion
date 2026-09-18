@@ -34,13 +34,22 @@ def period(start, end, zone):
 
 
 def summarize(rows, start, end, zone):
-    """Never bridge midnight, missing fixes, >10min gaps or impossible jumps."""
+    """Count cumulative mileage independently of delayed or missing GPS fixes."""
     tz = ZoneInfo(zone)
-    days, segments = {}, []
+    low, high = period(start, end, zone)
+    days, segments, gaps = {}, [], []
     previous = None
+    last_fix = None
+    odometer = None
     segment = None
     for row in rows:
         stamp, lat, lon, odo = row
+        if stamp < low:
+            if odo is not None:
+                odometer = max(odometer, odo) if odometer is not None else odo
+            continue
+        if stamp >= high:
+            continue
         day = datetime.fromtimestamp(stamp, tz).date().isoformat()
         info = days.setdefault(day, {"date":day, "gps_km":0.0, "odo_km":0.0,
                                     "odo_pairs":0, "samples":0, "gaps":0})
@@ -51,12 +60,15 @@ def summarize(rows, start, end, zone):
         connected = same_day and 0 < delta <= 600
         if same_day and delta > 600:
             info["gaps"] += 1
-        # Count only adjacent, plausible odometer differences within this day.
-        if same_day and odo is not None and previous[3] is not None:
-            diff = odo - previous[3]
-            if 0 <= diff <= delta / 3600 * 250 + 1:
+        # Cloud responses may repeat an old reading for hours, then catch up.
+        # Poll interval is not travel time. Never reject mileage using GPS speed.
+        if odo is not None:
+            if odometer is not None and odo >= odometer:
+                diff = odo - odometer
                 info["odo_km"] += diff
                 info["odo_pairs"] += 1
+            if odometer is None or odo > odometer:
+                odometer = odo
         if valid:
             linked = connected and previous[1] is not None and previous[2] is not None
             km = distance(previous, row) if linked else 0
@@ -70,7 +82,10 @@ def summarize(rows, start, end, zone):
             else:
                 segment = []
                 segments.append(segment)
+                if last_fix and (lat, lon) != (last_fix[1], last_fix[2]):
+                    gaps.append([[last_fix[1], last_fix[2]], [lat, lon]])
             segment.append([lat, lon])
+            last_fix = row
         else:
             segment = None
         previous = row
@@ -90,20 +105,25 @@ def summarize(rows, start, end, zone):
         if reduced[-1] != points[-1]: reduced.append(points[-1])
         routes.append(reduced)
     return {"km":round(total, 2), "method":next(iter(methods)) if len(methods)==1 else "mixed",
-            "days":list(days.values()), "segments":routes[:5000], "samples":len(rows),
+            "days":list(days.values()), "segments":routes[:5000], "gaps":gaps[:5000], "samples":sum(day["samples"] for day in days.values()),
             "first":rows[0][0] if rows else None, "last":rows[-1][0] if rows else None,
             "simplified":stride > 1 or len(routes)>5000, "timezone":zone,
             "start":start, "end":end}
 
 
 def with_archive(rows, archive, start, end, zone):
-    """Use older Recorder samples before local capture, never add distances twice."""
+    """Merge both sources throughout the period, including local recording gaps."""
     gps, odo = archive
-    cutoff = rows[0][0] if rows else math.inf
-    route = [row for row in gps if row[0] < cutoff] + [(r[0], r[1], r[2], None) for r in rows]
+    def merge(archived, local, value_index):
+        merged = {}
+        for row in [*archived, *local]:
+            key = int(row[0])
+            if key not in merged or row[value_index] is not None:
+                merged[key] = row
+        return sorted(merged.values())
+    route = merge(gps, [(r[0], r[1], r[2], None) for r in rows], 1)
     local_odo = [(r[0], None, None, r[3]) for r in rows if r[3] is not None]
-    odo_cutoff = local_odo[0][0] if local_odo else math.inf
-    mileage = [row for row in odo if row[0] < odo_cutoff] + local_odo
+    mileage = merge(odo, local_odo, 3)
     result = summarize(sorted(route), start, end, zone)
     daily = {day["date"]:day for day in result["days"]}
     for day in summarize(sorted(mileage), start, end, zone)["days"]:
@@ -113,7 +133,8 @@ def with_archive(rows, archive, start, end, zone):
     result["km"] = round(sum(day["km"] for day in daily.values()), 2)
     methods = {day["method"] for day in daily.values()}
     result["method"] = next(iter(methods)) if len(methods)==1 else "mixed"
-    times = [r[0] for r in route] + [r[0] for r in mileage]
+    low, high = period(start, end, zone)
+    times = [r[0] for r in [*route, *mileage] if low <= r[0] < high]
     result["samples"] = len(set(times))
     result["first"] = min(times) if times else None
     result["last"] = max(times) if times else None
@@ -151,8 +172,11 @@ class TripHistory:
         low, high = period(start, end, zone)
         with self._connect() as db:
             rows = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts >= ? AND ts < ? ORDER BY ts", (low, high)).fetchall()
+            baseline = db.execute("SELECT ts,NULL,NULL,odo FROM points WHERE ts < ? AND odo IS NOT NULL ORDER BY ts DESC LIMIT 1", (low,)).fetchone()
+            if baseline:
+                rows.insert(0, baseline)
         db.close()
-        result = with_archive(rows, archive, start, end, zone) if archive is not None else summarize(rows, start, end, zone)
+        result = with_archive(rows, archive or ([], []), start, end, zone)
         result["retention_days"] = self.retention
         return result
 

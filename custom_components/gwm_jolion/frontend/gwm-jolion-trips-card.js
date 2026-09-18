@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.1.0-beta.13 */
+/* GWM Jolion Trips Card v0.1.0-beta.14 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -77,11 +77,12 @@
     _calendar(open){this.shadowRoot.querySelector('.dates').hidden=!open;this.shadowRoot.querySelector('#calendar').setAttribute('aria-expanded',String(open));if(open)this.shadowRoot.querySelector('#start').focus();}
     _highlight(){this.shadowRoot.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===this._mode));this.shadowRoot.querySelector('#calendar').classList.toggle('active',this._mode==='custom');}
     _osm(L){return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,referrerPolicy:'strict-origin-when-cross-origin',attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'})
-      .on('tileerror',()=>{this.shadowRoot.querySelector('.map-status').textContent='Подложка карты недоступна.';});}
+      .on('tileerror',()=>{this._baseNeedsRetry=true;this.shadowRoot.querySelector('.map-status').textContent='Подложка карты недоступна.';});}
     async _setBasemap(L,serial){
       const style=this._config.map_style || 'positron';
       if(!Object.hasOwn(STYLES,style))throw new Error('Выберите оформление карты в настройках.');
-      if(this._baseStyle===style)return;
+      if(this._baseStyle===style && !this._baseNeedsRetry)return;
+      this._baseNeedsRetry=false;
       const status=this.shadowRoot.querySelector('.map-status');
       try{
         if(style!=='osm')await loadVector(L);
@@ -89,7 +90,8 @@
         if(this._base)this._map.removeLayer(this._base);this._base=null;status.textContent='';
         this._base=style==='osm'?this._osm(L):L.maplibreGL({style:`https://tiles.openfreemap.org/styles/${style}`,attributionControl:{customAttribution:'<a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a> · © <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'}});
         this._base.addTo(this._map);this._baseStyle=style;
-        this._base.getMaplibreMap?.().on('error',()=>{if(this._baseStyle===style)status.textContent='Не удалось загрузить часть карты. Можно выбрать OpenStreetMap.';});
+        const activeBase=this._base;
+        this._base.getMaplibreMap?.().on('error',()=>{if(this._base===activeBase){this._baseNeedsRetry=true;status.textContent='Не удалось загрузить часть карты. Повторим при обновлении.';}});
       }catch(error){
         if(serial!==this._serial || !this.isConnected)return;
         if(this._base && this._map.hasLayer(this._base))this._map.removeLayer(this._base);
@@ -130,6 +132,7 @@
         }
         await this._setBasemap(L,serial);if(serial!==this._serial || !this.isConnected)return;
         this._layer.clearLayers();
+        for(const gap of data.gaps || [])L.polyline(gap,{color:'#88949f',weight:2,dashArray:'5 7',opacity:.7}).bindTooltip('Нет GPS-данных: связь между точками, не записанный маршрут').addTo(this._layer);
         for(const segment of data.segments){if(segment.length>1)L.polyline(segment,{color:'#009fce',weight:4,opacity:.85}).addTo(this._layer);else if(segment.length)L.circleMarker(segment[0],{radius:4,color:'#009fce'}).addTo(this._layer);}
         const points=data.segments.flat();
         if(points.length){L.circleMarker(points[0],{radius:7,color:'#198754',fillOpacity:1}).bindTooltip('Начало записанного маршрута').addTo(this._layer);L.circleMarker(points.at(-1),{radius:7,color:'#d35454',fillOpacity:1}).bindTooltip('Последняя точка').addTo(this._layer);this._map.invalidateSize();const key=`${this._config.entity}|${start}|${end}`;if(this._fitKey!==key){this._map.fitBounds(this._layer.getBounds(),{padding:[25,25],maxZoom:16});this._fitKey=key;}}

@@ -22,7 +22,7 @@ def test_location_request_uses_only_status():
 
 
 def test_gps_updates_without_overwriting_full_data_and_recovers():
-    scope = dict(asyncio=asyncio, ConfigEntryAuthFailed=AuthFailed,
+    scope = dict(asyncio=asyncio, time=time, ConfigEntryAuthFailed=AuthFailed,
                  GwmJolionApiError=ApiError, UpdateFailed=UpdateFailed)
     method = methods("gps.py", "GwmGpsCoordinator", ["_async_update_data"], scope)["_async_update_data"]
     async def run():
@@ -42,10 +42,13 @@ def test_gps_updates_without_overwriting_full_data_and_recovers():
             with pytest.raises(UpdateFailed) as err: await method(gps)
             assert "secret" not in str(err.value)
             assert parent.last_update_success
+        assert parent.gps_update_health["consecutive_failures"] == 2
         failure = AuthFailed()
         with pytest.raises(AuthFailed): await method(gps)
         failure = None
         assert (await method(gps))["location"]["longitude"] == 38
+        assert parent.gps_update_health["consecutive_failures"] == 0
+        assert parent.gps_update_health["last_success"] > 0
     asyncio.run(run())
 
 
@@ -59,4 +62,5 @@ def test_history_storage_failure_does_not_break_gps():
         parent=SimpleNamespace(data={"vin":"test"},client=SimpleNamespace(async_get_location=location),
                                trip_history=SimpleNamespace(append=append))
         assert (await method(SimpleNamespace(parent=parent)))["location"]["latitude"]==55
+        assert parent.gps_update_health["history_write_failed"] is True
     asyncio.run(run())
