@@ -98,6 +98,10 @@ def test_parking_spots_report_start_end_and_ongoing_state():
     ]
     assert result["moving_seconds"]==120
 
+    unavailable=[(base,55.03,37,None),(base+300,55.03,37,None),(base+600,55.03,37,None),(base+900,None,None,None)]
+    result=trips.summarize(unavailable,"2026-09-16","2026-09-16","UTC")
+    assert len(result["parking_spots"])==1 and result["parking_spots"][0]["end"] is None
+
 
 def test_long_parking_is_not_treated_as_a_missing_gps_gap():
     base=stamp("2026-09-16T12:00:00+00:00")
@@ -107,6 +111,26 @@ def test_long_parking_is_not_treated_as_a_missing_gps_gap():
     assert result["segment_kinds"]==[["stationary","moving"]]
     assert result["moving_seconds"]==60 and len(result["parking_spots"])==1
     assert result["parking_spots"][0]["end"]==base+700
+
+
+def test_teleport_is_not_reported_as_parking():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base,55,37,None),(base+300,55,37,None),
+          (base+900,55.0004,37,None),(base+1200,55.0008,37,None)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+    assert not result["parking_spots"]
+    assert result["moving_seconds"]==0
+
+    jumped=[(base,55,37,None),(base+700,55,37,None),
+            (base+1400,55.0004,37,None)]
+    result=trips.summarize(jumped,"2026-09-16","2026-09-16","UTC")
+    assert not result["parking_spots"] and result["gaps"]
+    assert len(result["segments"])==2
+
+    recovered=[(base,55,37,None),(base+300,55,37,None),
+               (base+600,None,None,None),(base+900,55.01,37,None)]
+    result=trips.summarize(recovered,"2026-09-16","2026-09-16","UTC")
+    assert not result["parking_spots"]
 
 
 def test_route_simplification_preserves_speed_edge_alignment():

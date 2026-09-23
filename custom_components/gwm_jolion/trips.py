@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 GPS_JITTER_KM = 0.03
 MIN_MOVING_SPEED_KMH = 3.0
 MIN_PARKING_SECONDS = 600
-PARKING_RADIUS_KM = 0.1
+PARKING_RADIUS_KM = GPS_JITTER_KM
 
 
 def number(value):
@@ -40,15 +40,17 @@ def movement_speed(km, seconds):
     return speed, "moving"
 
 
-def parking_spots(points, edges):
-    """Return long stationary runs; the last run can still be ongoing."""
+def parking_spots(points, edges, ongoing=False):
+    """Return long stationary runs; an open final run can still be ongoing."""
     spots = []
 
     def add_run(start, end):
-        seconds = sum(edge[3] for edge in edges[start:end])
+        grouped = edges[start:end]
+        seconds = sum(edge[3] for edge in grouped)
         first = (0, points[start][0], points[start][1])
         last = (0, points[end][0], points[end][1])
-        if seconds < MIN_PARKING_SECONDS or distance(first, last) > PARKING_RADIUS_KM:
+        if (seconds < MIN_PARKING_SECONDS or distance(first, last) > PARKING_RADIUS_KM
+                or any(edge[2] > GPS_JITTER_KM for edge in grouped)):
             return
         started = edges[start][4]
         ended = edges[end][4] if end < len(edges) else None
@@ -62,7 +64,7 @@ def parking_spots(points, edges):
         elif edge[1] != "stationary" and start is not None:
             add_run(start, index)
             start = None
-    if start is not None:
+    if ongoing and start is not None:
         add_run(start, len(edges))
     return spots
 
@@ -80,7 +82,7 @@ def summarize(rows, start, end, zone):
     """Count cumulative mileage independently of delayed or missing GPS fixes."""
     tz = ZoneInfo(zone)
     low, high = period(start, end, zone)
-    days, segments, segment_edges, gaps = {}, [], [], []
+    days, segments, segment_edges, segment_open, gaps = {}, [], [], [], []
     previous = None
     last_fix = None
     odometer = None
@@ -92,7 +94,9 @@ def summarize(rows, start, end, zone):
                 odometer = max(odometer, odo) if odometer is not None else odo
             continue
         if stamp >= high:
-            continue
+            if segment and segment_open:
+                segment_open[-1] = True
+            break
         day = datetime.fromtimestamp(stamp, tz).date().isoformat()
         info = days.setdefault(day, {"date":day, "gps_km":0.0, "odo_km":0.0,
                                     "odo_pairs":0, "samples":0, "gaps":0,
@@ -131,17 +135,24 @@ def summarize(rows, start, end, zone):
                 if kind == "moving":
                     info["moving_seconds"] += delta
             else:
+                if segment and segment_open:
+                    segment_open[-1] = False
                 segment = []
                 edges = []
                 segments.append(segment)
                 segment_edges.append(edges)
+                segment_open.append(False)
                 if last_fix and (lat, lon) != (last_fix[1], last_fix[2]):
                     gaps.append([[last_fix[1], last_fix[2]], [lat, lon]])
             segment.append([lat, lon])
             last_fix = row
         else:
+            if segment and segment_open:
+                segment_open[-1] = True
             segment = edges = None
         previous = row
+    if segment and segment_open:
+        segment_open[-1] = True
     total = 0.0
     methods = set()
     for info in days.values():
@@ -154,8 +165,8 @@ def summarize(rows, start, end, zone):
     # Limit route payload while preserving segment boundaries and endpoints.
     stride = max(1, math.ceil(sum(map(len, segments)) / 5000))
     routes, route_speeds, route_kinds, stops = [], [], [], []
-    for points, edges in zip(segments, segment_edges):
-        stops.extend(parking_spots(points, edges))
+    for points, edges, ongoing in zip(segments, segment_edges, segment_open):
+        stops.extend(parking_spots(points, edges, ongoing))
         indices = list(range(0, len(points), stride))
         if indices[-1] != len(points) - 1:
             indices.append(len(points) - 1)
