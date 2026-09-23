@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.1.0-beta.16 */
+/* GWM Jolion Trips Card v0.1.0-beta.17 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
