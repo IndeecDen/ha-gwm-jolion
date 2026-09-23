@@ -2,6 +2,7 @@
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
+  const SPEED_COLORS = {low:'#2e7d32',medium:'#f9a825',high:'#c62828'};
   let vectorMaps;
   function loadScript(src){return new Promise((resolve,reject)=>{
     const script=document.createElement('script');const timer=setTimeout(()=>{script.remove();reject(new Error('Не удалось загрузить оформление карты'));},15000);
@@ -29,6 +30,7 @@
     const value = new Date(`${day}T12:00:00Z`); value.setUTCDate(value.getUTCDate()+count);
     return value.toISOString().slice(0,10);
   }
+  function tripTime(value, zone){return new Intl.DateTimeFormat('ru-RU',{timeZone:zone,day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(value*1000));}
   class TripsCard extends HTMLElement {
     static getConfigElement() { return document.createElement('gwm-jolion-trips-card-editor'); }
     static getStubConfig(hass) {
@@ -45,13 +47,15 @@
         button{cursor:pointer}button.active{background:var(--primary-color,#03a9f4);color:white;border-color:transparent}
         button:focus-visible,input:focus-visible{outline:2px solid var(--primary-color,#03a9f4);outline-offset:2px}
         .dates{margin:10px 0 0}.dates[hidden]{display:none}label{display:flex;flex:1;min-width:110px;flex-direction:column;gap:5px;color:var(--secondary-text-color);font-size:12px}input{width:100%;color-scheme:light dark}
-        .summary{justify-content:center;margin:0 0 10px;gap:8px}.km{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}.summary ha-icon{color:var(--secondary-text-color);--mdc-icon-size:22px}.shortcuts{justify-content:center;flex-wrap:nowrap;gap:6px}#calendar{display:flex;align-items:center;justify-content:center;width:34px;height:32px;padding:0}#calendar ha-icon{--mdc-icon-size:19px}
+        .summary{justify-content:center;margin:0 0 8px;gap:8px}.km{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}.summary ha-icon{color:var(--secondary-text-color);--mdc-icon-size:22px}.shortcuts{justify-content:center;flex-wrap:nowrap;gap:6px}#calendar{display:flex;align-items:center;justify-content:center;width:34px;height:32px;padding:0}#calendar ha-icon{--mdc-icon-size:19px}
+        .speed-legend{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:0 0 10px;color:var(--secondary-text-color);font-size:11px}.speed-legend[hidden]{display:none}.speed-legend span{display:flex;align-items:center;gap:4px}.speed-legend i{width:10px;height:4px;border-radius:2px;background:#888}.speed-legend .low{background:#2e7d32}.speed-legend .medium{background:#f9a825}.speed-legend .high{background:#c62828}.speed-legend .parking{width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid #455a64}
         .error,.map-status{color:var(--secondary-text-color);font-size:12px;text-align:center}.error:empty,.map-status:empty{display:none}.error:not(:empty),.map-status:not(:empty){margin-top:8px}.map-wrap{position:relative;height:300px;background:#e9edef}.map{height:100%;background:#e9edef;z-index:0}
         .map-actions{position:absolute;top:8px;right:8px;z-index:1000;display:flex;gap:6px}.map-actions button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;background:var(--card-background-color,#fff);box-shadow:0 1px 5px rgba(0,0,0,.28)}.map-actions ha-icon{--mdc-icon-size:19px}
         :host(.fallback-fullscreen){position:fixed;inset:0;z-index:1000;display:block;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) ha-card,ha-card:fullscreen{width:100%;height:100%;min-height:100%;display:flex;flex-direction:column;border-radius:0;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) .map-wrap,ha-card:fullscreen .map-wrap{flex:1;height:auto;min-height:0}:host(.fallback-fullscreen) .content,ha-card:fullscreen .content{display:none}
         .leaflet-container{font-family:inherit}.leaflet-control-attribution{font-size:10px}
         @media(max-width:350px){button{padding:7px 8px}.content{padding:10px}.map-wrap{height:260px}}
       </style><ha-card><div class="map-wrap"><div class="map" aria-label="Карта маршрута"></div><div class="map-actions"><button id="centerBtn" type="button" title="Показать автомобиль в центре карты" aria-label="Показать автомобиль в центре карты"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button><button id="fullscreenBtn" type="button" title="Развернуть карту" aria-label="Развернуть карту" aria-pressed="false"><ha-icon icon="mdi:fullscreen"></ha-icon></button></div></div><div class="content">
+      <div class="speed-legend" aria-label="Цвета средней скорости и стоянки" hidden><span><i class="low"></i>0–80 км/ч</span><span><i class="medium"></i>80–110 км/ч</span><span><i class="high"></i>110+ км/ч</span><span><i class="parking"></i>Стоянка</span></div>
       <div class="summary"><ha-icon icon="mdi:counter" aria-hidden="true"></ha-icon><span class="km" aria-label="Пробег за выбранный период">—</span></div>
       <div class="shortcuts"><button data-mode="today">Сегодня</button><button data-mode="yesterday">Вчера</button><button data-mode="week">Неделя</button><button id="calendar" title="Выбрать период" aria-label="Выбрать период" aria-expanded="false" aria-controls="period"><ha-icon icon="mdi:calendar-range"></ha-icon></button></div>
       <div class="dates" id="period" hidden><label>С<input type="date" id="start"></label><label>По<input type="date" id="end"></label><button id="show">Выбрать</button></div>
@@ -164,9 +168,32 @@
         await this._setBasemap(L,serial);if(serial!==this._serial || !this.isConnected)return;
         this._layer.clearLayers();
         for(const gap of data.gaps || [])L.polyline(gap,{color:'#88949f',weight:2,dashArray:'5 7',opacity:.7}).bindTooltip('Нет GPS-данных: связь между точками, не записанный маршрут').addTo(this._layer);
-        for(const segment of data.segments){if(segment.length>1)L.polyline(segment,{color:'#009fce',weight:4,opacity:.85}).addTo(this._layer);else if(segment.length)L.circleMarker(segment[0],{radius:4,color:'#009fce'}).addTo(this._layer);}
+        const speedSegments=Array.isArray(data.segment_speeds_kmh)?data.segment_speeds_kmh:[];
+        const speedKinds=Array.isArray(data.segment_kinds)?data.segment_kinds:[];
+        const parkingSpots=Array.isArray(data.parking_spots)?data.parking_spots:[];
+        const hasSpeeds=speedSegments.length===data.segments.length;
+        const hasSpeedData=hasSpeeds&&speedSegments.some(segment=>Array.isArray(segment)&&segment.some(speed=>Number(speed)>0));
+        root.querySelector('.speed-legend').hidden=!hasSpeedData&&!parkingSpots.length;
+        for(const [segmentIndex,segment] of data.segments.entries()){
+          if(!hasSpeeds){if(segment.length>1)L.polyline(segment,{color:'#009fce',weight:4,opacity:.85}).addTo(this._layer);else if(segment.length)L.circleMarker(segment[0],{radius:4,color:'#009fce'}).addTo(this._layer);continue;}
+          const speeds=speedSegments[segmentIndex]||[],kinds=speedKinds[segmentIndex]||[];
+          for(let index=1;index<segment.length;index++){
+            const rawSpeed=speeds[index-1],speed=Number(rawSpeed);
+            if(kinds[index-1]==='stationary'||kinds[index-1]==='unknown'||rawSpeed===null||rawSpeed===undefined||!Number.isFinite(speed)||speed<=0)continue;
+            const color=speed<80?SPEED_COLORS.low:speed<110?SPEED_COLORS.medium:SPEED_COLORS.high;
+            L.polyline([segment[index-1],segment[index]],{color,weight:4,opacity:.9}).bindTooltip(`Средняя скорость: ${Math.round(speed)} км/ч`).addTo(this._layer);
+          }
+          if(segment.length===1)L.circleMarker(segment[0],{radius:4,color:'#009fce'}).addTo(this._layer);
+        }
+        for(const parking of parkingSpots){
+          const latitude=Number(parking.latitude),longitude=Number(parking.longitude),start=Number(parking.start),end=parking.end===null||parking.end===undefined?NaN:Number(parking.end);
+          if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||!Number.isFinite(start))continue;
+          const label=document.createElement('div');label.style.whiteSpace='pre-line';
+          label.textContent=`Стоянка\nНачало: ${tripTime(start,this._hass.config.time_zone)}\nКонец: ${Number.isFinite(end)?tripTime(end,this._hass.config.time_zone):'неизвестен — после последней записи'}`;
+          L.circleMarker([latitude,longitude],{radius:7,color:'#455a64',fillColor:'#fff',fillOpacity:1,weight:3}).bindTooltip(label,{direction:'top',offset:[0,-6]}).addTo(this._layer);
+        }
         const points=data.segments.flat();
-        if(points.length){L.circleMarker(points[0],{radius:7,color:'#198754',fillOpacity:1}).bindTooltip('Начало записанного маршрута').addTo(this._layer);L.circleMarker(points.at(-1),{radius:7,color:'#d35454',fillOpacity:1}).bindTooltip('Последняя точка').addTo(this._layer);this._map.invalidateSize();const key=`${this._config.entity}|${start}|${end}`;if(this._fitKey!==key){this._map.fitBounds(this._layer.getBounds(),{padding:[25,25],maxZoom:16});this._fitKey=key;}}
+        if(points.length){L.circleMarker(points[0],{radius:7,color:'#263238',fillColor:'#fff',fillOpacity:1,weight:3}).bindTooltip('Начало записанного маршрута').addTo(this._layer);L.circleMarker(points.at(-1),{radius:7,color:'#263238',fillColor:'#263238',fillOpacity:1}).bindTooltip('Последняя точка').addTo(this._layer);this._map.invalidateSize();const key=`${this._config.entity}|${start}|${end}`;if(this._fitKey!==key){this._map.fitBounds(this._layer.getBounds(),{padding:[25,25],maxZoom:16});this._fitKey=key;}}
         else {this._map.setView([20,0],2);this._fitKey=null;}
       }catch(err){if(serial===this._serial)error.textContent=err.message || 'Не удалось загрузить историю. Проверьте выбранную сущность.';}
       finally{clearTimeout(timeout);if(serial===this._serial)root.querySelector('.summary').setAttribute('aria-busy','false');}

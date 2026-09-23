@@ -55,6 +55,71 @@ def test_invalid_fix_breaks_route_and_empty_is_explicit():
     assert result["samples"]==0 and result["last"] is None
 
 
+def test_movement_speed_thresholds_and_stationary_intervals():
+    speed,kind=trips.movement_speed(4/3,60)
+    assert speed==pytest.approx(80.0) and kind=="moving"
+    speed,kind=trips.movement_speed(11/6,60)
+    assert speed==pytest.approx(110.0) and kind=="moving"
+    assert trips.movement_speed(0.02,1) == (0.0,"stationary")
+    speed,kind=trips.movement_speed(0.1,120)
+    assert speed==pytest.approx(3.0) and kind=="moving"
+    assert trips.movement_speed(0.1,121)[1] == "stationary"
+    assert trips.movement_speed(1,0) == (None,"unknown")
+
+
+def test_route_speed_metadata_excludes_parking_and_gaps():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base,55,37,None),(base+60,55.01,37,None),
+          (base+120,55.01,37,None),(base+180,55.01,37,None),
+          (base+240,55.02,37,None),(base+901,55.03,37,None),
+          (base+961,55.04,37,None),(base+1021,None,None,None)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+    assert len(result["segments"])==2
+    assert len(result["segment_speeds_kmh"][0])==len(result["segments"][0])-1
+    assert result["segment_kinds"][0]==["moving","stationary","stationary","moving"]
+    assert result["segment_kinds"][1]==["moving"]
+    assert result["segment_speeds_kmh"][0][0]==pytest.approx(66.6,abs=.2)
+    assert result["segment_speeds_kmh"][0][1:3]==[0.0,0.0]
+    assert result["moving_seconds"]==180
+    assert result["days"][0]["moving_seconds"]==180
+    assert result["gaps"]
+
+
+def test_parking_spots_report_start_end_and_ongoing_state():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base,55,37,None),(base+60,55.01,37,None),
+          (base+360,55.01,37,None),(base+660,55.01,37,None),
+          (base+720,55.02,37,None),(base+1020,55.02,37,None),
+          (base+1320,55.02,37,None)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+    assert result["parking_spots"]==[
+        {"latitude":55.01,"longitude":37,"start":base+60,"end":base+660,"duration":600},
+        {"latitude":55.02,"longitude":37,"start":base+720,"end":None,"duration":600},
+    ]
+    assert result["moving_seconds"]==120
+
+
+def test_long_parking_is_not_treated_as_a_missing_gps_gap():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base,55,37,None),(base+700,55,37,None),(base+760,55.01,37,None)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+    assert len(result["segments"])==1 and not result["gaps"]
+    assert result["segment_kinds"]==[["stationary","moving"]]
+    assert result["moving_seconds"]==60 and len(result["parking_spots"])==1
+    assert result["parking_spots"][0]["end"]==base+700
+
+
+def test_route_simplification_preserves_speed_edge_alignment():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base+index*60,55+index*.001,37,None) for index in range(5002)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-20","UTC")
+    assert result["simplified"] and len(result["segments"][0])<5002
+    for points,speeds,kinds in zip(result["segments"],result["segment_speeds_kmh"],result["segment_kinds"]):
+        assert len(speeds)==len(points)-1
+        assert len(kinds)==len(points)-1
+        assert all(kind=="moving" for kind in kinds)
+
+
 def test_persistence_retention_and_vehicle_isolation(tmp_path):
     async def run():
         async def executor(fn,*args): return fn(*args)
@@ -108,6 +173,7 @@ def test_archive_only_and_overlap_do_not_double_count():
     odo=[(base,None,None,100),(base+60,None,None,101),(base+120,None,None,102)]
     result=trips.with_archive([], (gps,odo), "2026-09-16","2026-09-16","UTC")
     assert result["km"]==2 and result["method"]=="odometer" and len(result["segments"][0])==3
+    assert result["moving_seconds"]==120 and result["days"][0]["moving_seconds"]==120
     result=trips.with_archive([(base+60,55,37.01,101),(base+120,55,37.02,102)],(gps,odo),"2026-09-16","2026-09-16","UTC")
     assert result["km"]==2 and len(result["segments"][0])==3
     result=trips.with_archive([],([],odo),"2026-09-16","2026-09-16","UTC")
