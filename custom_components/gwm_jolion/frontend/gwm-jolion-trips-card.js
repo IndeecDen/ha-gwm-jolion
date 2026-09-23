@@ -3,6 +3,14 @@
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
   const SPEED_COLORS = {low:'#2e7d32',medium:'#f9a825',high:'#c62828'};
+  const DEFAULT_SPEED_LIMITS = {green:80,red:110};
+  function speedLimits(config={}){
+    const limit=(value,fallback)=>{const number=Number(value);return value!==null&&value!==undefined&&value!==''&&Number.isFinite(number)?Math.max(1,Math.min(300,Math.round(number))):fallback;};
+    let green=limit(config.speed_green_max,DEFAULT_SPEED_LIMITS.green),red=limit(config.speed_red_min,DEFAULT_SPEED_LIMITS.red);
+    if(green>=300)green=299;
+    if(red<=green)red=Math.min(300,green+1);
+    return {green,red};
+  }
   let vectorMaps;
   function loadScript(src){return new Promise((resolve,reject)=>{
     const script=document.createElement('script');const timer=setTimeout(()=>{script.remove();reject(new Error('Не удалось загрузить оформление карты'));},15000);
@@ -34,7 +42,7 @@
   class TripsCard extends HTMLElement {
     static getConfigElement() { return document.createElement('gwm-jolion-trips-card-editor'); }
     static getStubConfig(hass) {
-      return {entity: Object.keys(hass.states).find(id => id.startsWith('device_tracker.') && id.endsWith('_location')) || '', title:'Поездки',map_style:'positron'};
+      return {entity: Object.keys(hass.states).find(id => id.startsWith('device_tracker.') && id.endsWith('_location')) || '', title:'Поездки',map_style:'positron',speed_green_max:80,speed_red_min:110};
     }
     constructor() {
       super(); this.attachShadow({mode:'open'}); this._mode='today'; this._serial=0;
@@ -48,14 +56,14 @@
         button:focus-visible,input:focus-visible{outline:2px solid var(--primary-color,#03a9f4);outline-offset:2px}
         .dates{margin:10px 0 0}.dates[hidden]{display:none}label{display:flex;flex:1;min-width:110px;flex-direction:column;gap:5px;color:var(--secondary-text-color);font-size:12px}input{width:100%;color-scheme:light dark}
         .summary{justify-content:center;margin:0 0 8px;gap:8px}.km{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}.summary ha-icon{color:var(--secondary-text-color);--mdc-icon-size:22px}.shortcuts{justify-content:center;flex-wrap:nowrap;gap:6px}#calendar{display:flex;align-items:center;justify-content:center;width:34px;height:32px;padding:0}#calendar ha-icon{--mdc-icon-size:19px}
-        .speed-legend{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:0 0 10px;color:var(--secondary-text-color);font-size:11px}.speed-legend[hidden]{display:none}.speed-legend span{display:flex;align-items:center;gap:4px}.speed-legend i{width:10px;height:4px;border-radius:2px;background:#888}.speed-legend .low{background:#2e7d32}.speed-legend .medium{background:#f9a825}.speed-legend .high{background:#c62828}.speed-legend .parking{width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid #455a64}
+        .speed-legend{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:0 0 10px;color:var(--secondary-text-color);font-size:11px}.speed-legend[hidden]{display:none}.speed-legend span{display:flex;align-items:center;gap:4px}.speed-legend i{width:10px;height:4px;border-radius:2px;background:#888}.speed-legend b{font-weight:400}.speed-legend .low{background:#2e7d32}.speed-legend .medium{background:#f9a825}.speed-legend .high{background:#c62828}.speed-legend .parking{width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid #455a64}
         .error,.map-status{color:var(--secondary-text-color);font-size:12px;text-align:center}.error:empty,.map-status:empty{display:none}.error:not(:empty),.map-status:not(:empty){margin-top:8px}.map-wrap{position:relative;height:300px;background:#e9edef}.map{height:100%;background:#e9edef;z-index:0}
         .map-actions{position:absolute;top:8px;right:8px;z-index:1000;display:flex;gap:6px}.map-actions button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;background:var(--card-background-color,#fff);box-shadow:0 1px 5px rgba(0,0,0,.28)}.map-actions ha-icon{--mdc-icon-size:19px}
         :host(.fallback-fullscreen){position:fixed;inset:0;z-index:1000;display:block;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) ha-card,ha-card:fullscreen{width:100%;height:100%;min-height:100%;display:flex;flex-direction:column;border-radius:0;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) .map-wrap,ha-card:fullscreen .map-wrap{flex:1;height:auto;min-height:0}:host(.fallback-fullscreen) .content,ha-card:fullscreen .content{display:none}
         .leaflet-container{font-family:inherit}.leaflet-control-attribution{font-size:10px}
         @media(max-width:350px){button{padding:7px 8px}.content{padding:10px}.map-wrap{height:260px}}
       </style><ha-card><div class="map-wrap"><div class="map" aria-label="Карта маршрута"></div><div class="map-actions"><button id="centerBtn" type="button" title="Показать автомобиль в центре карты" aria-label="Показать автомобиль в центре карты"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button><button id="fullscreenBtn" type="button" title="Развернуть карту" aria-label="Развернуть карту" aria-pressed="false"><ha-icon icon="mdi:fullscreen"></ha-icon></button></div></div><div class="content">
-      <div class="speed-legend" aria-label="Цвета средней скорости и стоянки" hidden><span><i class="low"></i>0–80 км/ч</span><span><i class="medium"></i>80–110 км/ч</span><span><i class="high"></i>110+ км/ч</span><span><i class="parking"></i>Стоянка</span></div>
+      <div class="speed-legend" aria-label="Цвета средней скорости и стоянки" hidden><span><i class="low"></i><b class="low-range">до 80 км/ч</b></span><span><i class="medium"></i><b class="medium-range">80–110 км/ч</b></span><span><i class="high"></i><b class="high-range">110+ км/ч</b></span><span><i class="parking"></i>Стоянка</span></div>
       <div class="summary"><ha-icon icon="mdi:counter" aria-hidden="true"></ha-icon><span class="km" aria-label="Пробег за выбранный период">—</span></div>
       <div class="shortcuts"><button data-mode="today">Сегодня</button><button data-mode="yesterday">Вчера</button><button data-mode="week">Неделя</button><button id="calendar" title="Выбрать период" aria-label="Выбрать период" aria-expanded="false" aria-controls="period"><ha-icon icon="mdi:calendar-range"></ha-icon></button></div>
       <div class="dates" id="period" hidden><label>С<input type="date" id="start"></label><label>По<input type="date" id="end"></label><button id="show">Выбрать</button></div>
@@ -72,6 +80,7 @@
     setConfig(config) {
       this._config={...config}; this._serial++;this._fitKey=null;
       this.setAttribute('aria-label',config.title || 'Поездки');
+      this._updateSpeedLegend();
       this._layer?.clearLayers(); this._load();
     }
     set hass(hass) {
@@ -88,6 +97,7 @@
     getCardSize(){return 6;}
     _calendar(open){this.shadowRoot.querySelector('.dates').hidden=!open;this.shadowRoot.querySelector('#calendar').setAttribute('aria-expanded',String(open));if(open)this.shadowRoot.querySelector('#start').focus();}
     _highlight(){this.shadowRoot.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===this._mode));this.shadowRoot.querySelector('#calendar').classList.toggle('active',this._mode==='custom');}
+    _updateSpeedLegend(){const limits=speedLimits(this._config);this.shadowRoot.querySelector('.low-range').textContent=`до ${limits.green} км/ч`;this.shadowRoot.querySelector('.medium-range').textContent=`${limits.green}–${limits.red} км/ч`;this.shadowRoot.querySelector('.high-range').textContent=`${limits.red}+ км/ч`;}
     _centerVehicle(){
       const state=this._hass?.states[this._config?.entity];
       const latitude=Number(state?.attributes.latitude),longitude=Number(state?.attributes.longitude);
@@ -173,6 +183,7 @@
         const parkingSpots=Array.isArray(data.parking_spots)?data.parking_spots:[];
         const hasSpeeds=speedSegments.length===data.segments.length;
         const hasSpeedData=hasSpeeds&&speedSegments.some(segment=>Array.isArray(segment)&&segment.some(speed=>Number(speed)>0));
+        const limits=speedLimits(this._config);
         root.querySelector('.speed-legend').hidden=!hasSpeedData&&!parkingSpots.length;
         for(const [segmentIndex,segment] of data.segments.entries()){
           if(!hasSpeeds){if(segment.length>1)L.polyline(segment,{color:'#009fce',weight:4,opacity:.85}).addTo(this._layer);else if(segment.length)L.circleMarker(segment[0],{radius:4,color:'#009fce'}).addTo(this._layer);continue;}
@@ -180,7 +191,7 @@
           for(let index=1;index<segment.length;index++){
             const rawSpeed=speeds[index-1],speed=Number(rawSpeed);
             if(kinds[index-1]==='stationary'||kinds[index-1]==='unknown'||rawSpeed===null||rawSpeed===undefined||!Number.isFinite(speed)||speed<=0)continue;
-            const color=speed<80?SPEED_COLORS.low:speed<110?SPEED_COLORS.medium:SPEED_COLORS.high;
+            const color=speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
             L.polyline([segment[index-1],segment[index]],{color,weight:4,opacity:.9}).bindTooltip(`Средняя скорость: ${Math.round(speed)} км/ч`).addTo(this._layer);
           }
           if(segment.length===1)L.circleMarker(segment[0],{radius:4,color:'#009fce'}).addTo(this._layer);
@@ -200,7 +211,13 @@
     }
   }
   class TripsEditor extends HTMLElement{
-    setConfig(config){this._config=config;for(const [key,field] of Object.entries(this._fields || {}))field.value=config[key] || (key==='map_style'?'positron':'');this._render();}
+    setConfig(config){
+      this._config=config;const limits=speedLimits(config);
+      for(const [key,field] of Object.entries(this._fields || {})){
+        field.value=key==='speed_green_max'?limits.green:key==='speed_red_min'?limits.red:config[key] || (key==='map_style'?'positron':'');
+      }
+      this._render();
+    }
     set hass(value){this._hass=value;for(const field of Object.values(this._fields || {}))field.hass=value;this._render();}
     _render(){if(!this._config || !this._hass || this._fields)return;this._fields={};
       for(const [key,domain,title] of [['entity','device_tracker','Местоположение автомобиля'],['odometer_entity','sensor','Пробег (необязательно, определяется автоматически)']]){
@@ -211,6 +228,13 @@
       const label=document.createElement('label');label.textContent='Оформление карты';
       const field=document.createElement('ha-selector');field.hass=this._hass;field.selector={select:{mode:'dropdown',options:Object.entries(STYLES).map(([value,label])=>({value,label}))}};field.value=this._config.map_style || 'positron';this._fields.map_style=field;
       field.addEventListener('value-changed',e=>{this._config={...this._config,map_style:e.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(label,field);
+      const section=document.createElement('div');section.textContent='Диапазоны цветов скорости';section.style.cssText='font-weight:600;margin:4px 0 12px';this.append(section);
+      const limits=speedLimits(this._config);
+      for(const [key,title] of [['speed_green_max','Зелёный: до, км/ч'],['speed_red_min','Красный: от, км/ч']]){
+        const speedLabel=document.createElement('label');speedLabel.textContent=title;
+        const speedField=document.createElement('ha-selector');speedField.hass=this._hass;speedField.selector={number:{min:1,max:300,step:1,mode:'box',unit_of_measurement:'км/ч'}};speedField.value=limits[key];speedField.style.display='block';speedField.style.marginBottom='16px';this._fields[key]=speedField;
+        speedField.addEventListener('value-changed',event=>{const next=speedLimits({...this._config,[key]:event.detail.value});this._config={...this._config,speed_green_max:next.green,speed_red_min:next.red};this._fields.speed_green_max.value=next.green;this._fields.speed_red_min.value=next.red;this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(speedLabel,speedField);
+      }
     }
   }
   if(!customElements.get('gwm-jolion-trips-card'))customElements.define('gwm-jolion-trips-card',TripsCard);
