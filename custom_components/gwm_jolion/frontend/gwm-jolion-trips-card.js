@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.1.0-beta.15 */
+/* GWM Jolion Trips Card v0.1.0-beta.16 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -189,7 +189,7 @@
           const latitude=Number(parking.latitude),longitude=Number(parking.longitude),start=Number(parking.start),end=parking.end===null||parking.end===undefined?NaN:Number(parking.end);
           if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||!Number.isFinite(start))continue;
           const label=document.createElement('div');label.style.whiteSpace='pre-line';
-          label.textContent=`Стоянка\nНачало: ${tripTime(start,this._hass.config.time_zone)}\nКонец: ${Number.isFinite(end)?tripTime(end,this._hass.config.time_zone):'неизвестен — после последней записи'}`;
+          label.textContent=`Стоянка\nНачало: ${tripTime(start,this._hass.config.time_zone)}${Number.isFinite(end)?`\nКонец: ${tripTime(end,this._hass.config.time_zone)}`:''}`;
           L.circleMarker([latitude,longitude],{radius:7,color:'#455a64',fillColor:'#fff',fillOpacity:1,weight:3}).bindTooltip(label,{direction:'top',offset:[0,-6]}).addTo(this._layer);
         }
         const points=data.segments.flat();
