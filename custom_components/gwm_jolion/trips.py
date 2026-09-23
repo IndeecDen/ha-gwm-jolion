@@ -40,32 +40,50 @@ def movement_speed(km, seconds):
     return speed, "moving"
 
 
-def parking_spots(points, edges, ongoing=False):
-    """Return long stationary runs; an open final run can still be ongoing."""
+def parking_spots(segments, segment_edges, segment_times):
+    """Return long stationary runs, including transitions across midnight."""
     spots = []
 
-    def add_run(start, end):
-        grouped = edges[start:end]
-        seconds = sum(edge[3] for edge in grouped)
-        first = (0, points[start][0], points[start][1])
-        last = (0, points[end][0], points[end][1])
-        if (seconds < MIN_PARKING_SECONDS or distance(first, last) > PARKING_RADIUS_KM
-                or any(edge[2] > GPS_JITTER_KM for edge in grouped)):
-            return
-        started = edges[start][4]
-        ended = edges[end][4] if end < len(edges) else None
-        spots.append({"latitude":points[start][0], "longitude":points[start][1],
-                      "start":started, "end":ended, "duration":int(seconds)})
+    def point_distance(first, last):
+        return distance((0, first[0], first[1]), (0, last[0], last[1]))
 
-    start = None
-    for index, edge in enumerate(edges):
-        if edge[1] == "stationary" and start is None:
-            start = index
-        elif edge[1] != "stationary" and start is not None:
-            add_run(start, index)
-            start = None
-    if ongoing and start is not None:
-        add_run(start, len(edges))
+    def add_run(run, ended):
+        if (run["seconds"] >= MIN_PARKING_SECONDS
+                and point_distance(run["first"], run["last"]) <= PARKING_RADIUS_KM
+                and run["max_km"] <= GPS_JITTER_KM):
+            spots.append({"latitude":run["first"][0], "longitude":run["first"][1],
+                          "start":run["start"], "end":ended, "duration":int(run["seconds"])})
+
+    run = None
+    previous_segment = previous_index = -1
+    previous_point = previous_stamp = None
+    for segment_index, points in enumerate(segments):
+        for point_index, point in enumerate(points):
+            stamp = segment_times[segment_index][point_index]
+            if previous_point is not None:
+                same_segment = segment_index == previous_segment and point_index == previous_index + 1
+                if same_segment:
+                    speed, kind, km, delta, started = segment_edges[segment_index][point_index - 1]
+                else:
+                    km = point_distance(previous_point, point)
+                    delta = stamp - previous_stamp
+                    started = previous_stamp
+                    kind = "unknown" if delta <= 0 or km > GPS_JITTER_KM else movement_speed(km, delta)[1]
+                if kind == "stationary":
+                    if run is None:
+                        run = {"start":started, "seconds":0.0, "first":previous_point,
+                               "last":point, "max_km":0.0}
+                    run["seconds"] += delta
+                    run["last"] = point
+                    run["max_km"] = max(run["max_km"], km)
+                else:
+                    if run is not None and kind == "moving":
+                        add_run(run, started)
+                    run = None
+            previous_segment, previous_index = segment_index, point_index
+            previous_point, previous_stamp = point, stamp
+    if run is not None:
+        add_run(run, None)
     return spots
 
 
@@ -82,7 +100,7 @@ def summarize(rows, start, end, zone):
     """Count cumulative mileage independently of delayed or missing GPS fixes."""
     tz = ZoneInfo(zone)
     low, high = period(start, end, zone)
-    days, segments, segment_edges, segment_open, gaps = {}, [], [], [], []
+    days, segments, segment_edges, segment_times, gaps = {}, [], [], [], []
     previous = None
     last_fix = None
     odometer = None
@@ -94,8 +112,6 @@ def summarize(rows, start, end, zone):
                 odometer = max(odometer, odo) if odometer is not None else odo
             continue
         if stamp >= high:
-            if segment and segment_open:
-                segment_open[-1] = True
             break
         day = datetime.fromtimestamp(stamp, tz).date().isoformat()
         info = days.setdefault(day, {"date":day, "gps_km":0.0, "odo_km":0.0,
@@ -135,24 +151,19 @@ def summarize(rows, start, end, zone):
                 if kind == "moving":
                     info["moving_seconds"] += delta
             else:
-                if segment and segment_open:
-                    segment_open[-1] = False
                 segment = []
                 edges = []
                 segments.append(segment)
                 segment_edges.append(edges)
-                segment_open.append(False)
+                segment_times.append([])
                 if last_fix and (lat, lon) != (last_fix[1], last_fix[2]):
                     gaps.append([[last_fix[1], last_fix[2]], [lat, lon]])
             segment.append([lat, lon])
+            segment_times[-1].append(stamp)
             last_fix = row
         else:
-            if segment and segment_open:
-                segment_open[-1] = True
             segment = edges = None
         previous = row
-    if segment and segment_open:
-        segment_open[-1] = True
     total = 0.0
     methods = set()
     for info in days.values():
@@ -164,9 +175,9 @@ def summarize(rows, start, end, zone):
         methods.add(method)
     # Limit route payload while preserving segment boundaries and endpoints.
     stride = max(1, math.ceil(sum(map(len, segments)) / 5000))
-    routes, route_speeds, route_kinds, stops = [], [], [], []
-    for points, edges, ongoing in zip(segments, segment_edges, segment_open):
-        stops.extend(parking_spots(points, edges, ongoing))
+    routes, route_speeds, route_kinds = [], [], []
+    stops = parking_spots(segments, segment_edges, segment_times)
+    for points, edges in zip(segments, segment_edges):
         indices = list(range(0, len(points), stride))
         if indices[-1] != len(points) - 1:
             indices.append(len(points) - 1)

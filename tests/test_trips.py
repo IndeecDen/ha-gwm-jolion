@@ -113,6 +113,25 @@ def test_long_parking_is_not_treated_as_a_missing_gps_gap():
     assert result["parking_spots"][0]["end"]==base+700
 
 
+def test_parking_continues_across_midnight():
+    base=stamp("2026-09-16T23:50:00+00:00")
+    rows=[(base,55,37,None),(base+300,55,37,None),
+          (base+600,55,37,None),(base+900,55.01,37,None)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-17","UTC")
+    assert len(result["segments"])==2
+    assert result["parking_spots"]==[
+        {"latitude":55,"longitude":37,"start":base,"end":base+600,"duration":600}
+    ]
+
+    ongoing=rows[:-1]
+    result=trips.summarize(ongoing,"2026-09-16","2026-09-17","UTC")
+    assert result["parking_spots"][0]["end"] is None
+
+    jumped=[(base,55,37,None),(base+300,55,37,None),(base+600,55.0004,37,None)]
+    result=trips.summarize(jumped,"2026-09-16","2026-09-17","UTC")
+    assert not result["parking_spots"]
+
+
 def test_teleport_is_not_reported_as_parking():
     base=stamp("2026-09-16T12:00:00+00:00")
     rows=[(base,55,37,None),(base+300,55,37,None),
