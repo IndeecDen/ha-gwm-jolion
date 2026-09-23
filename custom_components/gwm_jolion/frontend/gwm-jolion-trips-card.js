@@ -49,7 +49,7 @@
         .error,.map-status{color:var(--secondary-text-color);font-size:12px;text-align:center}.error:empty,.map-status:empty{display:none}.error:not(:empty),.map-status:not(:empty){margin-top:8px}.map{height:300px;background:#e9edef;z-index:0}
         .leaflet-container{font-family:inherit}.leaflet-control-attribution{font-size:10px}
         @media(max-width:350px){button{padding:7px 8px}.content{padding:10px}.map{height:260px}}
-      </style><ha-card><div class="map" aria-label="Карта маршрута"></div><div class="content">
+      </style><ha-card><div class="map" aria-label="Карта маршрута"></div><div class="content"><button id="centerBtn" class="center-btn" aria-label="Показать авто в центре карты"><ha-icon icon="map-marker"></ha-icon></button><button id="fullscreenBtn" class="fullscreen-btn" aria-label="Свернуть/Развернуть карту"><ha-icon icon="fullscreen"></ha-icon></button>
       <div class="summary"><ha-icon icon="mdi:counter" aria-hidden="true"></ha-icon><span class="km" aria-label="Пробег за выбранный период">—</span></div>
       <div class="shortcuts"><button data-mode="today">Сегодня</button><button data-mode="yesterday">Вчера</button><button data-mode="week">Неделя</button><button id="calendar" title="Выбрать период" aria-label="Выбрать период" aria-expanded="false" aria-controls="period"><ha-icon icon="mdi:calendar-range"></ha-icon></button></div>
       <div class="dates" id="period" hidden><label>С<input type="date" id="start"></label><label>По<input type="date" id="end"></label><button id="show">Выбрать</button></div>
@@ -128,7 +128,20 @@
         if(!this._map){
           this._map=L.map(root.querySelector('.map'),{scrollWheelZoom:false}).setView([20,0],2);
           this._map.attributionControl.setPrefix(false);
-          this._layer=L.featureGroup().addTo(this._map);
+          const centerBtn=this.shadowRoot.querySelector('#centerBtn');
+      if(centerBtn){
+        centerBtn.addEventListener('click',()=>{
+          const locEntity=this._config.entity;
+          const state=this._hass.states[locEntity];
+          if(state && state.state!=='unknown'){
+            const lat=state.attributes.latitude;
+            const lng=state.attributes.longitude;
+            if(typeof lat==='number'&&typeof lng==='number') this._map.setView([lat,lng], this._map.getZoom());
+          } else if(this._layer.getBounds){
+            this._map.fitBounds(this._layer.getBounds(),{padding:[25,25],maxZoom:16});
+          }
+        });
+      }
         }
         await this._setBasemap(L,serial);if(serial!==this._serial || !this.isConnected)return;
         this._layer.clearLayers();
