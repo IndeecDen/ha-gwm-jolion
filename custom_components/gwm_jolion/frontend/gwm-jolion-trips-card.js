@@ -157,7 +157,7 @@
         root.querySelector('.km').title=`${start} — ${end} · км${data.method==='odometer'?'':' · оценка'}`;
         const L=await loadMap();if(serial!==this._serial || !this.isConnected)return;
         if(!this._map){
-          this._map=L.map(root.querySelector('.map'),{scrollWheelZoom:false}).setView([20,0],2);
+          this._map=L.map(root.querySelector('.map'),{scrollWheelZoom:true,dragging:true,touchZoom:true,tap:true}).setView([20,0],2);
           this._map.attributionControl.setPrefix(false);
           this._layer=L.featureGroup().addTo(this._map);
         }
