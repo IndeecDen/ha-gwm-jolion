@@ -23,10 +23,22 @@ const assert=require('node:assert/strict');
   await page.evaluate(()=>{
    window.calls=[];window.card=document.querySelector('gwm-jolion-trips-card');
    window.sample={km:14.6,method:'odometer',samples:20,timezone:'Europe/Moscow',retention_days:90,last:1789570800,days:[{date:'2026-09-16',km:14.6,method:'odometer',gaps:1}],segments:[[[55.75,37.60],[55.752,37.61],[55.759,37.62]],[[55.763,37.63],[55.768,37.64]]]};
-   window.hass={config:{time_zone:'Europe/Moscow'},states:{},callWS:async msg=>{calls.push(msg);return structuredClone(sample);}};
+   window.hass={config:{time_zone:'Europe/Moscow'},states:{'device_tracker.test':{state:'not_home',attributes:{latitude:55.76,longitude:37.65}}},callWS:async msg=>{calls.push(msg);return structuredClone(sample);}};
    card.setConfig({entity:'device_tracker.test',title:'Поездки · Jolion'});card.hass=hass;
   });
   await page.waitForFunction(()=>card._map && card._layer.getLayers().length===4);
+  assert.equal(await page.locator('.map-actions button').count(),2);
+  await page.locator('#centerBtn').click();
+  await page.waitForFunction(()=>Math.abs(card._map.getCenter().lat-55.76)<0.000001&&Math.abs(card._map.getCenter().lng-37.65)<0.000001);
+  assert.equal(await page.evaluate(()=>card._map.getZoom()),16);
+  await page.evaluate(()=>{card._mapCard.requestFullscreen=undefined;});
+  await page.locator('#fullscreenBtn').click();
+  assert.equal(await page.evaluate(()=>card.classList.contains('fallback-fullscreen')),true);
+  assert.equal(await page.locator('#fullscreenBtn').getAttribute('aria-pressed'),'true');
+  assert.equal(await page.locator('#fullscreenBtn ha-icon').getAttribute('icon'),'mdi:fullscreen-exit');
+  await page.locator('#fullscreenBtn').click();
+  assert.equal(await page.evaluate(()=>card.classList.contains('fallback-fullscreen')),false);
+  assert.equal(await page.locator('#fullscreenBtn').getAttribute('aria-pressed'),'false');
   await page.waitForFunction(()=>card._base.getMaplibreMap?.().isStyleLoaded());
   assert.equal(await page.evaluate(()=>card._baseStyle),'positron');
   for(const style of ['dark','liberty','osm','positron']){
@@ -77,6 +89,6 @@ const assert=require('node:assert/strict');
   await page.evaluate(()=>{window.saved=card;card.remove();});
   assert.equal(await page.evaluate(()=>saved._map),null);
   assert.deepEqual(errors,[]);
-  console.log('Trips card: route, calendar, mobile layout, empty history and errors passed');
+  console.log('Trips card: route, centering, fullscreen, calendar, mobile layout, empty history and errors passed');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

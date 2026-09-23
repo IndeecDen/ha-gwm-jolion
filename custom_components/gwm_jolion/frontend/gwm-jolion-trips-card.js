@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.1.0-beta.14 */
+/* GWM Jolion Trips Card v0.1.0-beta.15 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -46,14 +46,21 @@
         button:focus-visible,input:focus-visible{outline:2px solid var(--primary-color,#03a9f4);outline-offset:2px}
         .dates{margin:10px 0 0}.dates[hidden]{display:none}label{display:flex;flex:1;min-width:110px;flex-direction:column;gap:5px;color:var(--secondary-text-color);font-size:12px}input{width:100%;color-scheme:light dark}
         .summary{justify-content:center;margin:0 0 10px;gap:8px}.km{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}.summary ha-icon{color:var(--secondary-text-color);--mdc-icon-size:22px}.shortcuts{justify-content:center;flex-wrap:nowrap;gap:6px}#calendar{display:flex;align-items:center;justify-content:center;width:34px;height:32px;padding:0}#calendar ha-icon{--mdc-icon-size:19px}
-        .error,.map-status{color:var(--secondary-text-color);font-size:12px;text-align:center}.error:empty,.map-status:empty{display:none}.error:not(:empty),.map-status:not(:empty){margin-top:8px}.map{height:300px;background:#e9edef;z-index:0}
+        .error,.map-status{color:var(--secondary-text-color);font-size:12px;text-align:center}.error:empty,.map-status:empty{display:none}.error:not(:empty),.map-status:not(:empty){margin-top:8px}.map-wrap{position:relative;height:300px;background:#e9edef}.map{height:100%;background:#e9edef;z-index:0}
+        .map-actions{position:absolute;top:8px;right:8px;z-index:1000;display:flex;gap:6px}.map-actions button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;background:var(--card-background-color,#fff);box-shadow:0 1px 5px rgba(0,0,0,.28)}.map-actions ha-icon{--mdc-icon-size:19px}
+        :host(.fallback-fullscreen){position:fixed;inset:0;z-index:1000;display:block;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) ha-card,ha-card:fullscreen{width:100%;height:100%;min-height:100%;display:flex;flex-direction:column;border-radius:0;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) .map-wrap,ha-card:fullscreen .map-wrap{flex:1;height:auto;min-height:0}:host(.fallback-fullscreen) .content,ha-card:fullscreen .content{display:none}
         .leaflet-container{font-family:inherit}.leaflet-control-attribution{font-size:10px}
-        @media(max-width:350px){button{padding:7px 8px}.content{padding:10px}.map{height:260px}}
-      </style><ha-card><div class="map" aria-label="Карта маршрута"></div><div class="content"><button id="centerBtn" class="center-btn" aria-label="Показать авто в центре карты"><ha-icon icon="map-marker"></ha-icon></button><button id="fullscreenBtn" class="fullscreen-btn" aria-label="Свернуть/Развернуть карту"><ha-icon icon="fullscreen"></ha-icon></button>
+        @media(max-width:350px){button{padding:7px 8px}.content{padding:10px}.map-wrap{height:260px}}
+      </style><ha-card><div class="map-wrap"><div class="map" aria-label="Карта маршрута"></div><div class="map-actions"><button id="centerBtn" type="button" title="Показать автомобиль в центре карты" aria-label="Показать автомобиль в центре карты"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button><button id="fullscreenBtn" type="button" title="Развернуть карту" aria-label="Развернуть карту" aria-pressed="false"><ha-icon icon="mdi:fullscreen"></ha-icon></button></div></div><div class="content">
       <div class="summary"><ha-icon icon="mdi:counter" aria-hidden="true"></ha-icon><span class="km" aria-label="Пробег за выбранный период">—</span></div>
       <div class="shortcuts"><button data-mode="today">Сегодня</button><button data-mode="yesterday">Вчера</button><button data-mode="week">Неделя</button><button id="calendar" title="Выбрать период" aria-label="Выбрать период" aria-expanded="false" aria-controls="period"><ha-icon icon="mdi:calendar-range"></ha-icon></button></div>
       <div class="dates" id="period" hidden><label>С<input type="date" id="start"></label><label>По<input type="date" id="end"></label><button id="show">Выбрать</button></div>
       <div class="error" role="status"></div><div class="map-status" role="status"></div></div></ha-card>`;
+      this._mapCard=this.shadowRoot.querySelector('ha-card');
+      this._fullscreenBtn=this.shadowRoot.querySelector('#fullscreenBtn');
+      this.shadowRoot.querySelector('#centerBtn').onclick=()=>this._centerVehicle();
+      this._fullscreenBtn.onclick=()=>this._toggleFullscreen();
+      this._onFullscreenChange=()=>{this._syncFullscreenButton();requestAnimationFrame(()=>this._map?.invalidateSize());};
       this.shadowRoot.querySelectorAll('[data-mode]').forEach(button => button.onclick=()=>{this._mode=button.dataset.mode;this._calendar(false);this._load();});
       this.shadowRoot.querySelector('#show').onclick=()=>{const start=this.shadowRoot.querySelector('#start').value,end=this.shadowRoot.querySelector('#end').value;if(!start || !end || start>end){this.shadowRoot.querySelector('.error').textContent='Проверьте даты.';return;}this._mode='custom';this._range=[start,end];this._calendar(false);this._load();};
       this.shadowRoot.querySelector('#calendar').onclick=()=>this._calendar(this.shadowRoot.querySelector('.dates').hidden);
@@ -69,13 +76,37 @@
     }
     connectedCallback() {
       clearInterval(this._timer); this._timer=setInterval(()=>this._load(),60000);
+      document.addEventListener('fullscreenchange',this._onFullscreenChange);
       this._resize=new ResizeObserver(()=>this._map?.invalidateSize());this._resize.observe(this);
       this._load();
     }
-    disconnectedCallback(){ clearInterval(this._timer);this._resize?.disconnect();this._serial++;this._map?.remove();this._map=null;this._base=null;this._layer=null;this._baseStyle=null;this._fitKey=null; }
+    disconnectedCallback(){ clearInterval(this._timer);this._resize?.disconnect();document.removeEventListener('fullscreenchange',this._onFullscreenChange);this.classList.remove('fallback-fullscreen');if(document.fullscreenElement===this._mapCard&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});this._serial++;this._map?.remove();this._map=null;this._base=null;this._layer=null;this._baseStyle=null;this._fitKey=null; }
     getCardSize(){return 6;}
     _calendar(open){this.shadowRoot.querySelector('.dates').hidden=!open;this.shadowRoot.querySelector('#calendar').setAttribute('aria-expanded',String(open));if(open)this.shadowRoot.querySelector('#start').focus();}
     _highlight(){this.shadowRoot.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===this._mode));this.shadowRoot.querySelector('#calendar').classList.toggle('active',this._mode==='custom');}
+    _centerVehicle(){
+      const state=this._hass?.states[this._config?.entity];
+      const latitude=Number(state?.attributes.latitude),longitude=Number(state?.attributes.longitude);
+      if(!this._map)return;
+      if(Number.isFinite(latitude)&&Number.isFinite(longitude))this._map.flyTo([latitude,longitude],Math.max(this._map.getZoom(),16),{duration:.45});
+      else if(this._layer?.getLayers().length)this._map.fitBounds(this._layer.getBounds(),{padding:[25,25],maxZoom:16});
+    }
+    async _toggleFullscreen(){
+      if(this.classList.contains('fallback-fullscreen')){this._setFallbackFullscreen(false);return;}
+      if(document.fullscreenElement===this._mapCard){if(document.exitFullscreen)await document.exitFullscreen();return;}
+      if(this._mapCard.requestFullscreen){
+        try{await this._mapCard.requestFullscreen({navigationUI:'hide'});return;}catch{}
+      }
+      this._setFallbackFullscreen(true);
+    }
+    _setFallbackFullscreen(active){this.classList.toggle('fallback-fullscreen',active);this._syncFullscreenButton();requestAnimationFrame(()=>this._map?.invalidateSize());}
+    _syncFullscreenButton(){
+      const active=this.classList.contains('fallback-fullscreen')||document.fullscreenElement===this._mapCard;
+      this._fullscreenBtn.setAttribute('aria-pressed',String(active));
+      this._fullscreenBtn.setAttribute('aria-label',active?'Свернуть карту':'Развернуть карту');
+      this._fullscreenBtn.title=active?'Свернуть карту':'Развернуть карту';
+      this._fullscreenBtn.querySelector('ha-icon').setAttribute('icon',active?'mdi:fullscreen-exit':'mdi:fullscreen');
+    }
     _osm(L){return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,referrerPolicy:'strict-origin-when-cross-origin',attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'})
       .on('tileerror',()=>{this._baseNeedsRetry=true;this.shadowRoot.querySelector('.map-status').textContent='Подложка карты недоступна.';});}
     async _setBasemap(L,serial){
@@ -128,20 +159,7 @@
         if(!this._map){
           this._map=L.map(root.querySelector('.map'),{scrollWheelZoom:false}).setView([20,0],2);
           this._map.attributionControl.setPrefix(false);
-          const centerBtn=this.shadowRoot.querySelector('#centerBtn');
-      if(centerBtn){
-        centerBtn.addEventListener('click',()=>{
-          const locEntity=this._config.entity;
-          const state=this._hass.states[locEntity];
-          if(state && state.state!=='unknown'){
-            const lat=state.attributes.latitude;
-            const lng=state.attributes.longitude;
-            if(typeof lat==='number'&&typeof lng==='number') this._map.setView([lat,lng], this._map.getZoom());
-          } else if(this._layer.getBounds){
-            this._map.fitBounds(this._layer.getBounds(),{padding:[25,25],maxZoom:16});
-          }
-        });
-      }
+          this._layer=L.featureGroup().addTo(this._map);
         }
         await this._setBasemap(L,serial);if(serial!==this._serial || !this.isConnected)return;
         this._layer.clearLayers();
