@@ -130,8 +130,16 @@ const assert=require('node:assert/strict');
   await page.evaluate(()=>{window.editor=document.createElement('gwm-jolion-trips-card-editor');document.body.append(editor);window.changedConfig=null;editor.addEventListener('config-changed',event=>changedConfig=event.detail.config);editor.setConfig({entity:'device_tracker.test',map_style:'positron'});editor.hass=hass;});
   await page.waitForFunction(()=>editor._fields?.speed_green_max&&editor._fields?.speed_red_min);
   assert.equal(await page.locator('gwm-jolion-trips-card-editor ha-selector').count(),5);
+  assert.deepEqual(await page.evaluate(()=>[editor._fields.speed_green_max.value,editor._fields.speed_red_min.value]),[80,110]);
   await page.evaluate(()=>editor._fields.speed_green_max.dispatchEvent(new CustomEvent('value-changed',{detail:{value:120}})));
   assert.deepEqual(await page.evaluate(()=>changedConfig),{entity:'device_tracker.test',map_style:'positron',speed_green_max:120,speed_red_min:121});
+  await page.evaluate(async()=>{
+   sample.parking_spots=[{latitude:55.75,longitude:37.60,start:Date.parse('2026-09-16T12:00:00Z')/1000,end:null,observed_until:Date.parse('2026-09-16T12:10:00Z')/1000,duration:600}];
+   card._range=['2026-09-16','2026-09-20'];await card._load();
+  });
+  assert.deepEqual(await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).map(layer=>layer.options.icon.options.html.textContent)),['A']);
+  await page.evaluate(async()=>{card._range=['2026-09-17','2026-09-20'];await card._load();});
+  assert.equal(await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).length),0);
   await page.screenshot({path:path.join(process.env.TEMP,'gwm-trips-card.png'),fullPage:true});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.evaluate(()=>{sample={...sample,samples:0,days:[],segments:[],segment_speeds_kmh:[],segment_kinds:[],parking_spots:[],gaps:[],last:null};card._load();});

@@ -36,55 +36,44 @@ def movement_speed(km, seconds):
     if seconds <= 0:
         return None, "unknown"
     speed = km / seconds * 3600
-    if km < GPS_JITTER_KM or speed < MIN_MOVING_SPEED_KMH:
+    if speed < MIN_MOVING_SPEED_KMH:
         return 0.0, "stationary"
     return speed, "moving"
 
 
-def parking_spots(segments, segment_edges, segment_times):
-    """Return long stationary runs, including transitions across midnight."""
+def parking_spots(rows):
+    """Keep confirmed stops; never infer parking across missing observations."""
     spots = []
+    anchor = previous = None
 
-    def point_distance(first, last):
-        return distance((0, first[0], first[1]), (0, last[0], last[1]))
+    def finish(ended):
+        if anchor is not None and previous[0] - anchor[0] >= MIN_PARKING_SECONDS:
+            spots.append({"latitude":anchor[1], "longitude":anchor[2],
+                          "start":anchor[0], "end":ended,
+                          "observed_until":previous[0],
+                          "duration":int(previous[0] - anchor[0])})
 
-    def add_run(run, ended):
-        if (run["seconds"] >= MIN_PARKING_SECONDS
-                and point_distance(run["first"], run["last"]) <= PARKING_RADIUS_KM
-                and run["max_km"] <= GPS_JITTER_KM):
-            spots.append({"latitude":run["first"][0], "longitude":run["first"][1],
-                          "start":run["start"], "end":ended, "duration":int(run["seconds"])})
-
-    run = None
-    previous_segment = previous_index = -1
-    previous_point = previous_stamp = None
-    for segment_index, points in enumerate(segments):
-        for point_index, point in enumerate(points):
-            stamp = segment_times[segment_index][point_index]
-            if previous_point is not None:
-                same_segment = segment_index == previous_segment and point_index == previous_index + 1
-                if same_segment:
-                    speed, kind, km, delta, started = segment_edges[segment_index][point_index - 1]
-                else:
-                    km = point_distance(previous_point, point)
-                    delta = stamp - previous_stamp
-                    started = previous_stamp
-                    kind = "unknown" if delta <= 0 or km > GPS_JITTER_KM else movement_speed(km, delta)[1]
-                if kind == "stationary":
-                    if run is None:
-                        run = {"start":started, "seconds":0.0, "first":previous_point,
-                               "last":point, "max_km":0.0}
-                    run["seconds"] += delta
-                    run["last"] = point
-                    run["max_km"] = max(run["max_km"], km)
-                else:
-                    if run is not None and kind == "moving":
-                        add_run(run, started)
-                    run = None
-            previous_segment, previous_index = segment_index, point_index
-            previous_point, previous_stamp = point, stamp
-    if run is not None:
-        add_run(run, None)
+    for row in rows:
+        if row[1] is None or row[2] is None:
+            finish(None)
+            anchor = previous = None
+            continue
+        if previous is None:
+            anchor = previous = row
+            continue
+        delta = row[0] - previous[0]
+        if delta <= 0:
+            continue
+        if delta > 600:
+            finish(None)
+            anchor = previous = row
+            continue
+        odo_moved = row[3] is not None and anchor[3] is not None and row[3] > anchor[3]
+        if distance(anchor, row) > PARKING_RADIUS_KM or odo_moved:
+            finish(previous[0])
+            anchor = row
+        previous = row
+    finish(None)
     return spots
 
 
@@ -101,17 +90,20 @@ def summarize(rows, start, end, zone):
     """Count cumulative mileage independently of delayed or missing GPS fixes."""
     tz = ZoneInfo(zone)
     low, high = period(start, end, zone)
-    days, segments, segment_edges, segment_times, gaps = {}, [], [], [], []
+    parking_rows = [row for row in rows if low <= row[0] < high]
+    before = next((row for row in reversed(rows) if row[0] < low), None)
+    if before and parking_rows and parking_rows[0][0] - before[0] <= 600:
+        parking_rows.insert(0, before)
+    stops = parking_spots(parking_rows)
+    stop_index = 0
+    days, segments, segment_edges, gaps = {}, [], [], []
     previous = None
-    baseline = None
     last_fix = None
     odometer = None
     segment = edges = None
     for row in rows:
         stamp, lat, lon, odo = row
         if stamp < low:
-            if lat is not None and lon is not None:
-                baseline = row
             if odo is not None:
                 odometer = max(odometer, odo) if odometer is not None else odo
             continue
@@ -127,10 +119,8 @@ def summarize(rows, start, end, zone):
         delta = stamp - previous[0] if previous else 0
         comparable = valid and previous and previous[1] is not None and previous[2] is not None
         km = distance(previous, row) if comparable else 0
-        long_stationary = bool(same_day and delta > 600 and comparable and
-                               km <= PARKING_RADIUS_KM and km / delta * 3600 < MIN_MOVING_SPEED_KMH)
-        connected = same_day and 0 < delta and (delta <= 600 or long_stationary)
-        if same_day and delta > 600 and not long_stationary:
+        connected = same_day and 0 < delta <= 600
+        if same_day and delta > 600:
             info["gaps"] += 1
         # Cloud responses may repeat an old reading for hours, then catch up.
         # Poll interval is not travel time. Never reject mileage using GPS speed.
@@ -147,10 +137,13 @@ def summarize(rows, start, end, zone):
                 linked = False
                 info["gaps"] += 1
             if linked:
-                # Ignore short GPS jitter for mileage, without moving stored coordinates.
-                if km >= GPS_JITTER_KM and not long_stationary:
+                while stop_index < len(stops) and stops[stop_index]["observed_until"] < stamp:
+                    stop_index += 1
+                parked = (stop_index < len(stops) and previous[0] >= stops[stop_index]["start"]
+                          and stamp <= stops[stop_index]["observed_until"])
+                speed, kind = (0.0, "stationary") if parked else movement_speed(km, delta)
+                if kind == "moving":
                     info["gps_km"] += km
-                speed, kind = movement_speed(km, delta)
                 edges.append((speed, kind, km, delta, previous[0]))
                 if kind == "moving":
                     info["moving_seconds"] += delta
@@ -159,11 +152,9 @@ def summarize(rows, start, end, zone):
                 edges = []
                 segments.append(segment)
                 segment_edges.append(edges)
-                segment_times.append([])
                 if last_fix and (lat, lon) != (last_fix[1], last_fix[2]):
                     gaps.append([[last_fix[1], last_fix[2]], [lat, lon]])
             segment.append([lat, lon])
-            segment_times[-1].append(stamp)
             last_fix = row
         else:
             segment = edges = None
@@ -180,12 +171,6 @@ def summarize(rows, start, end, zone):
     # Limit route payload while preserving segment boundaries and endpoints.
     stride = max(1, math.ceil(sum(map(len, segments)) / 5000))
     routes, route_speeds, route_kinds = [], [], []
-    parking_segments, parking_edges, parking_times = segments, segment_edges, segment_times
-    if baseline:
-        parking_segments = [[[baseline[1], baseline[2]]], *segments]
-        parking_edges = [[], *segment_edges]
-        parking_times = [[baseline[0]], *segment_times]
-    stops = parking_spots(parking_segments, parking_edges, parking_times)
     for points, edges in zip(segments, segment_edges):
         indices = list(range(0, len(points), stride))
         if indices[-1] != len(points) - 1:
@@ -228,7 +213,17 @@ def with_archive(rows, archive, start, end, zone):
     route = merge(gps, [(r[0], r[1], r[2], None) for r in rows], 1)
     local_odo = [(r[0], None, None, r[3]) for r in rows if r[3] is not None]
     mileage = merge(odo, local_odo, 3)
-    result = summarize(sorted(route), start, end, zone)
+    # Attach the latest known odometer without using future readings.
+    mileage_index = 0
+    latest_odo = None
+    enriched_route = []
+    for row in route:
+        while mileage_index < len(mileage) and mileage[mileage_index][0] <= row[0]:
+            if mileage[mileage_index][3] is not None:
+                latest_odo = mileage[mileage_index][3]
+            mileage_index += 1
+        enriched_route.append((row[0], row[1], row[2], latest_odo))
+    result = summarize(enriched_route, start, end, zone)
     daily = {day["date"]:day for day in result["days"]}
     for day in summarize(sorted(mileage), start, end, zone)["days"]:
         if day["odo_pairs"]:

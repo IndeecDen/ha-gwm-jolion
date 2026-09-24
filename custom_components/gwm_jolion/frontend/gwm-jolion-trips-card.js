@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.1.0-beta.21 */
+/* GWM Jolion Trips Card v0.1.0-beta.22 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -42,7 +42,7 @@
   function dayInZone(value, zone){const parts=new Intl.DateTimeFormat('en',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(value*1000)),get=type=>parts.find(part=>part.type===type).value;return `${get('year')}-${get('month')}-${get('day')}`;}
   function dateRange(start,end){const dates=[],last=new Date(`${end}T00:00:00Z`);for(let value=new Date(`${start}T00:00:00Z`);value<=last;value.setUTCDate(value.getUTCDate()+1))dates.push(value.toISOString().slice(0,10));return dates;}
   function pointLabel(index){let value=index,label='';do{label=String.fromCharCode(65+value%26)+label;value=Math.floor(value/26)-1;}while(value>=0);return label;}
-  function parkingOccurrences(spots,start,end,zone){let sequence=0;const spotOffsets={};return spots.flatMap(spot=>{const started=Number(spot.start),ended=spot.end===null||spot.end===undefined?NaN:Number(spot.end),startDay=dayInZone(started,zone),endDay=Number.isFinite(ended)?dayInZone(ended,zone):null,spotKey=`${spot.latitude}|${spot.longitude}|${spot.start}|${spot.end}`;return dateRange(start,end).filter(day=>startDay<=day&&(!endDay||day<=endDay)).map(day=>{const index=sequence++,offset=spotOffsets[spotKey]||0;spotOffsets[spotKey]=offset+1;return {...spot,day,label:pointLabel(index),offset_index:offset,show_end:Number.isFinite(ended)&&day===endDay};});});}
+  function parkingOccurrences(spots,start,end,zone){let sequence=0;const spotOffsets={};return spots.flatMap(spot=>{const started=Number(spot.start),ended=spot.end===null||spot.end===undefined?NaN:Number(spot.end),startDay=dayInZone(started,zone),endDay=dayInZone(Number.isFinite(ended)?ended:Number(spot.observed_until ?? (started+Number(spot.duration || 0))),zone),spotKey=`${spot.latitude}|${spot.longitude}|${spot.start}|${spot.end}`;return dateRange(start,end).filter(day=>startDay<=day&&(!endDay||day<=endDay)).map(day=>{const index=sequence++,offset=spotOffsets[spotKey]||0;spotOffsets[spotKey]=offset+1;return {...spot,day,label:pointLabel(index),offset_index:offset,show_end:Number.isFinite(ended)&&day===endDay};});});}
   class TripsCard extends HTMLElement {
     static getConfigElement() { return document.createElement('gwm-jolion-trips-card-editor'); }
     static getStubConfig(hass) {
@@ -239,7 +239,7 @@
       const limits=speedLimits(this._config);
       for(const [key,title] of [['speed_green_max','Зелёный: до, км/ч'],['speed_red_min','Красный: от, км/ч']]){
         const speedLabel=document.createElement('label');speedLabel.textContent=title;
-        const speedField=document.createElement('ha-selector');speedField.hass=this._hass;speedField.selector={number:{min:1,max:300,step:1,mode:'box',unit_of_measurement:'км/ч'}};speedField.value=limits[key];speedField.style.display='block';speedField.style.marginBottom='16px';this._fields[key]=speedField;
+        const speedField=document.createElement('ha-selector');speedField.hass=this._hass;speedField.selector={number:{min:1,max:300,step:1,mode:'box',unit_of_measurement:'км/ч'}};speedField.value=key==='speed_green_max'?limits.green:limits.red;speedField.style.display='block';speedField.style.marginBottom='16px';this._fields[key]=speedField;
         speedField.addEventListener('value-changed',event=>{const next=speedLimits({...this._config,[key]:event.detail.value});this._config={...this._config,speed_green_max:next.green,speed_red_min:next.red};this._fields.speed_green_max.value=next.green;this._fields.speed_red_min.value=next.red;this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(speedLabel,speedField);
       }
     }

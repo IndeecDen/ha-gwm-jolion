@@ -60,7 +60,7 @@ def test_movement_speed_thresholds_and_stationary_intervals():
     assert speed==pytest.approx(80.0) and kind=="moving"
     speed,kind=trips.movement_speed(11/6,60)
     assert speed==pytest.approx(110.0) and kind=="moving"
-    assert trips.movement_speed(0.02,1) == (0.0,"stationary")
+    assert trips.movement_speed(0.02,1) == (72.0,"moving")
     speed,kind=trips.movement_speed(0.1,120)
     assert speed==pytest.approx(3.0) and kind=="moving"
     assert trips.movement_speed(0.1,121)[1] == "stationary"
@@ -93,8 +93,8 @@ def test_parking_spots_report_start_end_and_ongoing_state():
           (base+1320,55.02,37,None)]
     result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
     assert result["parking_spots"]==[
-        {"latitude":55.01,"longitude":37,"start":base+60,"end":base+660,"duration":600},
-        {"latitude":55.02,"longitude":37,"start":base+720,"end":None,"duration":600},
+        {"latitude":55.01,"longitude":37,"start":base+60,"end":base+660,"observed_until":base+660,"duration":600},
+        {"latitude":55.02,"longitude":37,"start":base+720,"end":None,"observed_until":base+1320,"duration":600},
     ]
     assert result["moving_seconds"]==120
 
@@ -103,14 +103,13 @@ def test_parking_spots_report_start_end_and_ongoing_state():
     assert len(result["parking_spots"])==1 and result["parking_spots"][0]["end"] is None
 
 
-def test_long_parking_is_not_treated_as_a_missing_gps_gap():
+def test_missing_observations_do_not_prove_parking():
     base=stamp("2026-09-16T12:00:00+00:00")
     rows=[(base,55,37,None),(base+700,55,37,None),(base+760,55.01,37,None)]
     result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
-    assert len(result["segments"])==1 and not result["gaps"]
-    assert result["segment_kinds"]==[["stationary","moving"]]
-    assert result["moving_seconds"]==60 and len(result["parking_spots"])==1
-    assert result["parking_spots"][0]["end"]==base+700
+    assert len(result["segments"])==2
+    assert result["segment_kinds"]==[[],["moving"]]
+    assert result["moving_seconds"]==60 and not result["parking_spots"]
 
 
 def test_selected_day_uses_previous_gps_baseline_for_parking():
@@ -119,7 +118,7 @@ def test_selected_day_uses_previous_gps_baseline_for_parking():
           (base+900,55,37,None),(base+1200,55.01,37,None)]
     result=trips.summarize(rows,"2026-09-17","2026-09-17","UTC")
     assert result["parking_spots"]==[
-        {"latitude":55,"longitude":37,"start":base,"end":base+900,"duration":900}
+        {"latitude":55,"longitude":37,"start":base,"end":base+900,"observed_until":base+900,"duration":900}
     ]
 
 
@@ -130,7 +129,7 @@ def test_parking_continues_across_midnight():
     result=trips.summarize(rows,"2026-09-16","2026-09-17","UTC")
     assert len(result["segments"])==2
     assert result["parking_spots"]==[
-        {"latitude":55,"longitude":37,"start":base,"end":base+600,"duration":600}
+        {"latitude":55,"longitude":37,"start":base,"end":base+600,"observed_until":base+600,"duration":600}
     ]
 
     ongoing=rows[:-1]
@@ -154,7 +153,7 @@ def test_teleport_is_not_reported_as_parking():
             (base+1400,55.0004,37,None)]
     result=trips.summarize(jumped,"2026-09-16","2026-09-16","UTC")
     assert not result["parking_spots"] and result["gaps"]
-    assert len(result["segments"])==2
+    assert len(result["segments"])==3
 
     recovered=[(base,55,37,None),(base+300,55,37,None),
                (base+600,None,None,None),(base+900,55.01,37,None)]
@@ -326,3 +325,42 @@ def test_slow_recorder_falls_back_to_local_history():
         await scope["get_trips"](hass,connection,{"id":1,"entity_id":"device_tracker.car","start":"2026-09-16","end":"2026-09-16"})
         assert results==[(1,{"km":84})] and not errors and cancelled
     asyncio.run(run())
+
+
+def test_slow_travel_is_visible_with_ten_second_polling():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base+i*10,55+i*.00025,37,None) for i in range(61)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+    assert 1.6 < result["km"] < 1.7
+    assert result["moving_seconds"]==600
+    assert set(result["segment_kinds"][0])=={"moving"}
+    assert not result["parking_spots"]
+
+
+def test_confirmed_stop_survives_unknown_departure():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base,55,37,None),(base+300,55,37,None),(base+600,55,37,None),
+          (base+900,None,None,None),(base+1200,56,38,None)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+    assert len(result["parking_spots"])==1
+    stop=result["parking_spots"][0]
+    assert stop["end"] is None and stop["observed_until"]==base+600 and stop["duration"]==600
+
+
+def test_return_after_outage_is_not_a_two_hour_stop():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base,55,37,100),(base+7200,55,37,150)]
+    result=trips.with_archive(rows,([],[]),"2026-09-16","2026-09-16","UTC")
+    assert result["km"]==50 and not result["parking_spots"]
+    # Fresh odometer contradicts cached coordinates even without a polling gap.
+    rows=[(base+i*300,55,37,100+i) for i in range(5)]
+    assert not trips.with_archive(rows,([],[]),"2026-09-16","2026-09-16","UTC")["parking_spots"]
+
+
+def test_parked_gps_jitter_stays_within_anchor_radius():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base+i*10,55+(i%2)*.0001,37,None) for i in range(61)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+    assert len(result["parking_spots"])==1 and result["parking_spots"][0]["duration"]==600
+    assert result["km"]==0 and result["moving_seconds"]==0
+    assert set(result["segment_kinds"][0])=={"stationary"}
