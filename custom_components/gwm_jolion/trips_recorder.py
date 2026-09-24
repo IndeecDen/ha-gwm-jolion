@@ -4,7 +4,7 @@ from functools import partial
 
 from homeassistant.components.recorder import get_instance, history
 
-from .trips import number, period
+from .trips import PARKING_BASELINE_SECONDS, number, period
 
 
 def observations(states, tracker, odometer):
@@ -30,7 +30,7 @@ async def read_history(hass, tracker, odometer, start, end):
     low, high = period(start, end, hass.config.time_zone)
     states = await get_instance(hass).async_add_executor_job(partial(
         history.get_significant_states, hass,
-        datetime.fromtimestamp(low, timezone.utc), datetime.fromtimestamp(high, timezone.utc),
+        datetime.fromtimestamp(low - PARKING_BASELINE_SECONDS, timezone.utc), datetime.fromtimestamp(high, timezone.utc),
         [tracker] + ([odometer] if odometer else []),
         include_start_time_state=True, significant_changes_only=False,
         minimal_response=False, no_attributes=False,

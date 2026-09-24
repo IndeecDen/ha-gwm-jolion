@@ -113,6 +113,16 @@ def test_long_parking_is_not_treated_as_a_missing_gps_gap():
     assert result["parking_spots"][0]["end"]==base+700
 
 
+def test_selected_day_uses_previous_gps_baseline_for_parking():
+    base=stamp("2026-09-16T23:50:00+00:00")
+    rows=[(base,55,37,None),(base+600,55,37,None),
+          (base+900,55,37,None),(base+1200,55.01,37,None)]
+    result=trips.summarize(rows,"2026-09-17","2026-09-17","UTC")
+    assert result["parking_spots"]==[
+        {"latitude":55,"longitude":37,"start":base,"end":base+900,"duration":900}
+    ]
+
+
 def test_parking_continues_across_midnight():
     base=stamp("2026-09-16T23:50:00+00:00")
     rows=[(base,55,37,None),(base+300,55,37,None),
@@ -181,6 +191,19 @@ def test_persistence_retention_and_vehicle_isolation(tmp_path):
     asyncio.run(run())
 
 
+def test_local_query_uses_previous_gps_baseline_for_parking(tmp_path):
+    hass=SimpleNamespace(config=SimpleNamespace(path=lambda *args:str(tmp_path.joinpath(*args))))
+    history=trips.TripHistory(hass,"car")
+    base=stamp("2026-09-16T23:50:00+00:00")
+    history._append(base,{"latitude":55,"longitude":37})
+    history._append(base+600,{"latitude":55,"longitude":37})
+    history._append(base+900,{"latitude":55,"longitude":37})
+    history._append(base+1200,{"latitude":55.01,"longitude":37})
+    result=history._query("2026-09-17","2026-09-17","UTC")
+    assert result["parking_spots"][0]["start"]==base
+    assert result["parking_spots"][0]["end"]==base+900
+
+
 def test_history_permission_and_entry_binding():
     node=next(n for n in ast.parse((ROOT/"trips_ws.py").read_text(encoding="utf-8")).body if isinstance(n,ast.AsyncFunctionDef))
     node.decorator_list=[]
@@ -237,14 +260,17 @@ def test_recorder_coordinates_attributes_invalid_states_and_miles():
 def test_recorder_query_keeps_attribute_only_gps_changes():
     node=next(n for n in ast.parse((ROOT/"trips_recorder.py").read_text(encoding="utf-8")).body if isinstance(n,ast.AsyncFunctionDef))
     captured={}
-    def history_query(*args,**kwargs):captured.update(kwargs);captured["ids"]=args[3];return {}
+    def history_query(*args,**kwargs):captured.update(kwargs);captured["ids"]=args[3];captured["start"]=args[1];return {}
     async def executor(job):return job()
     scope={"datetime":datetime,"timezone":timezone,"partial":partial,"period":trips.period,
+           "PARKING_BASELINE_SECONDS":trips.PARKING_BASELINE_SECONDS,
            "get_instance":lambda hass:SimpleNamespace(async_add_executor_job=executor),
            "history":SimpleNamespace(get_significant_states=history_query),"observations":lambda *args:([],[])}
     exec(compile(ast.Module(body=[node],type_ignores=[]),"recorder_query","exec"),scope)
     result=asyncio.run(scope["read_history"](SimpleNamespace(config=SimpleNamespace(time_zone="UTC")),"device_tracker.car","sensor.car","2026-09-16","2026-09-16"))
     assert result==([],[]) and captured["ids"]==["device_tracker.car","sensor.car"]
+    expected_start=datetime.fromtimestamp(stamp("2026-09-16T00:00:00+00:00")-trips.PARKING_BASELINE_SECONDS,timezone.utc)
+    assert captured["start"]==expected_start
     assert not captured["significant_changes_only"] and not captured["no_attributes"] and not captured["minimal_response"]
 
 

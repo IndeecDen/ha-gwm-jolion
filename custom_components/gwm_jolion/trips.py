@@ -13,6 +13,7 @@ GPS_JITTER_KM = 0.03
 MIN_MOVING_SPEED_KMH = 3.0
 MIN_PARKING_SECONDS = 600
 PARKING_RADIUS_KM = GPS_JITTER_KM
+PARKING_BASELINE_SECONDS = 7 * 86400
 
 
 def number(value):
@@ -102,12 +103,15 @@ def summarize(rows, start, end, zone):
     low, high = period(start, end, zone)
     days, segments, segment_edges, segment_times, gaps = {}, [], [], [], []
     previous = None
+    baseline = None
     last_fix = None
     odometer = None
     segment = edges = None
     for row in rows:
         stamp, lat, lon, odo = row
         if stamp < low:
+            if lat is not None and lon is not None:
+                baseline = row
             if odo is not None:
                 odometer = max(odometer, odo) if odometer is not None else odo
             continue
@@ -176,7 +180,12 @@ def summarize(rows, start, end, zone):
     # Limit route payload while preserving segment boundaries and endpoints.
     stride = max(1, math.ceil(sum(map(len, segments)) / 5000))
     routes, route_speeds, route_kinds = [], [], []
-    stops = parking_spots(segments, segment_edges, segment_times)
+    parking_segments, parking_edges, parking_times = segments, segment_edges, segment_times
+    if baseline:
+        parking_segments = [[[baseline[1], baseline[2]]], *segments]
+        parking_edges = [[], *segment_edges]
+        parking_times = [[baseline[0]], *segment_times]
+    stops = parking_spots(parking_segments, parking_edges, parking_times)
     for points, edges in zip(segments, segment_edges):
         indices = list(range(0, len(points), stride))
         if indices[-1] != len(points) - 1:
@@ -271,9 +280,10 @@ class TripHistory:
         low, high = period(start, end, zone)
         with self._connect() as db:
             rows = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts >= ? AND ts < ? ORDER BY ts", (low, high)).fetchall()
-            baseline = db.execute("SELECT ts,NULL,NULL,odo FROM points WHERE ts < ? AND odo IS NOT NULL ORDER BY ts DESC LIMIT 1", (low,)).fetchone()
-            if baseline:
-                rows.insert(0, baseline)
+            odometer_baseline = db.execute("SELECT ts,NULL,NULL,odo FROM points WHERE ts < ? AND odo IS NOT NULL ORDER BY ts DESC LIMIT 1", (low,)).fetchone()
+            gps_baseline = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts < ? AND lat IS NOT NULL AND lon IS NOT NULL ORDER BY ts DESC LIMIT 1", (low,)).fetchone()
+            rows = sorted([*([odometer_baseline] if odometer_baseline else []),
+                            *([gps_baseline] if gps_baseline else []), *rows], key=lambda row: row[0])
         db.close()
         result = with_archive(rows, archive or ([], []), start, end, zone)
         result["retention_days"] = self.retention
