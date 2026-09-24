@@ -121,6 +121,17 @@ const assert=require('node:assert/strict');
   const midnightTooltips=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).map(layer=>layer.getTooltip().getContent().textContent));
   assert.doesNotMatch(midnightTooltips[3],/Конец:/);
   assert.match(midnightTooltips[4],/23\.09\.2026.*24\.09\.2026/s);
+  await page.evaluate(async()=>{
+   window.savedOvernight=structuredClone(sample.parking_spots);
+   sample.parking_spots=[{latitude:55.73,longitude:37.61,start:Date.parse('2026-09-24T17:04:00+03:00')/1000,end:null,observed_until:Date.parse('2026-09-25T00:20:00+03:00')/1000,duration:26040,interruptions:[[Date.parse('2026-09-25T00:03:00+03:00')/1000,Date.parse('2026-09-25T00:05:00+03:00')/1000]]}];
+   card._range=['2026-09-25','2026-09-25'];await card._load();
+  });
+  const ongoingTooltip=await page.evaluate(()=>card._layer.getLayers().find(layer=>layer.options?.icon?.options?.html).getTooltip().getContent().textContent);
+  assert.match(ongoingTooltip,/24\.09\.2026.*17:04/s);
+  assert.doesNotMatch(ongoingTooltip,/Конец:/);
+  assert.match(ongoingTooltip,/Нет данных:.*25\.09\.2026.*00:03.*00:05/s);
+  assert.equal(await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).length),1);
+  await page.evaluate(async()=>{sample.parking_spots=savedOvernight;card._range=['2026-09-23','2026-09-24'];await card._load();});
   await page.evaluate(()=>card.setConfig({...card._config,speed_green_max:85,speed_red_min:100}));
   await page.waitForFunction(()=>card._layer.getLayers().filter(layer=>['#2e7d32','#f9a825','#c62828'].includes(layer.options?.color)).length===5);
   assert.deepEqual(await page.evaluate(()=>card._layer.getLayers().map(layer=>layer.options?.color).filter(color=>['#2e7d32','#f9a825','#c62828'].includes(color))),['#2e7d32','#2e7d32','#f9a825','#c62828','#c62828']);
@@ -145,6 +156,22 @@ const assert=require('node:assert/strict');
   await page.evaluate(()=>{sample={...sample,samples:0,days:[],segments:[],segment_speeds_kmh:[],segment_kinds:[],parking_spots:[],gaps:[],last:null};card._load();});
   await page.waitForFunction(()=>card.shadowRoot.querySelector('.error').textContent.includes('нет записей'));
   assert.equal(await page.evaluate(()=>card._layer.getLayers().length),0);
+  // Keep recorded traffic-jam edges visible without connecting genuine GPS gaps.
+  await page.evaluate(async()=>{
+   sample={...sample,samples:8,km:1.2,method:'odometer',parking_spots:[],
+    segments:[[[55,37],[55.0001,37],[55.0002,37],[55.0002,37]],[[55.001,37],[55.0011,37]]],
+    segment_speeds_kmh:[[4,0,0],[0]],segment_kinds:[['moving','stationary','stationary'],['stationary']],
+    gaps:[[[55.0002,37],[55.001,37]]]};
+   await card._load();
+  });
+  const jamLayers=await page.evaluate(()=>card._layer.getLayers().map(layer=>({color:layer.options.color,dash:layer.options.dashArray||null,points:layer.getLatLngs().map(p=>[p.lat,p.lng])})));
+  assert.equal(jamLayers.length,4);
+  assert.equal(jamLayers.filter(layer=>layer.dash==='5 7').length,1);
+  assert.deepEqual(jamLayers.filter(layer=>layer.color==='#88949f'&&!layer.dash).map(layer=>layer.points),[
+   [[55.0001,37],[55.0002,37]],[[55.001,37],[55.0011,37]]
+  ]);
+  assert.match(await page.locator('.km').textContent(),/1,2/);
+  await page.evaluate(()=>{sample={...sample,samples:0,segments:[],segment_speeds_kmh:[],segment_kinds:[],gaps:[],parking_spots:[]};});
   // At 00:08 no driving line or ten-minute parking marker is required to show the car.
   await page.clock.install({time:new Date('2026-09-24T21:08:00Z')});
   await page.evaluate(async()=>{card._mode='today';sample.last_position=null;await card._load();});

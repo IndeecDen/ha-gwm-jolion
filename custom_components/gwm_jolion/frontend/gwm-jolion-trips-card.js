@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.1.0-beta.23 */
+/* GWM Jolion Trips Card v0.1.0-beta.24 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -195,7 +195,12 @@
           const speeds=speedSegments[segmentIndex]||[],kinds=speedKinds[segmentIndex]||[];
           for(let index=1;index<segment.length;index++){
             const rawSpeed=speeds[index-1],speed=Number(rawSpeed);
-            if(kinds[index-1]==='stationary'||kinds[index-1]==='unknown'||rawSpeed===null||rawSpeed===undefined||!Number.isFinite(speed)||speed<=0)continue;
+            if(kinds[index-1]==='stationary'){
+              const previous=segment[index-1],current=segment[index];
+              if(previous[0]!==current[0]||previous[1]!==current[1])L.polyline([previous,current],{color:'#88949f',weight:3,opacity:.75}).bindTooltip('Записанные GPS-точки: остановка или медленное движение').addTo(this._layer);
+              continue;
+            }
+            if(kinds[index-1]==='unknown'||rawSpeed===null||rawSpeed===undefined||!Number.isFinite(speed)||speed<=0)continue;
             const color=speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
             L.polyline([segment[index-1],segment[index]],{color,weight:4,opacity:.9}).bindTooltip(`Средняя скорость: ${Math.round(speed)} км/ч`).addTo(this._layer);
           }
@@ -204,9 +209,10 @@
         for(const parking of parkingOccurrencesForPeriod){
           const latitude=Number(parking.latitude),longitude=Number(parking.longitude),parkingStart=Number(parking.start),parkingEnd=parking.end===null||parking.end===undefined?NaN:Number(parking.end);
           if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||!Number.isFinite(parkingStart))continue;
-          const showDates=multiDay||(Number.isFinite(parkingEnd)&&dayInZone(parkingStart,this._hass.config.time_zone)!==dayInZone(parkingEnd,this._hass.config.time_zone));
+          const showDates=multiDay||dayInZone(parkingStart,this._hass.config.time_zone)!==parking.day||(Number.isFinite(parkingEnd)&&dayInZone(parkingStart,this._hass.config.time_zone)!==dayInZone(parkingEnd,this._hass.config.time_zone));
           const label=document.createElement('div');label.style.whiteSpace='pre-line';
           label.textContent=`Стоянка ${parking.label}\nНачало: ${tripTime(parkingStart,this._hass.config.time_zone,showDates)}${parking.show_end?`\nКонец: ${tripTime(parkingEnd,this._hass.config.time_zone,showDates)}`:''}`;
+          for(const gap of parking.interruptions || [])label.textContent+=`\nНет данных: ${tripTime(gap[0],this._hass.config.time_zone,true)} — ${tripTime(gap[1],this._hass.config.time_zone,true)}`;
           const iconElement=document.createElement('div');iconElement.className='route-point';iconElement.textContent=parking.label;if(parking.offset_index)iconElement.style.transform=`translateX(${parking.offset_index*20}px)`;
           const icon=L.divIcon({className:'',html:iconElement,iconSize:[28,28],iconAnchor:[14,14]});
           L.marker([latitude,longitude],{icon,keyboard:true,title:`Стоянка ${parking.label}`}).bindTooltip(label,{direction:'top',offset:[0,-8]}).addTo(this._layer);

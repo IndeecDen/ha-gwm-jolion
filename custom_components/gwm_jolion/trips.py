@@ -13,6 +13,7 @@ GPS_JITTER_KM = 0.03
 MIN_MOVING_SPEED_KMH = 3.0
 MIN_PARKING_SECONDS = 600
 MIN_STATIONARY_SECONDS = 60
+MAX_GPS_SPEED_KMH = 250
 PARKING_RADIUS_KM = GPS_JITTER_KM
 PARKING_BASELINE_SECONDS = 7 * 86400
 
@@ -42,14 +43,20 @@ def movement_speed(km, seconds):
     return speed, "moving"
 
 
+def gps_jump(km, seconds):
+    """Use the same plausibility limit for routes and parking."""
+    return seconds > 0 and km > seconds / 3600 * MAX_GPS_SPEED_KMH + 0.1
+
+
 def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS):
     """Keep confirmed stops; never infer parking across missing observations."""
     spots = []
     anchor = previous = None
     anchor_odometer = None
+    trusted = True
 
     def finish(ended):
-        if anchor is not None and previous[0] - anchor[0] >= minimum_seconds:
+        if trusted and anchor is not None and previous[0] - anchor[0] >= minimum_seconds:
             spots.append({"latitude":anchor[1], "longitude":anchor[2],
                           "start":anchor[0], "end":ended,
                           "observed_until":previous[0],
@@ -68,6 +75,13 @@ def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS):
         delta = row[0] - previous[0]
         if delta <= 0:
             continue
+        if gps_jump(distance(previous, row), delta):
+            # Repeated cached coordinates followed by a jump do not prove a stop.
+            # The destination is uncertain too until plausible movement resumes.
+            anchor = previous = row
+            anchor_odometer = row[3]
+            trusted = False
+            continue
         if delta > 600:
             finish(None)
             anchor = previous = row
@@ -76,10 +90,13 @@ def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS):
         if anchor_odometer is None and row[3] is not None:
             anchor_odometer = row[3]
         odo_moved = row[3] is not None and anchor_odometer is not None and row[3] > anchor_odometer
-        if distance(anchor, row) > PARKING_RADIUS_KM or odo_moved:
+        displaced = distance(anchor, row) > PARKING_RADIUS_KM
+        if displaced or odo_moved:
             finish(previous[0])
             anchor = row
             anchor_odometer = row[3]
+            if displaced:
+                trusted = True
         previous = row
     finish(None)
     return spots
@@ -94,15 +111,40 @@ def period(start, end, zone):
             datetime.combine(last + timedelta(days=1), time.min, tz).timestamp())
 
 
+def join_parking_observations(stops, rows):
+    """Group short interruptions at the same place, without counting missing time."""
+    indices = {row[0]: index for index, row in enumerate(rows)}
+    grouped = []
+    for stop in stops:
+        previous = grouped[-1] if grouped else None
+        if previous and previous["end"] is None and 0 < stop["start"] - previous["observed_until"] <= 600:
+            between = rows[indices[previous["observed_until"]]:indices[stop["start"]]+1]
+            odometer = between[0][3]
+            same_place = distance((0, previous["latitude"], previous["longitude"]),
+                                  (0, stop["latitude"], stop["longitude"])) <= PARKING_RADIUS_KM
+            stationary = all((r[1] is None or r[2] is None or
+                              distance(between[0], r) <= PARKING_RADIUS_KM) and
+                             (r[3] is None or r[3] == odometer) for r in between)
+            if same_place and stationary and odometer is not None and between[-1][3] == odometer:
+                previous.setdefault("interruptions", []).append([previous["observed_until"], stop["start"]])
+                previous["end"] = stop["end"]
+                previous["observed_until"] = stop["observed_until"]
+                previous["duration"] += stop["duration"]
+                continue
+        grouped.append(dict(stop))
+    return grouped
+
+
 def summarize(rows, start, end, zone):
     """Count cumulative mileage independently of delayed or missing GPS fixes."""
     tz = ZoneInfo(zone)
     low, high = period(start, end, zone)
     # Read preceding observations to keep a stop's observed start across midnight.
     parking_rows = [row for row in rows if low - PARKING_BASELINE_SECONDS <= row[0] < high]
-    stationary_runs = [run for run in parking_spots(parking_rows, MIN_STATIONARY_SECONDS)
-                       if run["observed_until"] >= low]
+    stationary_runs = parking_spots(parking_rows, MIN_STATIONARY_SECONDS)
     stops = [run for run in stationary_runs if run["duration"] >= MIN_PARKING_SECONDS]
+    stops = [stop for stop in join_parking_observations(stops, parking_rows)
+             if stop["observed_until"] >= low]
     stop_index = 0
     days, segments, segment_edges, gaps = {}, [], [], []
     previous = None
@@ -141,7 +183,7 @@ def summarize(rows, start, end, zone):
                 odometer = odo
         if valid:
             linked = connected and comparable
-            if linked and km > delta / 3600 * 250 + 0.1:
+            if linked and gps_jump(km, delta):
                 linked = False
                 info["gaps"] += 1
             if linked:

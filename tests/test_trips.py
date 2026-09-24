@@ -429,3 +429,46 @@ def test_midnight_keeps_last_position_without_inventing_today_trip(tmp_path):
     result=history._query("2026-09-25","2026-09-25","Europe/Moscow")
     assert result["km"]==0 and result["samples"]==9
     assert result["parking_spots"][0]["start"]==base
+
+
+def test_cached_positions_around_teleport_are_not_parking():
+    base=stamp("2026-09-24T12:00:00+00:00")
+    rows=[(base+i*60,55,37,100) for i in range(13)]
+    rows += [(base+780+i*60,56,38,150) for i in range(13)]
+    result=trips.with_archive(rows,([],[]),"2026-09-24","2026-09-24","UTC")
+    assert not result["parking_spots"] and len(result["gaps"])==1
+    assert result["km"]==50
+    # Normal movement after recovery can establish a real, new stop.
+    rows += [(base+1560,56.001,38,151)]
+    rows += [(base+1620+i*60,56.002,38,152) for i in range(12)]
+    result=trips.with_archive(rows,([],[]),"2026-09-24","2026-09-24","UTC")
+    assert len(result["parking_spots"])==1
+    assert result["parking_spots"][0]["start"]==base+1620
+    assert result["km"]==52
+
+
+def test_stop_before_real_missing_data_is_preserved_without_departure_time():
+    base=stamp("2026-09-24T12:00:00+00:00")
+    rows=[(base+i*60,55,37,None) for i in range(13)]
+    rows += [(base+780,None,None,None),(base+1080,55.01,37,None)]
+    result=trips.summarize(rows,"2026-09-24","2026-09-24","UTC")
+    assert len(result["parking_spots"])==1
+    assert result["parking_spots"][0]["end"] is None
+
+
+@pytest.mark.parametrize("missing_at",["2026-09-25T00:04:00+03:00","2026-09-25T00:00:00+03:00"])
+def test_today_overnight_parking_with_short_missing_fix_has_one_marker(missing_at):
+    base=stamp("2026-09-24T17:04:00+03:00")
+    rows=[(base+i*60,55,37,100) for i in range(442)]
+    lost=stamp(missing_at)
+    rows=[(ts,None,None,odo) if ts==lost else (ts,lat,lon,odo) for ts,lat,lon,odo in rows]
+    result=trips.summarize(rows,"2026-09-25","2026-09-25","Europe/Moscow")
+    assert len(result["parking_spots"])==1
+    stop=result["parking_spots"][0]
+    assert stop["start"]==base and stop["interruptions"]==[[lost-60,lost+60]]
+    assert stop["duration"]==rows[-1][0]-base-120
+    # Returning to the same position after driving must remain separate.
+    moved=[(ts,lat,lon,101 if ts>lost else odo) for ts,lat,lon,odo in rows]
+    assert len(trips.summarize(moved,"2026-09-24","2026-09-25","Europe/Moscow")["parking_spots"])==2
+    unknown=[(ts,lat,lon,None) for ts,lat,lon,odo in rows]
+    assert len(trips.summarize(unknown,"2026-09-24","2026-09-25","Europe/Moscow")["parking_spots"])==2
