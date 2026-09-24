@@ -26,7 +26,7 @@
 
 ### Поездки — карта и пробег
 
-<p align="center"><img src="docs/gwm-jolion-trips-card-settings.png" alt="Настройки и внешний вид карточки поездок gwm-jolion-trips-card"></p>
+<p align="center"><img src="docs/gwm-jolion-trips-card-settings-v2.png" alt="Настройки и внешний вид карточки поездок gwm-jolion-trips-card"></p>
 
 В редакторе доступно **«Оформление карты»**: светлая Positron (по умолчанию), тёмная Dark, стандартная Liberty от OpenFreeMap и прежняя OpenStreetMap. API-ключ и регистрация не нужны. Маршрут и выбранный период сохраняются при смене оформления.
 
