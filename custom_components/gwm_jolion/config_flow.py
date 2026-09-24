@@ -19,7 +19,7 @@ from .const import (
     CONF_COMMAND_COOLDOWN, CONF_COUNTRY, CONF_COUNTRY_CODE, CONF_DEVICE_ID,
     CONF_ENABLE_REMOTE_CONTROLS, CONF_PHONE, CONF_GPS_INTERVAL, CONF_POLL_INTERVAL, CONF_SECURITY_PIN,
     DEFAULT_COMMAND_COOLDOWN, DEFAULT_COUNTRY, DEFAULT_COUNTRY_CODE,
-    DEFAULT_ENABLE_REMOTE_CONTROLS, DEFAULT_POLL_INTERVAL, DOMAIN,
+    DEFAULT_ENABLE_REMOTE_CONTROLS, DEFAULT_POLL_INTERVAL, DEFAULT_GPS_INTERVAL, MIN_GPS_INTERVAL, DOMAIN,
 )
 from .helpers import normalize_phone
 from .protocol_capture import CONF_PROTOCOL_CAPTURE, DEFAULT_PROTOCOL_CAPTURE
@@ -28,8 +28,11 @@ CLEAR_SECURITY_PIN = "clear_security_pin"
 POLL_INTERVAL_SELECTOR = selector.NumberSelector(selector.NumberSelectorConfig(
     min=30, max=3600, step=1, mode=selector.NumberSelectorMode.SLIDER, unit_of_measurement="сек"))
 
+GPS_INTERVAL_SELECTOR = selector.NumberSelector(selector.NumberSelectorConfig(
+    min=MIN_GPS_INTERVAL, max=3600, step=1, mode=selector.NumberSelectorMode.SLIDER, unit_of_measurement="сек"))
+
 STEP_USER_DATA_SCHEMA = vol.Schema({
-    vol.Optional(CONF_GPS_INTERVAL, default=DEFAULT_POLL_INTERVAL): POLL_INTERVAL_SELECTOR,
+    vol.Optional(CONF_GPS_INTERVAL, default=DEFAULT_GPS_INTERVAL): GPS_INTERVAL_SELECTOR,
     vol.Required(CONF_PHONE): str,
     vol.Required(CONF_PASSWORD): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
     vol.Optional(CONF_POLL_INTERVAL, default=DEFAULT_POLL_INTERVAL): POLL_INTERVAL_SELECTOR,
@@ -73,7 +76,7 @@ class GwmJolionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 options = {
                     CONF_POLL_INTERVAL: user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
                     CONF_ENABLE_REMOTE_CONTROLS: user_input.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS),
-                    CONF_GPS_INTERVAL: int(user_input.get(CONF_GPS_INTERVAL, DEFAULT_POLL_INTERVAL)),
+                    CONF_GPS_INTERVAL: int(user_input.get(CONF_GPS_INTERVAL, DEFAULT_GPS_INTERVAL)),
                     CONF_COMMAND_COOLDOWN: DEFAULT_COMMAND_COOLDOWN,
                     CONF_PROTOCOL_CAPTURE: DEFAULT_PROTOCOL_CAPTURE,
                 }
@@ -144,7 +147,7 @@ class GwmJolionOptionsFlow(config_entries.OptionsFlowWithReload):
         feature_defaults = resolve_manual_capabilities(dict(current))
         schema: dict[vol.Marker, Any] = {
             vol.Optional("trip_retention_days", default=current.get("trip_retention_days", 90)): vol.All(int, vol.Range(min=30, max=365)),
-            vol.Optional(CONF_GPS_INTERVAL, default=current.get(CONF_GPS_INTERVAL, current.get(CONF_POLL_INTERVAL, self.config_entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)))): POLL_INTERVAL_SELECTOR,
+            vol.Optional(CONF_GPS_INTERVAL, default=current.get(CONF_GPS_INTERVAL, current.get(CONF_POLL_INTERVAL, self.config_entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)))): GPS_INTERVAL_SELECTOR,
             vol.Optional(CONF_POLL_INTERVAL, default=current.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)): POLL_INTERVAL_SELECTOR,
             vol.Optional(CONF_ENABLE_REMOTE_CONTROLS, default=current.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)): bool,
             vol.Optional(CONF_COMMAND_COOLDOWN, default=current.get(CONF_COMMAND_COOLDOWN, DEFAULT_COMMAND_COOLDOWN)): vol.All(int, vol.Range(min=10, max=120)),

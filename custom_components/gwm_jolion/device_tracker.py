@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, CONF_GPS_INTERVAL, CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
+from .const import DOMAIN, CONF_GPS_INTERVAL, CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL, MIN_GPS_INTERVAL
 from .gps import GwmGpsCoordinator
 from .coordinator import GwmJolionCoordinator
 from .entity import GwmJolionEntity
@@ -30,7 +30,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
     interval = int(entry.options.get(CONF_GPS_INTERVAL, entry.options.get(
         CONF_POLL_INTERVAL, entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL))))
-    gps = GwmGpsCoordinator(coordinator, max(30, min(3600, interval)))
+    gps = GwmGpsCoordinator(coordinator, max(MIN_GPS_INTERVAL, min(3600, interval)))
     # Keep recording when the map/entity is not currently displayed; detach on unload.
     entry.async_on_unload(gps.async_add_listener(lambda: None))
     async_add_entities([GwmJolionLocationTracker(gps)])

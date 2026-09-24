@@ -10,6 +10,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import GwmJolionApiError
+from .const import MIN_GPS_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,8 +19,9 @@ class GwmGpsCoordinator(DataUpdateCoordinator):
     """Poll only the status endpoint; leave full telemetry and its health alone."""
 
     def __init__(self, parent, interval: int):
+        self.poll_interval = max(MIN_GPS_INTERVAL, min(3600, interval))
         super().__init__(parent.hass, _LOGGER, name="gwm_jolion_gps",
-                         update_interval=timedelta(seconds=interval))
+                         update_interval=timedelta(seconds=self.poll_interval))
         self.parent = parent
         self.entry_id = parent.entry_id
         # Reuse the initial full refresh without issuing a duplicate request.
@@ -36,11 +38,16 @@ class GwmGpsCoordinator(DataUpdateCoordinator):
             raise
         except (GwmJolionApiError, TimeoutError) as err:
             health["consecutive_failures"] += 1
+            delay = max(self.poll_interval, min(300, 30 * 2 ** min(health["consecutive_failures"] - 1, 4)))
+            self.update_interval = timedelta(seconds=delay)
+            health["effective_interval_seconds"] = delay
             health["last_error"] = {"code": getattr(err, "code", None), "category": getattr(err, "category", None) or type(err).__name__, "time": time.time()}
             raise UpdateFailed(
                 f"GPS update failed ({getattr(err, 'category', None) or type(err).__name__}, "
                 f"code={getattr(err, 'code', None) or 'unknown'})"
             ) from err
+        self.update_interval = timedelta(seconds=self.poll_interval)
+        health["effective_interval_seconds"] = self.poll_interval
         health["consecutive_failures"] = 0
         health["last_success"] = time.time()
         history = getattr(self.parent, "trip_history", None)
