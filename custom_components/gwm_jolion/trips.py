@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 GPS_JITTER_KM = 0.03
 MIN_MOVING_SPEED_KMH = 3.0
 MIN_PARKING_SECONDS = 600
+MIN_STATIONARY_SECONDS = 60
 PARKING_RADIUS_KM = GPS_JITTER_KM
 PARKING_BASELINE_SECONDS = 7 * 86400
 
@@ -41,13 +42,14 @@ def movement_speed(km, seconds):
     return speed, "moving"
 
 
-def parking_spots(rows):
+def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS):
     """Keep confirmed stops; never infer parking across missing observations."""
     spots = []
     anchor = previous = None
+    anchor_odometer = None
 
     def finish(ended):
-        if anchor is not None and previous[0] - anchor[0] >= MIN_PARKING_SECONDS:
+        if anchor is not None and previous[0] - anchor[0] >= minimum_seconds:
             spots.append({"latitude":anchor[1], "longitude":anchor[2],
                           "start":anchor[0], "end":ended,
                           "observed_until":previous[0],
@@ -57,9 +59,11 @@ def parking_spots(rows):
         if row[1] is None or row[2] is None:
             finish(None)
             anchor = previous = None
+            anchor_odometer = None
             continue
         if previous is None:
             anchor = previous = row
+            anchor_odometer = row[3]
             continue
         delta = row[0] - previous[0]
         if delta <= 0:
@@ -67,11 +71,15 @@ def parking_spots(rows):
         if delta > 600:
             finish(None)
             anchor = previous = row
+            anchor_odometer = row[3]
             continue
-        odo_moved = row[3] is not None and anchor[3] is not None and row[3] > anchor[3]
+        if anchor_odometer is None and row[3] is not None:
+            anchor_odometer = row[3]
+        odo_moved = row[3] is not None and anchor_odometer is not None and row[3] > anchor_odometer
         if distance(anchor, row) > PARKING_RADIUS_KM or odo_moved:
             finish(previous[0])
             anchor = row
+            anchor_odometer = row[3]
         previous = row
     finish(None)
     return spots
@@ -90,11 +98,11 @@ def summarize(rows, start, end, zone):
     """Count cumulative mileage independently of delayed or missing GPS fixes."""
     tz = ZoneInfo(zone)
     low, high = period(start, end, zone)
-    parking_rows = [row for row in rows if low <= row[0] < high]
-    before = next((row for row in reversed(rows) if row[0] < low), None)
-    if before and parking_rows and parking_rows[0][0] - before[0] <= 600:
-        parking_rows.insert(0, before)
-    stops = parking_spots(parking_rows)
+    # Read preceding observations to keep a stop's observed start across midnight.
+    parking_rows = [row for row in rows if low - PARKING_BASELINE_SECONDS <= row[0] < high]
+    stationary_runs = [run for run in parking_spots(parking_rows, MIN_STATIONARY_SECONDS)
+                       if run["observed_until"] >= low]
+    stops = [run for run in stationary_runs if run["duration"] >= MIN_PARKING_SECONDS]
     stop_index = 0
     days, segments, segment_edges, gaps = {}, [], [], []
     previous = None
@@ -137,10 +145,10 @@ def summarize(rows, start, end, zone):
                 linked = False
                 info["gaps"] += 1
             if linked:
-                while stop_index < len(stops) and stops[stop_index]["observed_until"] < stamp:
+                while stop_index < len(stationary_runs) and stationary_runs[stop_index]["observed_until"] < stamp:
                     stop_index += 1
-                parked = (stop_index < len(stops) and previous[0] >= stops[stop_index]["start"]
-                          and stamp <= stops[stop_index]["observed_until"])
+                parked = (stop_index < len(stationary_runs) and previous[0] >= stationary_runs[stop_index]["start"]
+                          and stamp <= stationary_runs[stop_index]["observed_until"])
                 speed, kind = (0.0, "stationary") if parked else movement_speed(km, delta)
                 if kind == "moving":
                     info["gps_km"] += km
@@ -224,6 +232,11 @@ def with_archive(rows, archive, start, end, zone):
             mileage_index += 1
         enriched_route.append((row[0], row[1], row[2], latest_odo))
     result = summarize(enriched_route, start, end, zone)
+    _, high = period(start, end, zone)
+    last_position = next((row for row in reversed(enriched_route)
+                          if row[0] < high and row[1] is not None and row[2] is not None), None)
+    result["last_position"] = ({"latitude":last_position[1], "longitude":last_position[2],
+                                "observed_at":last_position[0]} if last_position else None)
     daily = {day["date"]:day for day in result["days"]}
     for day in summarize(sorted(mileage), start, end, zone)["days"]:
         if day["odo_pairs"]:
@@ -274,11 +287,11 @@ class TripHistory:
     def _query(self, start, end, zone, archive=None):
         low, high = period(start, end, zone)
         with self._connect() as db:
-            rows = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts >= ? AND ts < ? ORDER BY ts", (low, high)).fetchall()
+            rows = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts >= ? AND ts < ? ORDER BY ts", (low - PARKING_BASELINE_SECONDS, high)).fetchall()
             odometer_baseline = db.execute("SELECT ts,NULL,NULL,odo FROM points WHERE ts < ? AND odo IS NOT NULL ORDER BY ts DESC LIMIT 1", (low,)).fetchone()
-            gps_baseline = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts < ? AND lat IS NOT NULL AND lon IS NOT NULL ORDER BY ts DESC LIMIT 1", (low,)).fetchone()
-            rows = sorted([*([odometer_baseline] if odometer_baseline else []),
-                            *([gps_baseline] if gps_baseline else []), *rows], key=lambda row: row[0])
+            if odometer_baseline and all(row[0] != odometer_baseline[0] for row in rows):
+                rows.append(odometer_baseline)
+                rows.sort(key=lambda row: row[0])
         db.close()
         result = with_archive(rows, archive or ([], []), start, end, zone)
         result["retention_days"] = self.retention

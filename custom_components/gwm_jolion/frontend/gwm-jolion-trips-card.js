@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.1.0-beta.22 */
+/* GWM Jolion Trips Card v0.1.0-beta.23 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -210,6 +210,16 @@
           const iconElement=document.createElement('div');iconElement.className='route-point';iconElement.textContent=parking.label;if(parking.offset_index)iconElement.style.transform=`translateX(${parking.offset_index*20}px)`;
           const icon=L.divIcon({className:'',html:iconElement,iconSize:[28,28],iconAnchor:[14,14]});
           L.marker([latitude,longitude],{icon,keyboard:true,title:`Стоянка ${parking.label}`}).bindTooltip(label,{direction:'top',offset:[0,-8]}).addTo(this._layer);
+        }
+        if(!this._layer.getLayers().length && start<=today && today<=end){
+          const validPosition=value=>value && value.latitude!==null && value.longitude!==null && value.latitude!=='' && value.longitude!=='' && Number.isFinite(Number(value.latitude)) && Number.isFinite(Number(value.longitude)) && Math.abs(Number(value.latitude))<=90 && Math.abs(Number(value.longitude))<=180 && (Number(value.latitude)!==0 || Number(value.longitude)!==0);
+          const current=this._hass.states[this._config.entity]?.attributes;
+          const position=validPosition(current)?current:validPosition(data.last_position)?data.last_position:null;
+          if(position){
+            const iconElement=document.createElement('ha-icon');iconElement.setAttribute('icon','mdi:car');iconElement.className='route-point';
+            const icon=L.divIcon({className:'',html:iconElement,iconSize:[28,28],iconAnchor:[14,14]});
+            L.marker([Number(position.latitude),Number(position.longitude)],{icon,keyboard:true,title:'Последнее известное положение автомобиля'}).bindTooltip('Последнее известное положение автомобиля').addTo(this._layer);
+          }
         }
         if(this._layer.getLayers().length){this._map.invalidateSize();const key=`${this._config.entity}|${start}|${end}`;if(this._fitKey!==key){this._map.fitBounds(this._layer.getBounds(),{padding:[25,25],maxZoom:16});this._fitKey=key;}}
         else {this._map.setView([20,0],2);this._fitKey=null;}

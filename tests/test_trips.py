@@ -364,3 +364,68 @@ def test_parked_gps_jitter_stays_within_anchor_radius():
     assert len(result["parking_spots"])==1 and result["parking_spots"][0]["duration"]==600
     assert result["km"]==0 and result["moving_seconds"]==0
     assert set(result["segment_kinds"][0])=={"stationary"}
+
+
+def test_late_odometer_readings_rule_out_cached_gps_parking():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base,55,37,None),(base+300,55,37,100),
+          (base+600,55,37,110),(base+900,55,37,120)]
+    result=trips.with_archive(rows,([],[]),"2026-09-16","2026-09-16","UTC")
+    assert result["km"]==20 and not result["parking_spots"]
+    # A missing intermediate reading must not erase an established baseline.
+    rows=[(base,55,37,None),(base+300,55,37,100),(base+600,55,37,None),(base+900,55,37,110)]
+    stop=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")["parking_spots"][0]
+    assert stop["end"]==base+600 and stop["duration"]==600
+
+
+def test_overnight_start_is_preserved_for_narrow_period_and_reopened_db(tmp_path):
+    base=stamp("2026-09-16T20:00:00+00:00")
+    rows=[(base+i*300,55,37,100) for i in range(61)]
+    rows.append((base+61*300,55.01,37,101))
+    hass=SimpleNamespace(config=SimpleNamespace(path=lambda *args:str(tmp_path.joinpath(*args))))
+    history=trips.TripHistory(hass,"overnight")
+    for ts,lat,lon,odo in rows:
+        history._append(ts,{"latitude":lat,"longitude":lon,"odometer":odo})
+    for start in ("2026-09-16","2026-09-17"):
+        results=[trips.summarize(rows,start,"2026-09-17","UTC"),
+                 trips.with_archive([], ([(r[0],r[1],r[2],None) for r in rows],[(r[0],None,None,r[3]) for r in rows]),start,"2026-09-17","UTC"),
+                 trips.TripHistory(hass,"overnight")._query(start,"2026-09-17","UTC")]
+        for result in results:
+            stop=result["parking_spots"][0]
+            assert stop["start"]==base and stop["duration"]==18000 and stop["end"]==base+18000
+            assert result["km"]==1
+    assert not history._query("2026-09-18","2026-09-18","UTC")["parking_spots"]
+
+
+@pytest.mark.parametrize("seconds",[60,300,590,600])
+def test_jitter_does_not_count_as_travel_before_parking_marker(seconds):
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base+i*10,55+(i%2)*.0001,37,None) for i in range(seconds//10+1)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+    assert result["km"]==0 and result["moving_seconds"]==0
+    assert bool(result["parking_spots"]) == (seconds>=600)
+    assert set(result["segment_kinds"][0])=={"stationary"}
+
+
+def test_sustained_slow_motion_is_not_suppressed_as_jitter():
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base+i*10,55+i*.00008,37,None) for i in range(61)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+    assert .5 < result["km"] < .55 and result["moving_seconds"]==600
+    assert not result["parking_spots"]
+
+
+def test_midnight_keeps_last_position_without_inventing_today_trip(tmp_path):
+    base=stamp("2026-09-24T17:00:00+03:00")
+    hass=SimpleNamespace(config=SimpleNamespace(path=lambda *args:str(tmp_path.joinpath(*args))))
+    history=trips.TripHistory(hass,"midnight")
+    for i in range(84):
+        history._append(base+i*300,{"latitude":55,"longitude":37,"odometer":100})
+    result=history._query("2026-09-25","2026-09-25","Europe/Moscow")
+    assert result["samples"]==0 and not result["segments"] and not result["parking_spots"]
+    assert result["last_position"]=={"latitude":55,"longitude":37,"observed_at":base+83*300}
+    for i in range(9):
+        history._append(base+7*3600+i*60,{"latitude":55,"longitude":37,"odometer":100})
+    result=history._query("2026-09-25","2026-09-25","Europe/Moscow")
+    assert result["km"]==0 and result["samples"]==9
+    assert result["parking_spots"][0]["start"]==base

@@ -145,6 +145,23 @@ const assert=require('node:assert/strict');
   await page.evaluate(()=>{sample={...sample,samples:0,days:[],segments:[],segment_speeds_kmh:[],segment_kinds:[],parking_spots:[],gaps:[],last:null};card._load();});
   await page.waitForFunction(()=>card.shadowRoot.querySelector('.error').textContent.includes('нет записей'));
   assert.equal(await page.evaluate(()=>card._layer.getLayers().length),0);
+  // At 00:08 no driving line or ten-minute parking marker is required to show the car.
+  await page.clock.install({time:new Date('2026-09-24T21:08:00Z')});
+  await page.evaluate(async()=>{card._mode='today';sample.last_position=null;await card._load();});
+  assert.equal(await page.evaluate(()=>calls.at(-1).start),'2026-09-25');
+  assert.equal(await page.evaluate(()=>card._layer.getLayers().length),1);
+  assert.match(await page.evaluate(()=>card._layer.getLayers()[0].getTooltip().getContent()),/Последнее известное/);
+  assert.equal(await page.locator('.km').textContent(),'—');
+  await page.evaluate(async()=>{
+   hass.states['device_tracker.test']={state:'unavailable',attributes:{latitude:null,longitude:null}};
+   sample.last_position={latitude:55,longitude:37,observed_at:Date.parse('2026-09-24T20:55:00Z')/1000};
+   await card._load();
+  });
+  assert.equal(await page.evaluate(()=>card._layer.getLayers()[0].getLatLng().lat),55);
+  await page.evaluate(async()=>{card._mode='yesterday';await card._load();});
+  assert.equal(await page.evaluate(()=>card._layer.getLayers().length),0);
+  await page.evaluate(async()=>{card._mode='today';sample.last_position=null;await card._load();});
+  assert.equal(await page.evaluate(()=>card._layer.getLayers().length),0);
   await page.evaluate(()=>{hass.callWS=async()=>{throw Error('Нет доступа');};card._load();});
   await page.waitForFunction(()=>card.shadowRoot.querySelector('.error').textContent==='Нет доступа');
   await page.evaluate(()=>{window.saved=card;card.remove();});
