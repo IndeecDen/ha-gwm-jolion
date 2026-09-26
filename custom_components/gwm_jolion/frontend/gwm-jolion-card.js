@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.1.0-beta.24 */
+/* GWM Jolion Card v0.1.0-beta.25 */
 (() => {
-  const CARD_VERSION = "0.1.0-beta.24";
+  const CARD_VERSION = "0.1.0-beta.25";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -27,6 +27,10 @@
     modelCode: "_model_code_raw",
     oilQty: "_oil_qty",
     lastUpdate: "_last_successful_update",
+    tireFlWarning: "_tire_fl_pressure_warning",
+    tireFrWarning: "_tire_fr_pressure_warning",
+    tireRlWarning: "_tire_rl_pressure_warning",
+    tireRrWarning: "_tire_rr_pressure_warning",
     tireFlP: "_tire_fl_pressure",
     tireFrP: "_tire_fr_pressure",
     tireRlP: "_tire_rl_pressure",
@@ -440,10 +444,13 @@
       return `<span class="level ${kind}" aria-label="${active} из ${max}">${bars.join("")}</span>`;
     }
 
-    _tire(label, pKey, tKey) {
+    _tire(label, pKey, tKey, warningKey) {
+      const warning = this._state(warningKey)?.state;
+      const active = warning === "on";
+      const status = active ? "Предупреждение давления" : warning === "off" ? "Нет предупреждения давления" : "Статус предупреждения недоступен";
       return `
-        <div class="tire">
-          <strong>${label}</strong>
+        <div class="tire${active ? " warning" : ""}" title="${status}" aria-label="${label}: ${status}">
+          <strong>${label}${active ? ' <ha-icon icon="mdi:car-tire-alert" aria-label="Предупреждение давления"></ha-icon>' : warning !== "off" ? ' <small>?</small>' : ""}</strong>
           <span>${this._escape(this._value(pKey))}</span>
           <small>${this._escape(this._value(tKey))}</small>
         </div>`;
@@ -899,6 +906,13 @@
               transparent
             );
           }
+          .tire.warning {
+            box-shadow:inset 0 0 0 1px var(--error-color,#db4437);
+            background:color-mix(in srgb,var(--error-color,#db4437) 14%,transparent);
+          }
+          .tire.warning strong { color:var(--error-color,#db4437); }
+          .tire strong ha-icon { --mdc-icon-size:16px; }
+          .tire strong small { display:inline; }
           .tire strong {
             display:block;
             color:var(--secondary-text-color);
@@ -1174,10 +1188,10 @@
             <div class="section">
               <div class="section-title">Шины</div>
               <div class="tires">
-                ${this._tire("ПЛ", "tireFlP", "tireFlT")}
-                ${this._tire("ПП", "tireFrP", "tireFrT")}
-                ${this._tire("ЗЛ", "tireRlP", "tireRlT")}
-                ${this._tire("ЗП", "tireRrP", "tireRrT")}
+                ${this._tire("ПЛ", "tireFlP", "tireFlT", "tireFlWarning")}
+                ${this._tire("ПП", "tireFrP", "tireFrT", "tireFrWarning")}
+                ${this._tire("ЗЛ", "tireRlP", "tireRlT", "tireRlWarning")}
+                ${this._tire("ЗП", "tireRrP", "tireRrT", "tireRrWarning")}
               </div>
             </div>
 

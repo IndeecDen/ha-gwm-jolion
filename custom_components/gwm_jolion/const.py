@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 DOMAIN = "gwm_jolion"
-VERSION = "0.1.0-beta.24"
+VERSION = "0.1.0-beta.25"
 PLATFORMS = ["button", "sensor", "binary_sensor", "device_tracker", "lock", "climate", "number"]
 
 CONF_PHONE = "phone"
@@ -151,6 +151,11 @@ EXTRA_SENSORS: dict[str, SensorDef] = {
 # Public binary states.  Raw/unconfirmed helper states stay in coordinator.data
 # and diagnostics instead of generating entity-registry noise.
 BINARY_SENSOR_DEFS = (
+    ("tire_fl_pressure_warning", "Предупреждение давления: переднее левое", "problem", False),
+    ("tire_fr_pressure_warning", "Предупреждение давления: переднее правое", "problem", False),
+    ("tire_rl_pressure_warning", "Предупреждение давления: заднее левое", "problem", False),
+    ("tire_rr_pressure_warning", "Предупреждение давления: заднее правое", "problem", False),
+
     ("tbox_online", "T-Box онлайн", "connectivity", False),
     ("engine_running", "Двигатель работает", "running", False),
     ("doors_open", "Двери открыты", "door", False),

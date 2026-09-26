@@ -140,6 +140,20 @@ const assert=require('node:assert/strict');
   await editor.getByLabel('Сворачивать блок климата',{exact:true}).uncheck();
   assert.equal(await dashboard.locator('#climate-content').isVisible(),true);
   assert.equal(await page.evaluate(()=>calls.length),beforeCollapse);
+  await page.evaluate(()=>{
+   const c=document.querySelector('#first');
+   c._entities.tireFrWarning='binary_sensor.fr_warning';
+   c._hass.states['binary_sensor.fr_warning']={state:'on',attributes:{}};
+   c._render();
+  });
+  assert.equal(await dashboard.locator('.tire.warning').count(),1);
+  assert.match(await dashboard.locator('.tire.warning').innerText(),/ПП/);
+  assert.equal(await dashboard.locator('.tire.warning ha-icon').getAttribute('icon'),'mdi:car-tire-alert');
+  await page.evaluate(()=>{const c=document.querySelector('#first');c._hass.states['binary_sensor.fr_warning'].state='off';c._render();});
+  assert.equal(await dashboard.locator('.tire.warning').count(),0);
+  assert.equal(await dashboard.locator('.tire[title="Нет предупреждения давления"]').count(),1);
+  await page.evaluate(()=>{const c=document.querySelector('#first');c._hass.states['binary_sensor.fr_warning'].state='unavailable';c._render();});
+  assert.equal(await dashboard.locator('.tire[title="Статус предупреждения недоступен"]').count(),4);
   assert.deepEqual(errors,[]);
   console.log('Profiles: select, draft, revert, create, rename, update, copy, delete, restart, narrow layout, guarded launch: passed');
  }finally{await browser.close();}

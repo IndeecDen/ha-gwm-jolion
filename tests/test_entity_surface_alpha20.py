@@ -39,6 +39,10 @@ def test_binary_surface_has_only_reliable_status_entities() -> None:
     const = _load("gwm_const_entity_surface_alpha20", "custom_components/gwm_jolion/const.py")
     keys = {key for key, _name, _device_class, _diagnostic in const.BINARY_SENSOR_DEFS}
     assert keys == {
+        "tire_fl_pressure_warning",
+        "tire_fr_pressure_warning",
+        "tire_rl_pressure_warning",
+        "tire_rr_pressure_warning",
         "tbox_online",
         "engine_running",
         "doors_open",
@@ -104,11 +108,11 @@ def test_alpha20_frontend_uses_clean_entity_attributes() -> None:
     patch = (ROOT / "custom_components/gwm_jolion/frontend/gwm-jolion-alpha20.js").read_text(encoding="utf-8")
     init_source = (ROOT / "custom_components/gwm_jolion/__init__.py").read_text(encoding="utf-8")
 
-    assert 'const VERSION = "0.1.0-beta.24"' in patch
+    assert 'const VERSION = "0.1.0-beta.25"' in patch
     assert 'signal_level_raw' in patch
     assert 'feature_flags' in patch
     assert 'last_successful_update' in patch
     assert 'if (id === "windows") return ""' not in patch
     assert 'entities.windowFl = oldFr' in patch
     assert 'entities.windowFr = oldFl' in patch
-    assert 'gwm-jolion-alpha20.js?v=0.1.0-beta.24' in init_source
+    assert 'gwm-jolion-alpha20.js?v=0.1.0-beta.25' in init_source

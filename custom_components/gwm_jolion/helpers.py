@@ -182,6 +182,11 @@ def build_state(status: dict[str, Any], tbox: dict[str, Any], basics: dict[str, 
         unknown_signals[code] = value
         _LOGGER.debug("Unknown vehicle item code: %s = %s", code, raw)
 
+    # Only observed TPMS values 0/1 are interpreted; other codes stay unknown.
+    for wheel in ("fl", "fr", "rl", "rr"):
+        raw = state.get(f"tpms_pressure_{wheel}_raw")
+        state[f"tire_{wheel}_pressure_warning"] = (raw == 1) if raw in (0, 1) else None
+
     door_keys = ("door_front_left_raw", "door_rear_left_raw", "door_front_right_raw", "door_rear_right_raw")
     window_keys = ("window_2210001_raw", "window_2210002_raw", "window_2210003_raw", "window_2210004_raw")
     state["doors_open"] = _any_present_equals(state, door_keys, 1)

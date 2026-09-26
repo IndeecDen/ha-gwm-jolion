@@ -84,3 +84,18 @@ def test_live_seat_heat_signals_remain_authoritative() -> None:
 
     assert state["driver_seat_heat_level_raw"] == 2
     assert state["passenger_seat_heat_level_raw"] == 1
+
+
+def test_tpms_pressure_warning_per_wheel_and_unknown_values():
+    helpers = load_helpers()
+    wheels = ("fl", "fr", "rl", "rr")
+    # Captured FR alert must not flag the other wheels or depend on pressure.
+    state = helpers.build_state(_status({"2102001": "0", "2102002": "1", "2102003": 0, "2102004": 0, "2101002": 218.2275}), {})
+    assert [state[f"tire_{w}_pressure_warning"] for w in wheels] == [False, True, False, False]
+    for code, wheel in zip(range(2102001, 2102005), wheels):
+        for raw, expected in [(0, False), (1, True), (2, None), (255, None), (None, None), ("bad", None)]:
+            decoded = helpers.build_state(_status({str(code): raw}), {})
+            assert decoded[f"tire_{wheel}_pressure_warning"] is expected
+            assert all(decoded[f"tire_{other}_pressure_warning"] is None for other in wheels if other != wheel)
+    cleared = helpers.build_state(_status({"2102002": 0}), {})
+    assert cleared["tire_fr_pressure_warning"] is False

@@ -15,6 +15,11 @@ from .entity import GwmJolionEntity
 
 
 _RAW_STATE_BY_KEY: dict[str, str] = {
+    "tire_fl_pressure_warning": "tpms_pressure_fl_raw",
+    "tire_fr_pressure_warning": "tpms_pressure_fr_raw",
+    "tire_rl_pressure_warning": "tpms_pressure_rl_raw",
+    "tire_rr_pressure_warning": "tpms_pressure_rr_raw",
+
     "engine_running": "engine_state_raw",
     "door_front_left_open": "door_front_left_raw",
     "door_rear_left_open": "door_rear_left_raw",
