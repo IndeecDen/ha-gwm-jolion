@@ -18,7 +18,7 @@ const assert=require('node:assert/strict');
 // A <ha-map> stand-in on top of a real MapLibre map. The map is instrumented so
 // every source the card adds is remembered: addSource carries the coordinates,
 // and the style carries the colour and dash pattern.
-function installStubMap(){
+const STUB_MAP=`
  customElements.define('ha-map',class extends HTMLElement{
   connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
   async getMap(){
@@ -36,7 +36,7 @@ function installStubMap(){
    return this._map;
   }
  });
-}
+`;
 // Read back everything the card put on the map, in draw order. The paint is read
 // from the style rather than from getLayer, which hands back MapLibre's live
 // internal layer object rather than the spec the card asked for.
@@ -74,9 +74,13 @@ function seed(){
  card.hass=hass;
 }
 
-async function openCard(browser,wanted){
+async function openCard(browser,stub){
  const page=await browser.newPage({viewport:{width:430,height:1050}}),errors=[],requested=[];
  page.on('pageerror',e=>errors.push(e.stack || e.message));
+ // Registered before the first navigation, the way Home Assistant registers its own
+ // map, so the card finds <ha-map> on its very first load attempt. After a goto it
+ // would only apply to the next navigation, which is never coming.
+ if(stub)await page.addInitScript({content:stub});
  await page.route('**/*',async route=>{
   const url=new URL(route.request().url());
   if(url.pathname.startsWith('/gwm-jolion/')){
@@ -93,7 +97,6 @@ async function openCard(browser,wanted){
  await page.goto('http://gwm.test');
  await page.addScriptTag({path:path.resolve('custom_components/gwm_jolion/frontend/gwm-jolion-trips-card.js')});
  await page.evaluate(()=>{customElements.define('ha-icon',class extends HTMLElement{connectedCallback(){this.textContent=this.getAttribute('icon')==='mdi:counter'?'◉':'▦';}});});
- if(wanted)await page.evaluate(installStubMap);
  await page.evaluate(seed);
  // Count only the speed bands: a stationary run adds its own dashed grey line on
  // top of them, so the total number of lines is not the number of bands.
@@ -104,7 +107,7 @@ async function openCard(browser,wanted){
 (async()=>{
  const browser=await chromium.launch({headless:true,channel:'chrome',args:['--enable-unsafe-swiftshader']});
  try{
-  const {page,errors,requested}=await openCard(browser,true);
+  const {page,errors,requested}=await openCard(browser,STUB_MAP);
   // The only vendored thing the card may pull in is MapLibre, and only for the
   // markers it puts on top of Home Assistant's map. Checked before the map itself
   // is awaited, so a card that reached for a second engine is named as such
@@ -381,7 +384,7 @@ async function openCard(browser,wanted){
 
   // Without <ha-map> there is no other map to fall back on. The card has to say
   // so plainly instead of drawing something the reader did not ask for.
-  const bare=await openCard(browser,false);
+  const bare=await openCard(browser,null);
   await bare.page.waitForFunction(()=>card.shadowRoot.querySelector('.map-status').textContent.length>0);
   assert.match(await bare.page.locator('.map-status').textContent(),/Карта Home Assistant недоступна/);
   assert.equal(await bare.page.evaluate(()=>card._surface),null);
@@ -389,6 +392,39 @@ async function openCard(browser,wanted){
   assert.deepEqual(bare.errors,[]);
   await bare.page.close();
 
-  console.log('Trips card on the Home Assistant map: route lines, A/B/C parking points, period-wide labels, date-aware popups, configurable speed ranges, centering, map interaction, fullscreen, calendar, no second map engine, always-cleaned track, mobile layout, empty history and errors: PASS');
+  // Home Assistant builds its map in firstUpdated, so getMap() can hand back
+  // nothing on the first call. That must not be read as "no map available": the
+  // card waits for the map and then draws on it as usual.
+  const late=await openCard(browser,`
+   customElements.define('ha-map',class extends HTMLElement{
+    connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
+    async getMap(){
+     const ml=window.GwmTripsMapLibre || window.maplibregl;
+     const div=document.createElement('div');div.style.cssText='position:absolute;inset:0;width:100%;height:100%';
+     this.append(div);
+     this.map=new ml.Map({container:div,attributionControl:false,style:{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9ede8'}}]}});
+     window.__draws=new Map();
+     await new Promise(res=>this.map.once('load',res));
+     return undefined;
+    }
+   });`);
+  await late.page.waitForFunction(()=>card._surface && card._surface.engine==='ha' && card._surface._lines.length===2);
+  assert.equal(await late.page.evaluate(()=>card._surface.hasOverlays()),true,'маршрут лёг на карту, которая появилась не сразу');
+  assert.deepEqual(late.errors,[]);
+  await late.page.close();
+
+  // A map that never arrives is the worst case: the route cannot be drawn, but the
+  // odometer and the period selector must still work and no error may escape.
+  const silent=await openCard(browser,`
+   customElements.define('ha-map',class extends HTMLElement{
+    connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
+   });`);
+  await silent.page.waitForFunction(()=>card.shadowRoot.querySelector('.map-status').textContent.includes('Не удалось открыть'),null,{timeout:20000});
+  assert.equal(await silent.page.evaluate(()=>card._surface),null);
+  assert.equal(await silent.page.locator('.km').textContent(),'14,6','пробег остаётся доступен без карты');
+  assert.equal(await silent.page.locator('[data-mode="today"]').count(),1,'выбор периода остаётся доступен');
+  assert.deepEqual(silent.errors.filter(text=>!/did not hand over a map/.test(text)),[],'падение карты не должно вылетать наружу');
+
+  console.log('Trips card on the Home Assistant map: route lines, A/B/C parking points, period-wide labels, date-aware popups, configurable speed ranges, centering, map interaction, fullscreen, calendar, no second map engine, always-cleaned track, late and missing map, mobile layout, empty history and errors: PASS');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

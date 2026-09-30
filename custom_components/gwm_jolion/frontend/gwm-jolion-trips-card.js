@@ -134,11 +134,23 @@
     container.append(haMap);
     try{
       const ml=await loadMapLibre();
-      const map=await haMap.getMap();
+      // <ha-map> builds its map in firstUpdated, so getMap() is the supported way
+      // in and it may hand back nothing until it is ready. Either way the card has
+      // to end up with a real map: without one the route cannot be drawn, and
+      // drawing onto it would throw instead of saying so.
+      let map=null;
+      for(let attempt=0;attempt<40&&!map;attempt++){
+        if(typeof haMap.getMap==='function')map=await haMap.getMap();
+        if(!map)map=haMap.map||haMap._map||null;
+        if(map)break;
+        await new Promise(resolve=>setTimeout(resolve,150));
+      }
+      if(!map||typeof map.addSource!=='function')throw new Error('ha-map did not hand over a map');
       return {surface:createHaMapSurface(card, haMap, map, ml)};
     }catch(error){
       haMap.remove();
-      return {surface:null,note:'Не удалось открыть карту Home Assistant.'};
+      console.warn('GWM Jolion trips card: Home Assistant map unavailable',error);
+      return {surface:null,note:'Не удалось открыть карту Home Assistant. Пробег и выбор периода ниже работают.'};
     }
   }
   function createHaMapSurface(card, haMap, map, ml){
