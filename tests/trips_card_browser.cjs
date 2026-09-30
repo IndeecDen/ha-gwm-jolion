@@ -200,7 +200,7 @@ const assert=require('node:assert/strict');
   assert.equal(await page.locator('.high-range').textContent(),'100+ км/ч');
   await page.evaluate(()=>{window.editor=document.createElement('gwm-jolion-trips-card-editor');document.body.append(editor);window.changedConfig=null;editor.addEventListener('config-changed',event=>changedConfig=event.detail.config);editor.setConfig({entity:'device_tracker.test',map_style:'positron'});editor.hass=hass;});
   await page.waitForFunction(()=>editor._fields?.speed_green_max&&editor._fields?.speed_red_min);
-  assert.equal(await page.locator('gwm-jolion-trips-card-editor ha-selector').count(),5);
+  assert.equal(await page.locator('gwm-jolion-trips-card-editor ha-selector').count(),6);
   assert.deepEqual(await page.evaluate(()=>[editor._fields.speed_green_max.value,editor._fields.speed_red_min.value]),[80,110]);
   await page.evaluate(()=>editor._fields.speed_green_max.dispatchEvent(new CustomEvent('value-changed',{detail:{value:120}})));
   assert.deepEqual(await page.evaluate(()=>changedConfig),{entity:'device_tracker.test',map_style:'positron',speed_green_max:120,speed_red_min:121});

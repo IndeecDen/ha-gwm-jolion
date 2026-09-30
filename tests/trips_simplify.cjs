@@ -104,14 +104,17 @@ if (simplifyPath(straight).length !== 2) fail("a straight line was not reduced")
 // removed, which is exactly the change that brings the sawtooth back. The
 // stationary wander and the GPS gap lines are deliberately left raw - the first
 // is part 1's verified behaviour, the second means "no data here".
-const drawn = source.split("\n").filter(line => /L\.polyline\(/.test(line));
-const simplifiedDraws = drawn.filter(line => /L\.polyline\(simplifyPath\(/.test(line));
+// Wiring: without this the test above would still pass after the calls were
+// removed, which is exactly the change that brings the sawtooth back. The route is
+// handed to the map surface as `addLine(simplifyPath(...))`; the stationary wander
+// and the GPS gap lines are deliberately left raw - the first is part 1's verified
+// behaviour, the second means "no data here".
+const simplifiedDraws = source.match(/addLine\(simplifyPath\(/g) || [];
 if (simplifiedDraws.length < 2) {
   fail(`expected the speed bands and the plain route to be simplified, got ${simplifiedDraws.length}`);
 }
-const raw = drawn.filter(line => /L\.polyline\((run|segment),/.test(line));
-if (raw.length) {
-  fail(`drawn raw: ${raw.map(line => line.trim().slice(0, 40)).join(" | ")}`);
+if (/addLine\((run|segment)\b/.test(source)) {
+  fail("a route polyline is handed to the surface without simplification");
 }
 
 console.log(`Sawtooth: ${sawtooth.length} -> ${smoothed.length} points, `
