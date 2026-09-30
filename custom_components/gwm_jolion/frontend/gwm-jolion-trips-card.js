@@ -43,6 +43,31 @@
   function dateRange(start,end){const dates=[],last=new Date(`${end}T00:00:00Z`);for(let value=new Date(`${start}T00:00:00Z`);value<=last;value.setUTCDate(value.getUTCDate()+1))dates.push(value.toISOString().slice(0,10));return dates;}
   function pointLabel(index){let value=index,label='';do{label=String.fromCharCode(65+value%26)+label;value=Math.floor(value/26)-1;}while(value>=0);return label;}
   function parkingOccurrences(spots,start,end,zone){let sequence=0;const spotOffsets={};return spots.flatMap(spot=>{const started=Number(spot.start),ended=spot.end===null||spot.end===undefined?NaN:Number(spot.end),startDay=dayInZone(started,zone),endDay=dayInZone(Number.isFinite(ended)?ended:Number(spot.observed_until ?? (started+Number(spot.duration || 0))),zone),spotKey=`${spot.latitude}|${spot.longitude}|${spot.start}|${spot.end}`;return dateRange(start,end).filter(day=>startDay<=day&&(!endDay||day<=endDay)).map(day=>{const index=sequence++,offset=spotOffsets[spotKey]||0;spotOffsets[spotKey]=offset+1;return {...spot,day,label:pointLabel(index),offset_index:offset,show_end:Number.isFinite(ended)&&day===endDay};});});}
+  // Distance between two [lat,lon] points, in metres.
+  function metersBetween(a,b){
+    const rad=Math.PI/180,lat1=a[0]*rad,lat2=b[0]*rad;
+    const h=Math.sin((b[0]-a[0])*rad/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin((b[1]-a[1])*rad/2)**2;
+    return 12742*Math.asin(Math.min(1,Math.sqrt(h)));
+  }
+  // Group the edges a stationary run covers, so the whole run is judged at once.
+  function stationaryRuns(segment,kinds){
+    const runs=new Map();let current=null;
+    for(let i=1;i<segment.length;i++){
+      if(kinds[i-1]==='stationary'){
+        if(!current){current={points:[segment[i-1]],end:i};runs.set(i,current);}
+        current.points.push(segment[i]);current.end=i;
+      }else current=null;
+    }
+    return runs;
+  }
+  function runCentre(points){
+    return [points.reduce((s,p)=>s+p[0],0)/points.length,points.reduce((s,p)=>s+p[1],0)/points.length];
+  }
+  // A parking marker already says the car stood here, so the receiver's wander
+  // underneath it is noise. Without a marker the grey line is slow travel and it
+  // stays - a step threshold cannot tell the two apart, because a parked receiver
+  // takes big steps and a creeping car takes small ones.
+  const PARKED_NEAR_M=200;
   class TripsCard extends HTMLElement {
     static getConfigElement() { return document.createElement('gwm-jolion-trips-card-editor'); }
     static getStubConfig(hass) {
@@ -226,6 +251,7 @@
         for(const [segmentIndex,segment] of data.segments.entries()){
           if(!hasSpeeds){if(segment.length>1)L.polyline(segment,{color:'#009fce',weight:4,opacity:.85,lineCap:'round',lineJoin:'round',smoothFactor:1.5}).addTo(this._layer);continue;}
           const speeds=speedSegments[segmentIndex]||[],kinds=speedKinds[segmentIndex]||[];
+          const runs=stationaryRuns(segment,kinds);
           // Consecutive pieces of the same speed were drawn one polyline per GPS
           // pair, so every join showed as a hard step and a turn looked like a
           // saw blade. Gather each run of one colour into a single line and let
@@ -240,8 +266,13 @@
             const rawSpeed=speeds[index-1],speed=Number(rawSpeed);
             if(kinds[index-1]==='stationary'){
               flush();
-              const previous=segment[index-1],current=segment[index];
-              if(previous[0]!==current[0]||previous[1]!==current[1])L.polyline([previous,current],{color:'#88949f',weight:3,opacity:.75,lineCap:'round',lineJoin:'round'}).bindTooltip('Записанные GPS-точки: остановка или медленное движение').addTo(this._layer);
+              const run=runs.get(index);
+              if(run&&run.points.length>1){
+                const centre=runCentre(run.points);
+                const parked=parkingSpots.some(spot=>metersBetween(centre,[Number(spot.latitude),Number(spot.longitude)])<=PARKED_NEAR_M);
+                if(!parked)L.polyline(run.points,{color:'#88949f',weight:2,opacity:.45,lineCap:'round',lineJoin:'round',dashArray:'2 6'}).bindTooltip('Замедленное движение по записанным GPS-точкам').addTo(this._layer);
+                index=run.end;
+              }
               continue;
             }
             if(kinds[index-1]==='unknown'||rawSpeed===null||rawSpeed===undefined||!Number.isFinite(speed)||speed<=0){flush();continue;}

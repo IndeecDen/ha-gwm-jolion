@@ -195,9 +195,20 @@ const assert=require('node:assert/strict');
   const jamLayers=await page.evaluate(()=>card._layer.getLayers().map(layer=>({color:layer.options.color,dash:layer.options.dashArray||null,points:layer.getLatLngs().map(p=>[p.lat,p.lng])})));
   assert.equal(jamLayers.length,4);
   assert.equal(jamLayers.filter(layer=>layer.dash==='5 7').length,1);
-  assert.deepEqual(jamLayers.filter(layer=>layer.color==='#88949f'&&!layer.dash).map(layer=>layer.points),[
-   [[55.0001,37],[55.0002,37]],[[55.001,37],[55.0011,37]]
+  assert.deepEqual(jamLayers.filter(layer=>layer.color==='#88949f'&&layer.dash==='2 6').map(layer=>layer.points),[
+   [[55.0001,37],[55.0002,37],[55.0002,37]],[[55.001,37],[55.0011,37]]
   ]);
+  // A stationary run that sits on a parking marker is the receiver wandering; the
+  // marker already says the car stood there, so the wander is not drawn.
+  await page.evaluate(async()=>{
+   sample={...sample,km:1.2,method:'gps',samples:6,moving_seconds:120,
+    segments:[[[55,37],[55.0001,37],[55.0002,37],[55.0003,37]]],
+    segment_speeds_kmh:[[0,0,0]],segment_kinds:[['stationary','stationary','stationary']],
+    gaps:[],parking_spots:[{latitude:55.0002,longitude:37,start:1789495200,end:1789498800,duration:3600}]};
+   await card._load();
+  });
+  const parkedLayers=await page.evaluate(()=>card._layer.getLayers().map(layer=>({color:layer.options.color,dash:layer.options.dashArray||null})));
+  assert.equal(parkedLayers.filter(layer=>layer.color==='#88949f').length,0,'the parked wander must not be drawn');
   assert.match(await page.locator('.km').textContent(),/1,2/);
   await page.evaluate(()=>{sample={...sample,samples:0,segments:[],segment_speeds_kmh:[],segment_kinds:[],gaps:[],parking_spots:[]};});
   // At 00:08 no driving line or ten-minute parking marker is required to show the car.
