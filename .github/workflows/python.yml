@@ -17,9 +17,11 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install test tools
-        run: python -m pip install --disable-pip-version-check pytest PyYAML
+        run: python -m pip install --disable-pip-version-check pytest PyYAML aiohttp voluptuous tzdata cryptography awesomeversion pyflakes
       - name: Compile integration
         run: python -m compileall -q custom_components/gwm_jolion
+      - name: Reject names that are used but never imported
+        run: python tools/check_names.py
       - name: Validate bundled card JavaScript
         shell: bash
         run: |
@@ -41,5 +43,42 @@ jobs:
               yaml.safe_load(path.read_text(encoding='utf-8'))
           print('JSON/YAML validation passed')
           PY
+      - name: Reject a manifest version Home Assistant would block
+        run: python tools/check_version.py
       - name: Run protocol unit tests
         run: pytest -q tests
+
+  ha-setup:
+    # The unit tests load single modules by path, so nothing ever ran
+    # async_setup_entry. This job loads the real config entry, which is the only
+    # way to catch a missing import or a broken platform before the user's
+    # instance does. Linux only: the harness blocks sockets, and Windows asyncio
+    # needs an AF_INET socket pair to build an event loop.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install the Home Assistant test harness
+        run: |
+          python -m pip install --disable-pip-version-check \
+            --extra-index-url https://pypi.home-assistant.io/simple \
+            --trusted-host pypi.home-assistant.io \
+            pytest-homeassistant-custom-component hass-frontend
+      - name: Load the config entry for real
+        run: pytest -q tests/ha -o asyncio_mode=auto
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Playwright and Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run bundled card browser checks
+        run: npm run test:browser

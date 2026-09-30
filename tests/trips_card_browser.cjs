@@ -6,7 +6,7 @@ const assert=require('node:assert/strict');
  const browser=await chromium.launch({headless:true,channel:'chrome',args:['--enable-unsafe-swiftshader']});
  try{
   const page=await browser.newPage({viewport:{width:430,height:1050}}),errors=[];
-  page.on('pageerror',e=>errors.push(e.message));
+  page.on('pageerror',e=>errors.push(e.stack || e.message));
   await page.route('**/*',async route=>{
    const url=new URL(route.request().url());
    if(url.hostname==='tiles.openfreemap.org')return route.fulfill({contentType:'application/json',body:JSON.stringify({version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':url.pathname.endsWith('/dark')?'#25313e':'#e9ede8'}}]})});
@@ -87,10 +87,13 @@ const assert=require('node:assert/strict');
    sample={...sample,km:12.3,method:'gps',moving_seconds:300,segments:[[[55.75,37.60],[55.751,37.601],[55.752,37.602],[55.753,37.603],[55.754,37.604],[55.755,37.605],[55.755,37.605]]],gaps:[],segment_speeds_kmh:[[79.9,80,95,109.9,110,0]],segment_kinds:[['moving','moving','moving','moving','moving','stationary']],parking_spots:[{latitude:55.74,longitude:37.59,start:1789495200,end:1789498800,duration:3600},{latitude:55.7525,longitude:37.6015,start:1789579200,end:1789586400,duration:7200},{latitude:55.754,longitude:37.603,start:1789586400,end:null,duration:600}]};
    await card._load();
   });
-  await page.waitForFunction(()=>card._layer.getLayers().filter(layer=>['#2e7d32','#f9a825','#c62828'].includes(layer.options?.color)).length===5);
-  assert.deepEqual(await page.evaluate(()=>card._layer.getLayers().map(layer=>layer.options?.color).filter(color=>['#2e7d32','#f9a825','#c62828'].includes(color))),['#2e7d32','#f9a825','#f9a825','#f9a825','#c62828']);
+  // One polyline per speed band, not per GPS pair: consecutive pieces of the same
+  // colour are gathered so the joins can be rounded instead of stepping.
+  await page.waitForFunction(()=>card._layer.getLayers().filter(layer=>['#2e7d32','#f9a825','#c62828'].includes(layer.options?.color)).length===3);
+  assert.deepEqual(await page.evaluate(()=>card._layer.getLayers().map(layer=>layer.options?.color).filter(color=>['#2e7d32','#f9a825','#c62828'].includes(color))),['#2e7d32','#f9a825','#c62828']);
+  assert.deepEqual(await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.color==='#f9a825').map(layer=>layer.getLatLngs().length)),[4]);
   assert.equal(await page.locator('.speed-legend').isVisible(),true);
-  assert.equal(await page.locator('.speed-legend span').count(),4);
+  assert.equal(await page.locator('.speed-legend span').count(),5);
   const parkingMarkers=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).map(layer=>layer.options.icon.options.html.textContent));
   assert.deepEqual(parkingMarkers,['A','B','C']);
   const parkingTooltips=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).map(layer=>layer.getTooltip().getContent().textContent));
@@ -99,6 +102,31 @@ const assert=require('node:assert/strict');
   assert.match(parkingTooltips[2],/Стоянка C.*Начало: \d{2}\.\d{2}\.\d{4}/s);
   assert.doesNotMatch(parkingTooltips[2],/Конец:/);
   assert.equal(await page.evaluate(()=>card._layer.getLayers().some(layer=>layer.getTooltip?.()&&/Начало записанного маршрута|Последняя точка/.test(layer.getTooltip().getContent().textContent))),false);
+  // The inferred-parking note exists but stays hidden while no stop is inferred.
+  assert.equal(await page.locator('.speed-legend span').count(),5);
+  assert.equal(await page.locator('.speed-legend .inferred-note').isHidden(),true);
+  const plainSpots=[
+   {latitude:55.74,longitude:37.59,start:1789495200,end:1789498800,duration:3600},
+   {latitude:55.7525,longitude:37.6015,start:1789579200,end:1789586400,duration:7200},
+   {latitude:55.754,longitude:37.603,start:1789586400,end:null,duration:600}];
+  await page.evaluate(async()=>{
+   sample={...sample,parking_spots:[
+    {latitude:55.74,longitude:37.59,start:1789495200,end:1789502400,duration:7200},
+    {latitude:55.7525,longitude:37.6015,start:1789560000,end:1789590000,duration:30000,inferred:true,inferred_by:'odometer'},
+    {latitude:55.7526,longitude:37.6016,start:1789590600,end:1789591200,duration:600,inferred:true,inferred_by:'position'}]};
+   await card._load();
+  });
+  await page.waitForFunction(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).length===3);
+  const inferredMarkers=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).map(layer=>layer.options.icon.options.html.textContent));
+  assert.deepEqual(inferredMarkers,['A','B*','C*']);
+  const inferredTooltips=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).map(layer=>layer.getTooltip().getContent().textContent));
+  assert.doesNotMatch(inferredTooltips[0],/выведена/);
+  assert.match(inferredTooltips[1],/Стоянка B\*[\s\S]*Пробег не менялся/);
+  assert.match(inferredTooltips[2],/Стоянка C\*[\s\S]*Пробег рядом недоступен/);
+  assert.equal(await page.locator('.speed-legend .inferred-note').isVisible(),true);
+  await page.evaluate(async spots=>{sample={...sample,parking_spots:spots};await card._load();},plainSpots);
+  await page.waitForFunction(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).length===3);
+  assert.equal(await page.locator('.speed-legend .inferred-note').isHidden(),true);
   await page.evaluate(async()=>{card._mode='custom';card._range=['2026-09-16','2026-09-16'];await card._load();});
   await page.waitForFunction(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).length===2);
   const singleDayTooltips=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).map(layer=>layer.getTooltip().getContent().textContent));
@@ -133,8 +161,8 @@ const assert=require('node:assert/strict');
   assert.equal(await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).length),1);
   await page.evaluate(async()=>{sample.parking_spots=savedOvernight;card._range=['2026-09-23','2026-09-24'];await card._load();});
   await page.evaluate(()=>card.setConfig({...card._config,speed_green_max:85,speed_red_min:100}));
-  await page.waitForFunction(()=>card._layer.getLayers().filter(layer=>['#2e7d32','#f9a825','#c62828'].includes(layer.options?.color)).length===5);
-  assert.deepEqual(await page.evaluate(()=>card._layer.getLayers().map(layer=>layer.options?.color).filter(color=>['#2e7d32','#f9a825','#c62828'].includes(color))),['#2e7d32','#2e7d32','#f9a825','#c62828','#c62828']);
+  await page.waitForFunction(()=>card._layer.getLayers().filter(layer=>['#2e7d32','#f9a825','#c62828'].includes(layer.options?.color)).length===3);
+  assert.deepEqual(await page.evaluate(()=>card._layer.getLayers().map(layer=>layer.options?.color).filter(color=>['#2e7d32','#f9a825','#c62828'].includes(color))),['#2e7d32','#f9a825','#c62828']);
   assert.equal(await page.locator('.low-range').textContent(),'до 85 км/ч');
   assert.equal(await page.locator('.medium-range').textContent(),'85–100 км/ч');
   assert.equal(await page.locator('.high-range').textContent(),'100+ км/ч');
