@@ -208,7 +208,8 @@ const assert=require('node:assert/strict');
    await card._load();
   });
   const parkedLayers=await page.evaluate(()=>card._layer.getLayers().map(layer=>({color:layer.options.color,dash:layer.options.dashArray||null})));
-  assert.equal(parkedLayers.filter(layer=>layer.color==='#88949f').length,0,'the parked wander must not be drawn');
+  // Still drawn: omitting it tore holes in the route at every stop. Softened, not removed.
+  assert.equal(parkedLayers.filter(layer=>layer.color==='#88949f').length,1,'the parked wander must stay on the map');
   assert.match(await page.locator('.km').textContent(),/1,2/);
   await page.evaluate(()=>{sample={...sample,samples:0,segments:[],segment_speeds_kmh:[],segment_kinds:[],gaps:[],parking_spots:[]};});
   // At 00:08 no driving line or ten-minute parking marker is required to show the car.

@@ -64,9 +64,8 @@
     return [points.reduce((s,p)=>s+p[0],0)/points.length,points.reduce((s,p)=>s+p[1],0)/points.length];
   }
   // A parking marker already says the car stood here, so the receiver's wander
-  // underneath it is noise. Without a marker the grey line is slow travel and it
-  // stays - a step threshold cannot tell the two apart, because a parked receiver
-  // takes big steps and a creeping car takes small ones.
+  // underneath it is noise; but the segment must still be drawn, because omitting
+  // it leaves a hole in the route.
   const PARKED_NEAR_M=200;
   class TripsCard extends HTMLElement {
     static getConfigElement() { return document.createElement('gwm-jolion-trips-card-editor'); }
@@ -268,9 +267,11 @@
               flush();
               const run=runs.get(index);
               if(run&&run.points.length>1){
-                const centre=runCentre(run.points);
-                const parked=parkingSpots.some(spot=>metersBetween(centre,[Number(spot.latitude),Number(spot.longitude)])<=PARKED_NEAR_M);
-                if(!parked)L.polyline(run.points,{color:'#88949f',weight:2,opacity:.45,lineCap:'round',lineJoin:'round',dashArray:'2 6'}).bindTooltip('Замедленное движение по записанным GPS-точкам').addTo(this._layer);
+                // Always drawn: dropping these segments tore holes in the track at
+                // every stop. The wander is softened instead - one thin dashed line
+                // per run rather than a solid grey line per GPS pair, so it stops
+                // reading as a road without taking the route with it.
+                L.polyline(run.points,{color:'#88949f',weight:2,opacity:.45,lineCap:'round',lineJoin:'round',dashArray:'2 6'}).bindTooltip('Замедленное движение по записанным GPS-точкам').addTo(this._layer);
                 index=run.end;
               }
               continue;
