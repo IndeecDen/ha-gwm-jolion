@@ -67,6 +67,49 @@
   // underneath it is noise; but the segment must still be drawn, because omitting
   // it leaves a hole in the route.
   const PARKED_NEAR_M=200;
+  const EARTH_M=111320;
+  // Douglas-Peucker simplification of the drawn route.
+  //
+  // The route reaches the map decimated to roughly 13 m per point, and the median
+  // interior vertex of the real data is a 179 degree reversal: the parked receiver
+  // jittering back and forth, not a corner. Rounding that sawtooth either left it
+  // alone or cut the route by 100 m. Dropping the points inside a small tolerance
+  // removes it without inventing anything - the result is a subset of the measured
+  // points, both ends stay exactly where the phone put them, and no measured point
+  // ends up further than the tolerance from the line that is drawn.
+  //
+  // The tolerance has to clear the jitter. The median step is 12.8 m, so the
+  // sawtooth swings about 6.4 m and a 4 m tolerance removed nothing at all; 8 m
+  // drops 80% of the real route's points and never moves the line further than
+  // that, where the reverted rounding reached 100 m.
+  //
+  // Applied to the speed bands and the plain route. Not to the GPS gap lines: those
+  // already mean "no data here", and smoothing them would draw a path nobody drove.
+  function simplifyPath(points,tolerance){
+    const limit=Number(tolerance)||8;
+    if(!Array.isArray(points)||points.length<3)return points;
+    const mLon=EARTH_M*Math.cos(points[0][0]*Math.PI/180);
+    const xy=points.map(point=>[(point[1]-points[0][1])*mLon,(point[0]-points[0][0])*EARTH_M]);
+    const keep=new Uint8Array(points.length);
+    keep[0]=1;keep[points.length-1]=1;
+    const stack=[[0,points.length-1]];
+    while(stack.length){
+      const [first,last]=stack.pop();
+      if(last<=first+1)continue;
+      const a=xy[first],b=xy[last];
+      const vx=b[0]-a[0],vy=b[1]-a[1],len2=vx*vx+vy*vy;
+      let worst=-1,worstAt=-1;
+      for(let i=first+1;i<last;i++){
+        const p=xy[i];
+        let t=len2?((p[0]-a[0])*vx+(p[1]-a[1])*vy)/len2:0;
+        t=t<0?0:(t>1?1:t);
+        const d=Math.hypot(p[0]-a[0]-t*vx,p[1]-a[1]-t*vy);
+        if(d>worst){worst=d;worstAt=i;}
+      }
+      if(worst>limit){keep[worstAt]=1;stack.push([first,worstAt],[worstAt,last]);}
+    }
+    return points.filter((_,index)=>keep[index]);
+  }
   class TripsCard extends HTMLElement {
     static getConfigElement() { return document.createElement('gwm-jolion-trips-card-editor'); }
     static getStubConfig(hass) {
@@ -248,7 +291,7 @@
         const inferredNote=root.querySelector('.inferred-note');
         if(inferredNote)inferredNote.hidden=!parkingSpots.some(spot=>spot&&spot.inferred===true);
         for(const [segmentIndex,segment] of data.segments.entries()){
-          if(!hasSpeeds){if(segment.length>1)L.polyline(segment,{color:'#009fce',weight:4,opacity:.85,lineCap:'round',lineJoin:'round',smoothFactor:1.5}).addTo(this._layer);continue;}
+          if(!hasSpeeds){if(segment.length>1)L.polyline(simplifyPath(segment),{color:'#009fce',weight:4,opacity:.85,lineCap:'round',lineJoin:'round',smoothFactor:1.5}).addTo(this._layer);continue;}
           const speeds=speedSegments[segmentIndex]||[],kinds=speedKinds[segmentIndex]||[];
           const runs=stationaryRuns(segment,kinds);
           // Consecutive pieces of the same speed were drawn one polyline per GPS
@@ -257,7 +300,7 @@
           // Leaflet round the corners.
           let run=[],runColor=null,runSpeed=0;
           const flush=()=>{
-            if(run.length>1)L.polyline(run,{color:runColor,weight:4,opacity:.9,lineCap:'round',lineJoin:'round',smoothFactor:1.5})
+            if(run.length>1)L.polyline(simplifyPath(run),{color:runColor,weight:4,opacity:.9,lineCap:'round',lineJoin:'round',smoothFactor:1.5})
               .bindTooltip(`Средняя скорость: ${Math.round(runSpeed)} км/ч`).addTo(this._layer);
             run=[];runColor=null;
           };
@@ -345,3 +388,4 @@
   if(!customElements.get('gwm-jolion-trips-card-editor'))customElements.define('gwm-jolion-trips-card-editor',TripsEditor);
   window.customCards=window.customCards || [];window.customCards.push({type:'gwm-jolion-trips-card',name:'GWM Jolion — Поездки',description:'Карта маршрута и пробег за день или период',preview:true});
 })();
+

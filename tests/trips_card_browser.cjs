@@ -91,7 +91,36 @@ const assert=require('node:assert/strict');
   // colour are gathered so the joins can be rounded instead of stepping.
   await page.waitForFunction(()=>card._layer.getLayers().filter(layer=>['#2e7d32','#f9a825','#c62828'].includes(layer.options?.color)).length===3);
   assert.deepEqual(await page.evaluate(()=>card._layer.getLayers().map(layer=>layer.options?.color).filter(color=>['#2e7d32','#f9a825','#c62828'].includes(color))),['#2e7d32','#f9a825','#c62828']);
-  assert.deepEqual(await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.color==='#f9a825').map(layer=>layer.getLatLngs().length)),[4]);
+  // The band is simplified before it reaches the map, so its vertex count is no
+  // longer the measured one. What has to hold is that it is still a single line,
+  // that it starts and ends on the measured positions, and that it does not leave
+  // the measured run by more than the tolerance.
+  const amber=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.color==='#f9a825').map(layer=>layer.getLatLngs().map(p=>[p.lat,p.lng])));
+  assert.equal(amber.length,1,'one polyline per speed band');
+  const measured=[[55.75,37.60],[55.751,37.601],[55.752,37.602],[55.753,37.603],[55.754,37.604],[55.755,37.605]];
+  // Both ends must be points the phone reported, not something invented.
+  const ends=[amber[0][0],amber[0][amber[0].length-1]].map(end=>measured.findIndex(point=>point[0]===end[0]&&point[1]===end[1]));
+  for(const [label,index] of [['start',ends[0]],['end',ends[1]]]){
+   assert.ok(index>=0,`the band ${label} ${index} is not a measured point`);
+  }
+  const mPerDegLon=111320*Math.cos(55.754*Math.PI/180);
+  const bandOff=point=>{
+   const p=[(point[1]-amber[0][0][1])*mPerDegLon,(point[0]-amber[0][0][0])*111320];
+   let best=Infinity;
+   for(let i=0;i+1<amber[0].length;i++){
+    const a=[(amber[0][i][1]-amber[0][0][1])*mPerDegLon,(amber[0][i][0]-amber[0][0][0])*111320];
+    const b=[(amber[0][i+1][1]-amber[0][0][1])*mPerDegLon,(amber[0][i+1][0]-amber[0][0][0])*111320];
+    const vx=b[0]-a[0],vy=b[1]-a[1],len2=vx*vx+vy*vy;
+    let t=len2?((p[0]-a[0])*vx+(p[1]-a[1])*vy)/len2:0;t=t<0?0:(t>1?1:t);
+    best=Math.min(best,Math.hypot(p[0]-a[0]-t*vx,p[1]-a[1]-t*vy));
+   }
+   return best;
+  };
+  // Only the stretch this band draws is held to the tolerance; the rest of the
+  // segment belongs to the other colours and is legitimately far away.
+  for(const point of measured.slice(Math.min(...ends),Math.max(...ends)+1)){
+   assert.ok(bandOff(point)<=8,`the band strays ${bandOff(point).toFixed(1)} m from the measured run`);
+  }
   assert.equal(await page.locator('.speed-legend').isVisible(),true);
   assert.equal(await page.locator('.speed-legend span').count(),5);
   const parkingMarkers=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).map(layer=>layer.options.icon.options.html.textContent));
