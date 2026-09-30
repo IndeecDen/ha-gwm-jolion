@@ -25,6 +25,10 @@ PARKING_BASELINE_SECONDS = 7 * 86400
 PARKING_RADIUS_M = 120
 DEPARTURE_RADIUS_KM = 0.5
 LONG_STOP_SECONDS = 300
+# How far apart two fragments of the same parking may sit in time before they are
+# treated as separate stops. A phone that sleeps wakes up often, so the cuts it
+# causes can be tens of minutes apart while the car never moved.
+PARKING_SESSION_SECONDS = 3600
 
 
 def number(value):
@@ -152,7 +156,7 @@ def join_parking_observations(stops, rows):
     grouped = []
     for stop in stops:
         previous = grouped[-1] if grouped else None
-        if previous and previous["end"] is None and 0 < stop["start"] - previous["observed_until"] <= 600:
+        if previous and previous["end"] is None and 0 < stop["start"] - previous["observed_until"] <= PARKING_SESSION_SECONDS:
             between = rows[indices[previous["observed_until"]]:indices[stop["start"]]+1]
             odometer = between[0][3]
             same_place = distance((0, previous["latitude"], previous["longitude"]),
@@ -177,9 +181,13 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
     # Read preceding observations to keep a stop's observed start across midnight.
     parking_rows = [row for row in rows if low - PARKING_BASELINE_SECONDS <= row[0] < high]
     stationary_runs = parking_spots(parking_rows, MIN_STATIONARY_SECONDS)
-    stops = [run for run in stationary_runs if run["duration"] >= MIN_PARKING_SECONDS]
-    stops = [stop for stop in join_parking_observations(stops, parking_rows)
-             if stop["observed_until"] >= low]
+    # Join before measuring the length. A hole in the observations cuts a parking
+    # into pieces, and filtering the pieces first threw away exactly the fragments
+    # that would have grown into a real stop, so a car parked for hours ended up
+    # with no marker at all.
+    stops = join_parking_observations(stationary_runs, parking_rows)
+    stops = [stop for stop in stops if stop["duration"] >= MIN_PARKING_SECONDS]
+    stops = [stop for stop in stops if stop["observed_until"] >= low]
     stop_index = 0
     days, segments, segment_edges, gaps = {}, [], [], []
     previous = None
@@ -410,4 +418,6 @@ class TripHistory:
     async def query(self, start, end, zone, archive=None, raw=False):
         async with self.lock:
             return await self.hass.async_add_executor_job(self._query, start, end, zone, archive, raw)
+
+
 
