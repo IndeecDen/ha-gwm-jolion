@@ -163,9 +163,9 @@ def test_teleport_is_not_reported_as_parking():
 
 def test_route_simplification_preserves_speed_edge_alignment():
     base=stamp("2026-09-16T12:00:00+00:00")
-    rows=[(base+index*60,55+index*.001,37,None) for index in range(5002)]
-    result=trips.summarize(rows,"2026-09-16","2026-09-20","UTC")
-    assert result["simplified"] and len(result["segments"][0])<5002
+    rows=[(base+index,55+index*.001,37,None) for index in range(trips.MAX_ROUTE_POINTS+2)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+    assert result["simplified"] and len(result["segments"][0])<=trips.MAX_ROUTE_POINTS
     for points,speeds,kinds in zip(result["segments"],result["segment_speeds_kmh"],result["segment_kinds"]):
         assert len(speeds)==len(points)-1
         assert len(kinds)==len(points)-1

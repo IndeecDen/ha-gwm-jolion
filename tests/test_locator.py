@@ -102,10 +102,10 @@ def test_unified_playback_retains_second_fixes_and_measured_speed(tmp_path):
     day=datetime.fromtimestamp(start/1000,UTC).date().isoformat()
     async def run():
         hass,h=make_history(tmp_path);await h.initialize()
-        points=[app(start+i*1000,latitude=55.75+i*.0001,speed_kmh=37) for i in range(5010)]
+        points=[app(start+i*1000,latitude=55.75+i*.0001,speed_kmh=37) for i in range(30010)]
         await h.ingest(points)
         result=await h.query(day,day,'UTC')
-        assert len(result['playback'])==5010
+        assert len(result['playback'])==30010
         assert result['playback'][1]['timestamp_ms']-result['playback'][0]['timestamp_ms']==1000
         assert all(p['speed_kmh']==37 and not p['speed_estimated'] and p['source']=='app' for p in result['playback'])
         assert result['simplified']

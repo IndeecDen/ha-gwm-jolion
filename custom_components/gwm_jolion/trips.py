@@ -14,6 +14,11 @@ MIN_MOVING_SPEED_KMH = 3.0
 MIN_PARKING_SECONDS = 600
 MIN_STATIONARY_SECONDS = 60
 MAX_GPS_SPEED_KMH = 250
+# A drawn route is decimated to at most this many points. 5000 thinned the app's
+# 1 Hz fixes so far that a day turned into long straight "flights" between samples
+# tens of seconds apart; 30000 keeps a full day at its native cadence while still
+# bounding the payload for a month.
+MAX_ROUTE_POINTS = 30000
 PARKING_RADIUS_KM = GPS_JITTER_KM
 PARKING_BASELINE_SECONDS = 7 * 86400
 # The first row of a stationary run is one noisy sample, and a parked receiver
@@ -267,7 +272,7 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
         total += info["km"]
         methods.add(method)
     # Limit route payload while preserving segment boundaries and endpoints.
-    stride = max(1, math.ceil(sum(map(len, segments)) / 5000))
+    stride = max(1, math.ceil(sum(map(len, segments)) / MAX_ROUTE_POINTS))
     routes, route_speeds, route_kinds = [], [], []
     for points, edges in zip(segments, segment_edges):
         indices = list(range(0, len(points), stride))
@@ -297,7 +302,7 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
             "samples":sum(day["samples"] for day in days.values()),
             "moving_seconds":sum(day["moving_seconds"] for day in days.values()),
             "first":rows[0][0] if rows else None, "last":rows[-1][0] if rows else None,
-            "simplified":stride > 1 or len(routes)>5000, "timezone":zone,
+            "simplified":stride > 1 or len(routes)>MAX_ROUTE_POINTS, "timezone":zone,
             "start":start, "end":end}
 
 
