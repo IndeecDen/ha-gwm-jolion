@@ -179,14 +179,19 @@ class HybridHistory(TripHistory):
             # observations replace the original app fixes omitted from rendering.
             with self.app_archive.connect() as db:
                 cloud={t:p for t,p in cloud.items() if not db.execute('SELECT 1 FROM points WHERE timestamp_ms BETWEEN ? AND ? LIMIT 1',(t-30000,t+30000)).fetchone()}
-        merged = [p for p in fuse(app, list(cloud.values())) if low_ms <= p["timestamp_ms"] < high_ms]
+        merged = fuse(app, list(cloud.values()))
+        # Everything fetched is returned. A caller asks for a window wider than the
+        # day it draws, and summarize() reads PARKING_BASELINE_SECONDS back to keep
+        # a parking that began the day before. Clipping here dropped exactly those
+        # rows, so each morning the card started a fresh marker at 00:00.
         return merged, rows
 
     def _query(self, start, end, zone, archive=None, raw=False):
         if not self.enabled:
             return super()._query(start,end,zone,archive)
         low, high = period(start,end,zone)
-        points, rows = self._merged(int(low*1000), int(high*1000), archive)
+        points, rows = self._merged(int(low*1000) - OVERNIGHT_BASELINE_MS, int(high*1000), archive)
+        window = [p for p in points if int(low*1000) <= p["timestamp_ms"] < int(high*1000)]
         original=points
         points = filter_display(points)
         if raw:
@@ -203,10 +208,14 @@ class HybridHistory(TripHistory):
         measured={p['timestamp_ms']:p['speed_kmh'] for p in points if p['source']=='app' and p.get('speed_kmh') is not None}
         breaks={p['timestamp_ms'] for p in points if p.get('display_break')}
         result = with_archive(route, ([], sorted([*(archive[1] if archive else []), *mileage],key=lambda r:r[0])), start,end,zone,measured_speeds=measured,break_before=breaks)
+        # Everything the card shows about the day itself must come from the day:
+        # the baseline only exists so a parking that started yesterday keeps its
+        # start. Counting it in the source totals or the playback would leak it.
+        shown=[p for p in points if low <= p["timestamp_ms"]/1000 < high]
         result['parking_spots']=merge_inferred_parking(result.get('parking_spots') or [], points, mileage)
-        result.update(retention_days=self.retention, locator_enabled=True, source_counts={s:sum(p["source"]==s for p in points) for s in ("app","cloud")})
-        result['playback']=playback(points)
-        result['playback_sample_step']=max((p.get('sample_step',1) for p in points),default=1)
+        result.update(retention_days=self.retention, locator_enabled=True, source_counts={s:sum(p["source"]==s for p in shown) for s in ("app","cloud")})
+        result['playback']=playback(shown)
+        result['playback_sample_step']=max((p.get('sample_step',1) for p in shown),default=1)
         return result
 
     def _prepared(self, low_ms, high_ms):
@@ -387,3 +396,4 @@ class LocatorHistory(HomeAssistantView):
             return web.json_response({"error":"invalid_interval"},status=400)
         data["latest"]=history.latest
         return web.json_response(data,headers={"Cache-Control":"no-store"})
+
