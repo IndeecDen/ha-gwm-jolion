@@ -1,5 +1,5 @@
 import './jsQR.js?v=1.4.0';
-import './gwm-jolion-pairing.js?v=0.2.0-beta.3';
+import './gwm-jolion-pairing.js?v=0.2.0-beta.4';
 
 // HA's form schema has no custom button selector. Augment only our three
 // uniquely named fields; all values and persistence remain in the options flow.

@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.2.0-beta.3 */
+/* GWM Jolion Trips Card v0.2.0-beta.4 */
 (() => {
   const SPEED_COLORS = {low:'#2e7d32',medium:'#f9a825',high:'#c62828'};
   const DEFAULT_SPEED_LIMITS = {green:80,red:110};
