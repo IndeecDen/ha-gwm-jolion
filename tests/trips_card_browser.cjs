@@ -424,7 +424,32 @@ async function openCard(browser,stub){
   assert.equal(await silent.page.locator('.km').textContent(),'14,6','пробег остаётся доступен без карты');
   assert.equal(await silent.page.locator('[data-mode="today"]').count(),1,'выбор периода остаётся доступен');
   assert.deepEqual(silent.errors.filter(text=>!/did not hand over a map/.test(text)),[],'падение карты не должно вылетать наружу');
+  await silent.page.close();
 
-  console.log('Trips card on the Home Assistant map: route lines, A/B/C parking points, period-wide labels, date-aware popups, configurable speed ranges, centering, map interaction, fullscreen, calendar, no second map engine, always-cleaned track, late and missing map, mobile layout, empty history and errors: PASS');
+  // Home Assistant registers <ha-map> lazily, and a dashboard with no map card of
+  // its own may only end up defining it well after this card has loaded. A single
+  // lookup at load time would read that as "no map" and never draw.
+  const lazy=await openCard(browser,`
+   setTimeout(()=>{customElements.define('ha-map',class extends HTMLElement{
+     connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
+     async getMap(){
+      const ml=window.GwmTripsMapLibre || window.maplibregl;
+      const div=document.createElement('div');div.style.cssText='position:absolute;inset:0;width:100%;height:100%';
+      this.append(div);
+      this._map=new ml.Map({container:div,attributionControl:false,style:{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9ede8'}}]}});
+      window.__draws=new Map();
+      await new Promise(res=>this._map.once('load',res));
+      return this._map;
+     }
+    });},1200);
+  `);
+  assert.equal(await lazy.page.evaluate(()=>customElements.get('ha-map')),undefined,'ha-map сначала не определён');
+  await lazy.page.waitForFunction(()=>card._surface&&card._surface.engine==='ha'&&card._surface._lines.length===2,null,{timeout:20000});
+  assert.equal(await lazy.page.evaluate(()=>card._surface.hasOverlays()),true,'карта появилась позже и маршрут лёг на неё');
+  assert.equal(await lazy.page.locator('.map-status').textContent(),'');
+  assert.deepEqual(lazy.errors,[]);
+  await lazy.page.close();
+
+  console.log('Trips card on the Home Assistant map: route lines, A/B/C parking points, period-wide labels, date-aware popups, configurable speed ranges, centering, map interaction, fullscreen, calendar, no second map engine, always-cleaned track, late, lazily registered and missing map, mobile layout, empty history and errors: PASS');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

@@ -127,8 +127,19 @@
   // and no fallback: if the map cannot be opened the card says so instead of quietly
   // swapping in a different one, because the card's whole point is to follow the
   // map settings the dashboard already uses.
+  // Home Assistant only registers <ha-map> once something needs it. A dashboard
+  // with no map card of its own may never define it, so a single lookup is not
+  // enough: the card waits to see whether it turns up before giving up. Should it
+  // appear later, the next refresh picks it up on its own.
+  function haMapDefined(){
+    if(customElements.get('ha-map'))return Promise.resolve(true);
+    return Promise.race([
+      customElements.whenDefined('ha-map').then(()=>true),
+      new Promise(resolve=>setTimeout(()=>resolve(false),8000)),
+    ]);
+  }
   async function createSurface(card, container){
-    if(!customElements.get('ha-map'))return {surface:null,note:'Карта Home Assistant недоступна. Обновите интерфейс Home Assistant.'};
+    if(!await haMapDefined())return {surface:null,note:'Карта Home Assistant недоступна. Обновите интерфейс Home Assistant.'};
     const haMap=document.createElement('ha-map');
     if(card._hass)haMap.hass=card._hass;
     container.append(haMap);
