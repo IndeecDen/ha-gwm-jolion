@@ -16,6 +16,15 @@ MIN_STATIONARY_SECONDS = 60
 MAX_GPS_SPEED_KMH = 250
 PARKING_RADIUS_KM = GPS_JITTER_KM
 PARKING_BASELINE_SECONDS = 7 * 86400
+# The first row of a stationary run is one noisy sample, and a parked receiver
+# drifts: on the field archive one car wandered 430 m from the middle of its own
+# cloud overnight, so testing 30 m against that first row cut a single parking
+# into a dozen markers. Measure the run against its own mean, and give a car that
+# has stood for minutes more room before it counts as gone - a car that really
+# left resumed 2915 m away.
+PARKING_RADIUS_M = 120
+DEPARTURE_RADIUS_KM = 0.5
+LONG_STOP_SECONDS = 300
 
 
 def number(value):
@@ -54,10 +63,21 @@ def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS):
     anchor = previous = None
     anchor_odometer = None
     trusted = True
+    # Running mean of the stationary run: it does not drift the way a single fix does.
+    lat_sum = lon_sum = 0.0
+    count = 0
+
+    def mean():
+        return (lat_sum/count, lon_sum/count)
+
+    def restart(row):
+        nonlocal lat_sum, lon_sum, count
+        lat_sum, lon_sum, count = row[1], row[2], 1
 
     def finish(ended):
         if trusted and anchor is not None and previous[0] - anchor[0] >= minimum_seconds:
-            spots.append({"latitude":anchor[1], "longitude":anchor[2],
+            latitude, longitude = mean()
+            spots.append({"latitude":latitude, "longitude":longitude,
                           "start":anchor[0], "end":ended,
                           "observed_until":previous[0],
                           "duration":int(previous[0] - anchor[0])})
@@ -71,6 +91,7 @@ def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS):
         if previous is None:
             anchor = previous = row
             anchor_odometer = row[3]
+            restart(row)
             continue
         delta = row[0] - previous[0]
         if delta <= 0:
@@ -80,23 +101,37 @@ def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS):
             # The destination is uncertain too until plausible movement resumes.
             anchor = previous = row
             anchor_odometer = row[3]
+            restart(row)
             trusted = False
             continue
         if delta > 600:
             finish(None)
             anchor = previous = row
             anchor_odometer = row[3]
+            restart(row)
             continue
         if anchor_odometer is None and row[3] is not None:
             anchor_odometer = row[3]
         odo_moved = row[3] is not None and anchor_odometer is not None and row[3] > anchor_odometer
-        displaced = distance(anchor, row) > PARKING_RADIUS_KM
+        standing = previous[0] - anchor[0] >= LONG_STOP_SECONDS
+        latitude, longitude = mean()
+        # The wide radius is only safe while the odometer corroborates it: a real
+        # reading that has not moved proves the car stood still, so a drifting
+        # receiver cannot chop the parking up. With no reading at all the strict
+        # jitter radius stays, and a receiver jump is still never called parking.
+        limit = DEPARTURE_RADIUS_KM if (standing and anchor_odometer is not None) else PARKING_RADIUS_KM
+        displaced = distance((anchor[0], latitude, longitude, None), row) > limit
         if displaced or odo_moved:
             finish(previous[0])
             anchor = row
             anchor_odometer = row[3]
+            restart(row)
             if displaced:
                 trusted = True
+        else:
+            lat_sum += row[1]
+            lon_sum += row[2]
+            count += 1
         previous = row
     finish(None)
     return spots
@@ -135,7 +170,7 @@ def join_parking_observations(stops, rows):
     return grouped
 
 
-def summarize(rows, start, end, zone):
+def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
     """Count cumulative mileage independently of delayed or missing GPS fixes."""
     tz = ZoneInfo(zone)
     low, high = period(start, end, zone)
@@ -183,6 +218,8 @@ def summarize(rows, start, end, zone):
                 odometer = odo
         if valid:
             linked = connected and comparable
+            explicit_break=int(stamp*1000) in (break_before or ())
+            if explicit_break:linked=False
             if linked and gps_jump(km, delta):
                 linked = False
                 info["gaps"] += 1
@@ -192,6 +229,9 @@ def summarize(rows, start, end, zone):
                 parked = (stop_index < len(stationary_runs) and previous[0] >= stationary_runs[stop_index]["start"]
                           and stamp <= stationary_runs[stop_index]["observed_until"])
                 speed, kind = (0.0, "stationary") if parked else movement_speed(km, delta)
+                measured = (measured_speeds or {}).get(int(stamp*1000))
+                if measured is not None:
+                    speed, kind = measured, "moving" if measured >= MIN_MOVING_SPEED_KMH else "stationary"
                 if kind == "moving":
                     info["gps_km"] += km
                 edges.append((speed, kind, km, delta, previous[0]))
@@ -202,7 +242,7 @@ def summarize(rows, start, end, zone):
                 edges = []
                 segments.append(segment)
                 segment_edges.append(edges)
-                if last_fix and (lat, lon) != (last_fix[1], last_fix[2]):
+                if last_fix and not explicit_break and (lat, lon) != (last_fix[1], last_fix[2]):
                     gaps.append([[last_fix[1], last_fix[2]], [lat, lon]])
             segment.append([lat, lon])
             last_fix = row
@@ -234,6 +274,9 @@ def summarize(rows, start, end, zone):
                 sum(edge[2] for edge in moving),
                 sum(edge[3] for edge in moving),
             ) if moving else (0.0, "stationary")
+            if moving and measured_speeds:
+                duration=sum(edge[3] for edge in moving)
+                speed=sum(edge[0]*edge[3] for edge in moving)/duration if duration else None
             reduced_speeds.append(round(speed, 1) if speed is not None else None)
             reduced_kinds.append(kind)
         routes.append(reduced)
@@ -250,7 +293,31 @@ def summarize(rows, start, end, zone):
             "start":start, "end":end}
 
 
-def with_archive(rows, archive, start, end, zone):
+def playback(points):
+    """Keep every timestamp for the slider; do not invent missing fixes."""
+    result=[]
+    previous=None
+    for point in points:
+        p=dict(point)
+        p['speed_estimated']=False
+        if p.get('speed_kmh') is None and previous and not p.get('display_break') and p.get('source')==previous.get('source'):
+            dt=(p['timestamp_ms']-previous['timestamp_ms'])/1000
+            if 0 < dt <= 600:
+                speed=distance((0,previous['latitude'],previous['longitude'],None),(0,p['latitude'],p['longitude'],None))/dt*3600
+                if speed <= 250:
+                    p['speed_kmh']=round(speed,1)
+                    p['speed_estimated']=True
+        result.append({k:p.get(k) for k in ('timestamp_ms','latitude','longitude','speed_kmh','speed_estimated','source','accuracy_m','speed_accuracy_kmh','display_filtered','display_break')})
+        previous=p
+    return result
+
+
+def cloud_playback(rows,start,end,zone):
+    low,high=period(start,end,zone)
+    return playback([dict(timestamp_ms=int(r[0]*1000),latitude=r[1],longitude=r[2],speed_kmh=None,source='cloud') for r in rows if low<=r[0]<high and r[1] is not None and r[2] is not None])
+
+
+def with_archive(rows, archive, start, end, zone, measured_speeds=None, break_before=None):
     """Merge both sources throughout the period, including local recording gaps."""
     gps, odo = archive
     def merge(archived, local, value_index):
@@ -273,7 +340,8 @@ def with_archive(rows, archive, start, end, zone):
                 latest_odo = mileage[mileage_index][3]
             mileage_index += 1
         enriched_route.append((row[0], row[1], row[2], latest_odo))
-    result = summarize(enriched_route, start, end, zone)
+    result = summarize(enriched_route, start, end, zone, measured_speeds, break_before)
+    result['playback']=cloud_playback(enriched_route,start,end,zone)
     _, high = period(start, end, zone)
     last_position = next((row for row in reversed(enriched_route)
                           if row[0] < high and row[1] is not None and row[2] is not None), None)
@@ -326,7 +394,7 @@ class TripHistory:
         async with self.lock:
             await self.hass.async_add_executor_job(self._append, stamp, location)
 
-    def _query(self, start, end, zone, archive=None):
+    def _query(self, start, end, zone, archive=None, raw=False):
         low, high = period(start, end, zone)
         with self._connect() as db:
             rows = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts >= ? AND ts < ? ORDER BY ts", (low - PARKING_BASELINE_SECONDS, high)).fetchall()
@@ -339,6 +407,7 @@ class TripHistory:
         result["retention_days"] = self.retention
         return result
 
-    async def query(self, start, end, zone, archive=None):
+    async def query(self, start, end, zone, archive=None, raw=False):
         async with self.lock:
-            return await self.hass.async_add_executor_job(self._query, start, end, zone, archive)
+            return await self.hass.async_add_executor_job(self._query, start, end, zone, archive, raw)
+

@@ -27,6 +27,7 @@ def register(hass):
     vol.Required("start"): str,
     vol.Required("end"): str,
     vol.Optional("odometer_entity"): str,
+    vol.Optional("raw"): bool,
 })
 @websocket_api.async_response
 async def get_trips(hass, connection, msg):
@@ -58,7 +59,9 @@ async def get_trips(hass, connection, msg):
                 raise
             except Exception:
                 _LOGGER.warning("Recorder history unavailable; using local trip history")
-        if archive is None:
+        if msg.get('raw'):
+            result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone, archive, raw=True)
+        elif archive is None:
             result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone)
         else:
             result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone, archive)

@@ -1,5 +1,9 @@
 # Third-party notices
 
+## Android QR encoder and browser QR decoder
+
+The Android application uses [ZXing Core 3.5.3](https://github.com/zxing/zxing) for pairing QR codes (Apache-2.0). The bundled browser decoder is [jsQR 1.4.0](https://github.com/cozmo/jsQR) (Apache-2.0). The [Apache-2.0 license text](custom_components/gwm_jolion/frontend/vendor/jsQR-LICENSE.txt) is bundled with the integration.
+
 ## OpenFreeMap and MapLibre
 
 The trips card supports [OpenFreeMap](https://openfreemap.org/quick_start/) styles and tiles, with visible attribution to OpenFreeMap, OpenMapTiles and OpenStreetMap contributors.

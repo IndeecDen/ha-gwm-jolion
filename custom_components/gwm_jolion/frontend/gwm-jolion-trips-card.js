@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.1.0-beta.25 */
+/* GWM Jolion Trips Card v0.2.0-beta.1 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -53,6 +53,7 @@
       this.shadowRoot.innerHTML = `<link rel="stylesheet" href="/gwm-jolion/leaflet/leaflet.css">
       <link rel="stylesheet" href="/gwm-jolion/maplibre/maplibre-gl.css">
       <style>
+        :host(.fallback-fullscreen) .playback,ha-card:fullscreen .playback{display:none}
         :host{display:block}ha-card{overflow:hidden}.content{padding:10px 14px 12px}
         .shortcuts,.dates,.summary{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
         button,input{font:inherit;font-size:13px;color:var(--primary-text-color);border:0;border-radius:10px;background:var(--secondary-background-color,#eee);padding:7px 11px;box-sizing:border-box}
@@ -60,19 +61,22 @@
         button:focus-visible,input:focus-visible{outline:2px solid var(--primary-color,#03a9f4);outline-offset:2px}
         .dates{margin:10px 0 0}.dates[hidden]{display:none}label{display:flex;flex:1;min-width:110px;flex-direction:column;gap:5px;color:var(--secondary-text-color);font-size:12px}input{width:100%;color-scheme:light dark}
         .summary{justify-content:center;margin:0 0 8px;gap:8px}.km{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}.summary ha-icon{color:var(--secondary-text-color);--mdc-icon-size:22px}.shortcuts{justify-content:center;flex-wrap:nowrap;gap:6px}#calendar{display:flex;align-items:center;justify-content:center;width:34px;height:32px;padding:0}#calendar ha-icon{--mdc-icon-size:19px}
-        .speed-legend{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:0 0 10px;color:var(--secondary-text-color);font-size:11px}.speed-legend[hidden]{display:none}.speed-legend span{display:flex;align-items:center;gap:4px}.speed-legend i{width:10px;height:4px;border-radius:2px;background:#888}.speed-legend b{font-weight:400}.speed-legend .low{background:#2e7d32}.speed-legend .medium{background:#f9a825}.speed-legend .high{background:#c62828}.speed-legend .parking{width:18px;height:18px;border-radius:50%;background:#fff;border:2px solid #455a64;color:#263238;font-style:normal;font-weight:700;line-height:14px;text-align:center}
+        .speed-legend{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:0 0 10px;color:var(--secondary-text-color);font-size:11px}.speed-legend[hidden]{display:none}.speed-legend span{display:flex;align-items:center;gap:4px}.speed-legend i{width:10px;height:4px;border-radius:2px;background:#888}.speed-legend b{font-weight:400}.speed-legend .low{background:#2e7d32}.speed-legend .medium{background:#f9a825}.speed-legend .high{background:#c62828}.speed-legend .parking{width:18px;height:18px;border-radius:50%;background:#fff;border:2px solid #455a64;color:#263238;font-style:normal;font-weight:700;line-height:14px;text-align:center}.speed-legend .parking.inferred{border-style:dashed;background:#eef3f7;font-size:9px}.speed-legend .inferred-note[hidden]{display:none}
         .route-point{width:28px;height:28px;border-radius:50%;background:#fff;color:#263238;border:3px solid #455a64;box-shadow:0 1px 5px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;font:700 13px/1 Arial,sans-serif;box-sizing:border-box}
+        .route-point.inferred{border-style:dashed;background:#eef3f7}
         .error,.map-status{color:var(--secondary-text-color);font-size:12px;text-align:center}.error:empty,.map-status:empty{display:none}.error:not(:empty),.map-status:not(:empty){margin-top:8px}.map-wrap{position:relative;height:300px;background:#e9edef}.map{height:100%;background:#e9edef;z-index:0}
         .map-actions{position:absolute;top:8px;right:8px;z-index:1000;display:flex;gap:6px}.map-actions button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;background:var(--card-background-color,#fff);box-shadow:0 1px 5px rgba(0,0,0,.28)}.map-actions ha-icon{--mdc-icon-size:19px}
         :host(.fallback-fullscreen){position:fixed;inset:0;z-index:1000;display:block;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) ha-card,ha-card:fullscreen{width:100%;height:100%;min-height:100%;display:flex;flex-direction:column;border-radius:0;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) .map-wrap,ha-card:fullscreen .map-wrap{flex:1;height:auto;min-height:0}:host(.fallback-fullscreen) .content,ha-card:fullscreen .content{display:none}
         .leaflet-container{font-family:inherit}.leaflet-control-attribution{font-size:10px}
         @media(max-width:350px){button{padding:7px 8px}.content{padding:10px}.map-wrap{height:260px}}
       </style><ha-card><div class="map-wrap"><div class="map" aria-label="Карта маршрута"></div><div class="map-actions"><button id="centerBtn" type="button" title="Показать автомобиль в центре карты" aria-label="Показать автомобиль в центре карты"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button><button id="fullscreenBtn" type="button" title="Развернуть карту" aria-label="Развернуть карту" aria-pressed="false"><ha-icon icon="mdi:fullscreen"></ha-icon></button></div></div><div class="content">
-      <div class="speed-legend" aria-label="Цвета средней скорости и стоянки" hidden><span><i class="low"></i><b class="low-range">до 80 км/ч</b></span><span><i class="medium"></i><b class="medium-range">80–110 км/ч</b></span><span><i class="high"></i><b class="high-range">110+ км/ч</b></span><span><i class="parking">A</i><b>A, B, C</b></span></div>
+      <div class="speed-legend" aria-label="Цвета средней скорости и стоянки" hidden><span><i class="low"></i><b class="low-range">до 80 км/ч</b></span><span><i class="medium"></i><b class="medium-range">80–110 км/ч</b></span><span><i class="high"></i><b class="high-range">110+ км/ч</b></span><span><i class="parking">A</i><b>A, B, C</b></span><span class="inferred-note" hidden><i class="parking inferred">A*</i><b>A* — стоянка выведена по молчанию и пробегу</b></span></div>
       <div class="summary"><ha-icon icon="mdi:counter" aria-hidden="true"></ha-icon><span class="km" aria-label="Пробег за выбранный период">—</span></div>
       <div class="shortcuts"><button data-mode="today">Сегодня</button><button data-mode="yesterday">Вчера</button><button data-mode="week">Неделя</button><button id="calendar" title="Выбрать период" aria-label="Выбрать период" aria-expanded="false" aria-controls="period"><ha-icon icon="mdi:calendar-range"></ha-icon></button></div>
       <div class="dates" id="period" hidden><label>С<input type="date" id="start"></label><label>По<input type="date" id="end"></label><button id="show">Выбрать</button></div>
-      <div class="error" role="status"></div><div class="map-status" role="status"></div></div></ha-card>`;
+      <div class="error" role="status"></div><div class="map-status" role="status"></div></div><div class="playback" style="padding:0 14px 12px" hidden><svg class="speed-chart" viewBox="0 0 600 55" style="width:100%;height:55px" aria-label="Скорость по времени"><path fill="none" stroke="#039ecc" stroke-width="2"></path></svg><input class="timeline" type="range" min="0" max="0" value="0" aria-label="Просмотр трека по времени" style="width:100%;box-sizing:border-box"><button class="track-mode" type="button" aria-pressed="false" style="display:block;margin:0 auto 4px">Трек: очищенный</button><div class="selected" style="font-size:12px;text-align:center"></div></div></ha-card>`;
+      this.shadowRoot.querySelector('.timeline').oninput=e=>this._selectPoint(Number(e.target.value));
+      this.shadowRoot.querySelector('.track-mode').onclick=()=>{this._raw=!this._raw;const button=this.shadowRoot.querySelector('.track-mode');button.textContent=this._raw?'Трек: исходный':'Трек: очищенный';button.setAttribute('aria-pressed',String(this._raw));this._load();};
       this._mapCard=this.shadowRoot.querySelector('ha-card');
       this._fullscreenBtn=this.shadowRoot.querySelector('#fullscreenBtn');
       this.shadowRoot.querySelector('#centerBtn').onclick=()=>this._centerVehicle();
@@ -81,6 +85,33 @@
       this.shadowRoot.querySelectorAll('[data-mode]').forEach(button => button.onclick=()=>{this._mode=button.dataset.mode;this._calendar(false);this._load();});
       this.shadowRoot.querySelector('#show').onclick=()=>{const start=this.shadowRoot.querySelector('#start').value,end=this.shadowRoot.querySelector('#end').value;if(!start || !end || start>end){this.shadowRoot.querySelector('.error').textContent='Проверьте даты.';return;}this._mode='custom';this._range=[start,end];this._calendar(false);this._load();};
       this.shadowRoot.querySelector('#calendar').onclick=()=>this._calendar(this.shadowRoot.querySelector('.dates').hidden);
+    }
+    _renderPlayback(data){
+      this._points=data.playback || [];
+      const root=this.shadowRoot,box=root.querySelector('.playback'),slider=root.querySelector('.timeline');
+      box.hidden=!this._points.length;slider.max=String(Math.max(0,this._points.length-1));slider.value='0';slider.oninput=e=>this._selectPoint(Number(e.target.value));
+      slider.title=data.playback_sample_step>1?'Для посекундного просмотра выберите один день':'Все записанные точки выбранного периода';
+      const points=this._points, max=points.reduce((m,p)=>Math.max(m,p.speed_kmh||0),1),first=points[0]?.timestamp_ms,last=points.at(-1)?.timestamp_ms;
+      let drawing='',gap=true;
+      const stride=Math.max(1,Math.ceil(points.length/2000));
+      points.forEach((p,i)=>{if(p.speed_kmh==null){gap=true;return;}if(p.display_break||(i&&p.timestamp_ms-points[i-1].timestamp_ms>120000))gap=true;if(i%stride&&i!==points.length-1)return;const x=(p.timestamp_ms-first)/Math.max(1,last-first)*600,y=53-p.speed_kmh/max*50;drawing+=`${gap?'M':'L'}${x.toFixed(1)},${y.toFixed(1)} `;gap=false;});
+      root.querySelector('.speed-chart path').setAttribute('d',drawing);this._cursor?.remove();this._cursor=null;
+      root.querySelector('.selected').textContent=points.length?'Выберите точку трека':'';
+      if(this._selectedTime!=null && points.length){
+        let low=0,high=points.length;
+        while(low<high){const mid=(low+high)>>1;if(points[mid].timestamp_ms<this._selectedTime)low=mid+1;else high=mid;}
+        let index=Math.min(low,points.length-1);
+        if(index>0&&Math.abs(points[index-1].timestamp_ms-this._selectedTime)<Math.abs(points[index].timestamp_ms-this._selectedTime))index--;
+        this._selectPoint(index,false);
+      }
+    }
+    _selectPoint(index,pan=true){
+      const p=this._points?.[index];if(!p||!this._map)return;
+      this._selectedTime=p.timestamp_ms;this.shadowRoot.querySelector('.timeline').value=String(index);
+      const selectedPoints=this._points;
+      const text=new Intl.DateTimeFormat('ru-RU',{timeZone:this._hass.config.time_zone,day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(p.timestamp_ms));
+      this.shadowRoot.querySelector('.selected').textContent=`${text} · ${p.speed_kmh==null?'скорость неизвестна':`${p.speed_estimated?'≈ ':''}${Math.round(p.speed_kmh)} км/ч`} · ${p.source==='app'?'GPS приложения':'облако'}${p.accuracy_m!=null?` · GPS ±${Math.round(p.accuracy_m)} м`:''}${p.source==='app'?` · погрешность скорости: ${p.speed_accuracy_kmh==null?'неизвестна':`±${Number(p.speed_accuracy_kmh.toFixed(1))} км/ч`}`:''}${p.display_filtered?' · сглажено':''}`;
+      loadMap().then(L=>{if(!this.isConnected||this._points!==selectedPoints||this._selectedTime!==p.timestamp_ms)return;this._cursor?.remove();this._cursor=L.circleMarker([p.latitude,p.longitude],{radius:7,color:'#039ecc',fillOpacity:1}).addTo(this._map);if(pan)this._map.panTo([p.latitude,p.longitude]);});
     }
     setConfig(config) {
       this._config={...config}; this._serial++;this._fitKey=null;
@@ -165,11 +196,11 @@
       this._highlight();
       if(!start || !end || start>end){error.textContent='Проверьте начало и конец периода.';return;}
       const queryKey=`${this._config.entity}|${this._config.odometer_entity || ''}|${start}|${end}`;
-      if(this._queryKey!==queryKey){this._layer?.clearLayers();root.querySelector('.km').textContent='—';this._queryKey=queryKey;}
+      if(this._queryKey!==queryKey){this._selectedTime=null;this._renderPlayback({playback:[]});this._layer?.clearLayers();root.querySelector('.km').textContent='—';this._queryKey=queryKey;}
       error.textContent='';root.querySelector('.summary').setAttribute('aria-busy','true');
       let timeout;
       try{
-        const data=await Promise.race([this._hass.callWS({type:'gwm_jolion/trips',entity_id:this._config.entity,start,end,...(this._config.odometer_entity?{odometer_entity:this._config.odometer_entity}:{})}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Не удалось загрузить историю. Выберите период ещё раз.')),20000);})]);
+        const data=await Promise.race([this._hass.callWS({type:'gwm_jolion/trips',entity_id:this._config.entity,start,end,...(this._raw?{raw:true}:{}),...(this._config.odometer_entity?{odometer_entity:this._config.odometer_entity}:{})}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Не удалось загрузить историю. Выберите период ещё раз.')),20000);})]);
         if(serial!==this._serial || !this.isConnected)return;
         error.textContent=data.samples?'':'За этот период нет записей.';
         root.querySelector('.km').textContent=data.samples?`${data.method==='odometer'?'':'≈ '}${data.km.toLocaleString('ru-RU')}`:'—';
@@ -181,7 +212,7 @@
           this._layer=L.featureGroup().addTo(this._map);
         }
         await this._setBasemap(L,serial);if(serial!==this._serial || !this.isConnected)return;
-        this._layer.clearLayers();
+        this._layer.clearLayers();this._renderPlayback(data);
         for(const gap of data.gaps || [])L.polyline(gap,{color:'#88949f',weight:2,dashArray:'5 7',opacity:.7}).bindTooltip('Нет GPS-данных: связь между точками, не записанный маршрут').addTo(this._layer);
         const speedSegments=Array.isArray(data.segment_speeds_kmh)?data.segment_speeds_kmh:[];
         const speedKinds=Array.isArray(data.segment_kinds)?data.segment_kinds:[];
@@ -190,20 +221,36 @@
         const hasSpeedData=hasSpeeds&&speedSegments.some(segment=>Array.isArray(segment)&&segment.some(speed=>Number(speed)>0));
         const limits=speedLimits(this._config);
         root.querySelector('.speed-legend').hidden=!hasSpeedData&&!parkingSpots.length;
+        const inferredNote=root.querySelector('.inferred-note');
+        if(inferredNote)inferredNote.hidden=!parkingSpots.some(spot=>spot&&spot.inferred===true);
         for(const [segmentIndex,segment] of data.segments.entries()){
-          if(!hasSpeeds){if(segment.length>1)L.polyline(segment,{color:'#009fce',weight:4,opacity:.85}).addTo(this._layer);continue;}
+          if(!hasSpeeds){if(segment.length>1)L.polyline(segment,{color:'#009fce',weight:4,opacity:.85,lineCap:'round',lineJoin:'round',smoothFactor:1.5}).addTo(this._layer);continue;}
           const speeds=speedSegments[segmentIndex]||[],kinds=speedKinds[segmentIndex]||[];
+          // Consecutive pieces of the same speed were drawn one polyline per GPS
+          // pair, so every join showed as a hard step and a turn looked like a
+          // saw blade. Gather each run of one colour into a single line and let
+          // Leaflet round the corners.
+          let run=[],runColor=null,runSpeed=0;
+          const flush=()=>{
+            if(run.length>1)L.polyline(run,{color:runColor,weight:4,opacity:.9,lineCap:'round',lineJoin:'round',smoothFactor:1.5})
+              .bindTooltip(`Средняя скорость: ${Math.round(runSpeed)} км/ч`).addTo(this._layer);
+            run=[];runColor=null;
+          };
           for(let index=1;index<segment.length;index++){
             const rawSpeed=speeds[index-1],speed=Number(rawSpeed);
             if(kinds[index-1]==='stationary'){
+              flush();
               const previous=segment[index-1],current=segment[index];
-              if(previous[0]!==current[0]||previous[1]!==current[1])L.polyline([previous,current],{color:'#88949f',weight:3,opacity:.75}).bindTooltip('Записанные GPS-точки: остановка или медленное движение').addTo(this._layer);
+              if(previous[0]!==current[0]||previous[1]!==current[1])L.polyline([previous,current],{color:'#88949f',weight:3,opacity:.75,lineCap:'round',lineJoin:'round'}).bindTooltip('Записанные GPS-точки: остановка или медленное движение').addTo(this._layer);
               continue;
             }
-            if(kinds[index-1]==='unknown'||rawSpeed===null||rawSpeed===undefined||!Number.isFinite(speed)||speed<=0)continue;
+            if(kinds[index-1]==='unknown'||rawSpeed===null||rawSpeed===undefined||!Number.isFinite(speed)||speed<=0){flush();continue;}
             const color=speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
-            L.polyline([segment[index-1],segment[index]],{color,weight:4,opacity:.9}).bindTooltip(`Средняя скорость: ${Math.round(speed)} км/ч`).addTo(this._layer);
+            if(color!==runColor){flush();runColor=color;runSpeed=speed;run=[segment[index-1]];}
+            else runSpeed=Math.round((runSpeed+speed)/2);
+            run.push(segment[index]);
           }
+          flush();
         }
         const parkingOccurrencesForPeriod=parkingOccurrences(parkingSpots,start,end,this._hass.config.time_zone),multiDay=start!==end;
         for(const parking of parkingOccurrencesForPeriod){
@@ -211,16 +258,18 @@
           if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||!Number.isFinite(parkingStart))continue;
           const showDates=multiDay||dayInZone(parkingStart,this._hass.config.time_zone)!==parking.day||(Number.isFinite(parkingEnd)&&dayInZone(parkingStart,this._hass.config.time_zone)!==dayInZone(parkingEnd,this._hass.config.time_zone));
           const label=document.createElement('div');label.style.whiteSpace='pre-line';
-          label.textContent=`Стоянка ${parking.label}\nНачало: ${tripTime(parkingStart,this._hass.config.time_zone,showDates)}${parking.show_end?`\nКонец: ${tripTime(parkingEnd,this._hass.config.time_zone,showDates)}`:''}`;
+          const inferredNote=parking.inferred?(parking.inferred_by==='odometer'?'\nПробег не менялся: стоянка выведена по молчанию и пробегу.':'\nПробег рядом недоступен: стоянка выведена по молчанию и координатам.'):'';
+          label.textContent=`Стоянка ${parking.label}${parking.inferred?'*':''}\nНачало: ${tripTime(parkingStart,this._hass.config.time_zone,showDates)}${parking.show_end?`\nКонец: ${tripTime(parkingEnd,this._hass.config.time_zone,showDates)}`:''}${inferredNote}`;
           for(const gap of parking.interruptions || [])label.textContent+=`\nНет данных: ${tripTime(gap[0],this._hass.config.time_zone,true)} — ${tripTime(gap[1],this._hass.config.time_zone,true)}`;
-          const iconElement=document.createElement('div');iconElement.className='route-point';iconElement.textContent=parking.label;if(parking.offset_index)iconElement.style.transform=`translateX(${parking.offset_index*20}px)`;
+          const iconElement=document.createElement('div');iconElement.className='route-point'+(parking.inferred?' inferred':'');iconElement.textContent=parking.label+(parking.inferred?'*':'');if(parking.offset_index)iconElement.style.transform=`translateX(${parking.offset_index*20}px)`;
           const icon=L.divIcon({className:'',html:iconElement,iconSize:[28,28],iconAnchor:[14,14]});
           L.marker([latitude,longitude],{icon,keyboard:true,title:`Стоянка ${parking.label}`}).bindTooltip(label,{direction:'top',offset:[0,-8]}).addTo(this._layer);
         }
         if(!this._layer.getLayers().length && start<=today && today<=end){
           const validPosition=value=>value && value.latitude!==null && value.longitude!==null && value.latitude!=='' && value.longitude!=='' && Number.isFinite(Number(value.latitude)) && Number.isFinite(Number(value.longitude)) && Math.abs(Number(value.latitude))<=90 && Math.abs(Number(value.longitude))<=180 && (Number(value.latitude)!==0 || Number(value.longitude)!==0);
           const current=this._hass.states[this._config.entity]?.attributes;
-          const position=validPosition(current)?current:validPosition(data.last_position)?data.last_position:null;
+          const filtered=current?.golion_locator_enabled && validPosition(data.last_position);
+          const position=filtered?data.last_position:validPosition(current)?current:validPosition(data.last_position)?data.last_position:null;
           if(position){
             const iconElement=document.createElement('ha-icon');iconElement.setAttribute('icon','mdi:car');iconElement.className='route-point';
             const icon=L.divIcon({className:'',html:iconElement,iconSize:[28,28],iconAnchor:[14,14]});

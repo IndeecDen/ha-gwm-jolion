@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import voluptuous as vol
 
-from homeassistant.components import frontend
+from homeassistant.components import frontend, panel_custom
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD
@@ -29,6 +29,15 @@ from .const import (
 )
 from .coordinator import GwmJolionCoordinator
 from .trips import TripHistory
+from .locator import (
+    HybridHistory,
+    ENABLED as LOCATOR_ENABLED,
+    register as register_locator,
+    relay_interval,
+)
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.storage import Store
+from datetime import timedelta
 from .trips_ws import register as register_trips
 from .entity_surface import MIGRATION_REMOVE_ENTITY_SUFFIXES, OBSOLETE_OPTION_KEYS
 from .protocol_capture import (
@@ -42,30 +51,39 @@ _LOGGER = logging.getLogger(__name__)
 
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_ASSETS = (
+    (FRONTEND_DIR / "gwm-jolion-options.js", "/gwm-jolion/gwm-jolion-options.js", "/gwm-jolion/gwm-jolion-options.js?v=0.2.0-beta.1"),
+    (FRONTEND_DIR / "gwm-jolion-pairing-panel.js", "/gwm-jolion/gwm-jolion-pairing-panel.js", "/gwm-jolion/gwm-jolion-pairing-panel.js?v=0.2.0-beta.1"),
+    (FRONTEND_DIR / "vendor/jsQR.js", "/gwm-jolion/jsQR.js", "/gwm-jolion/jsQR.js?v=1.4.0"),
+    (FRONTEND_DIR / "gwm-jolion-pairing.js", "/gwm-jolion/gwm-jolion-pairing.js", "/gwm-jolion/gwm-jolion-pairing.js?v=0.2.0-beta.1"),
+    (
+        FRONTEND_DIR / "gwm-jolion-locator-card.js",
+        "/gwm-jolion/gwm-jolion-locator-card.js",
+        "/gwm-jolion/gwm-jolion-locator-card.js?v=0.2.0-beta.1",
+    ),
     (
         FRONTEND_DIR / "gwm-jolion-trips-card.js",
         "/gwm-jolion/gwm-jolion-trips-card.js",
-        "/gwm-jolion/gwm-jolion-trips-card.js?v=0.1.0-beta.25",
+        "/gwm-jolion/gwm-jolion-trips-card.js?v=0.2.0-beta.1",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card-editor.js",
         "/gwm-jolion/gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.1.0-beta.25",
+        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.2.0-beta.1",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-card.js",
         "/gwm-jolion/gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js?v=0.1.0-beta.25",
+        "/gwm-jolion/gwm-jolion-card.js?v=0.2.0-beta.1",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-remote-card.js",
         "/gwm-jolion/gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.1.0-beta.25",
+        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.2.0-beta.1",
     ),
     (
         FRONTEND_DIR / "gwm-jolion-alpha20.js",
         "/gwm-jolion/gwm-jolion-alpha20.js",
-        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.1.0-beta.25",
+        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.2.0-beta.1",
     ),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
@@ -151,8 +169,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await coordinator.async_load_card_settings()
     await coordinator.async_load_profiles()
-    await coordinator.async_config_entry_first_refresh()
-    coordinator.trip_history = TripHistory(hass, entry.entry_id, options.get("trip_retention_days", 90))
+    if options.get(LOCATOR_ENABLED):
+        coordinator.trip_history = HybridHistory(hass, entry, options.get("trip_retention_days", 90))
+        await coordinator.trip_history.initialize()
+        if coordinator.trip_history.relay:
+            entry.async_on_unload(coordinator.trip_history.relay.close)
+        # Local GPS must stay usable when GWM is unavailable during HA restart.
+        vehicle_store = Store(hass, 1, f"gwm_jolion_{entry.entry_id}_locator_vehicle")
+        saved_vehicle = await vehicle_store.async_load() or {}
+        await coordinator.async_refresh()
+        if coordinator.last_update_success and coordinator.data:
+            await vehicle_store.async_save({"vin":coordinator.data.get("vin"), "vehicle_name":coordinator.data.get("vehicle_name"), "state":{}})
+        elif not coordinator.data:
+            coordinator.data = saved_vehicle or {"vehicle_name": "Haval Jolion", "state": {}}
+        entry.async_on_unload(async_track_time_interval(hass, coordinator.trip_history.tick, timedelta(seconds=relay_interval(options))))
+    else:
+        await coordinator.async_config_entry_first_refresh()
+        coordinator.trip_history = TripHistory(hass, entry.entry_id, options.get("trip_retention_days", 90))
     try:
         await coordinator.trip_history.append(time.time(), {
             **(coordinator.data.get("location") or {}),
@@ -161,6 +194,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception:
         _LOGGER.warning("Unable to save initial trip observation")
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    register_locator(hass)
     register_trips(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _register_services(hass)
@@ -188,6 +222,13 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     for _, _, frontend_url in available_assets:
         frontend.add_extra_js_url(hass, frontend_url)
 
+    await panel_custom.async_register_panel(
+        hass, frontend_url_path="gwm-jolion-pairing",
+        webcomponent_name="gwm-jolion-pairing-panel",
+        module_url="/gwm-jolion/gwm-jolion-pairing-panel.js?v=0.2.0-beta.1",
+        sidebar_title=None,
+        require_admin=True,
+    )
     hass.data[DOMAIN][DATA_FRONTEND_REGISTERED] = True
     _LOGGER.debug(
         "Registered bundled GWM Jolion cards: %s",

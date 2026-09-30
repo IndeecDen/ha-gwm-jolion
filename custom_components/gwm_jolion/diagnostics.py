@@ -19,7 +19,10 @@ _SENSITIVE_NORMALIZED_KEYS = {
     "accesstoken", "account", "deviceid", "engineno", "iccid", "imsi",
     "latitude", "longitude", "password", "phone", "securitypassword",
     "securitypin", "shareid", "showedvin", "token", "vehicleid",
-    "vehiclenumber", "vin",
+    "vehiclenumber", "vin", "golionlocatoruploadkey", "golionlocatorkeyhash", "golionlocatorvehicleid", "golionlocatoryandexpublicurl",
+    # The Disk OAuth token grants write access to the whole account, so it is
+    # never included even though the folder path itself is not a secret.
+    "golionlocatordiskoauth",
 }
 
 
@@ -57,6 +60,7 @@ def _base_diagnostics_payload(
     last_command = coordinator.last_command_at
     capture_name = Path(coordinator.protocol_capture_path).name if coordinator.protocol_capture_path else None
     capture_time = coordinator.protocol_capture_last_record_time
+    relay = getattr(getattr(coordinator, "trip_history", None), "relay", None)
 
     return {
         "integration": {"domain": DOMAIN, "version": VERSION, "entry_title": entry.title},
@@ -86,6 +90,20 @@ def _base_diagnostics_payload(
             "session_export": None,
         },
         "protocol": signal_report(coordinator.seen_signal_codes),
+        "locator_relay": None if relay is None else {
+            "status": relay.status,
+            "vehicle_id": relay.vehicle,
+            "folder": relay.folder,
+            "offset": relay.offset,
+            # Never the token itself: only whether one is configured.
+            "has_write_token": bool(relay.token),
+            "cleanup_enabled": relay.cleanup_enabled,
+            "cleanup_blocked": relay.cleanup_blocked,
+            "cleanup_error": relay.cleanup_error,
+            "cleanup_deleted_last_cycle": relay.cleanup_deleted,
+            "cleanup_grace_hours": relay.grace_seconds // 3600,
+            "throttled_until": round(relay.throttle_until, 3),
+        },
         "last_remote_command": {
             "name": coordinator.last_command_name,
             "result_code": coordinator.last_command_result_code,
