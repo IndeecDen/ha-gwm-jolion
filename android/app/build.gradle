@@ -6,8 +6,8 @@ android {
         applicationId 'ru.jolion.locator'
         minSdk 27
         targetSdk 28
-        versionCode 10
-        versionName '0.2.0-beta.1'
+        versionCode 11
+        versionName '0.2.0-beta.2'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
 }

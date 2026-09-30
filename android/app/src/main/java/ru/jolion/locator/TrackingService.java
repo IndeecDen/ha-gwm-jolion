@@ -27,6 +27,12 @@ public class TrackingService extends Service implements LocationListener {
     private volatile boolean closed = false;
     private final UploadWakeup wakeup = new UploadWakeup();
     private long lastFixElapsed = 0;
+    // Once the GPS receiver has produced a precise fix, the coarse network
+    // positions are no longer needed: they only bridge the cold start, when the
+    // satellite receiver has nothing to report yet.
+    private boolean gpsLocked = false;
+    private static final float GPS_MAX_ACCURACY_M = 100f;
+    private static final float NETWORK_COLD_START_ACCURACY_M = 1500f;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     public void onCreate() {
@@ -43,6 +49,10 @@ public class TrackingService extends Service implements LocationListener {
         }
         try {
             locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, this);
+            // The network provider reports a coarse position in seconds. It bridges
+            // the GPS cold start so the track begins right away, and is dropped as
+            // soon as the satellite receiver locks (see onLocationChanged).
+            locations.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 30000, 0, this);
         } catch (RuntimeException e) { status("GPS недоступен. Проверьте разрешения и источник координат ГУ."); }
         networkCallback = new ConnectivityManager.NetworkCallback() {
             public void onAvailable(Network n) { networkAvailable(); }
@@ -74,13 +84,16 @@ public class TrackingService extends Service implements LocationListener {
     public void onLocationChanged(Location incoming) {
         if (closed) return;
         Location fix = new Location(incoming);
+        boolean gps = LocationManager.GPS_PROVIDER.equals(fix.getProvider());
         long ageNs = SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos();
-        if (fix.isFromMockProvider() || !fix.hasAccuracy() || fix.getAccuracy() > 100 || ageNs < 0 || ageNs > 15000000000L) return;
+        if (fix.isFromMockProvider() || !fix.hasAccuracy() || ageNs < 0 || ageNs > 15000000000L) return;
+        if (!acceptProvider(fix.getProvider(), fix.getAccuracy(), gpsLocked)) return;
         if (!Double.isFinite(fix.getLatitude()) || !Double.isFinite(fix.getLongitude()) || Math.abs(fix.getLatitude()) > 90 || Math.abs(fix.getLongitude()) > 180 || !Float.isFinite(fix.getAccuracy()) || fix.getAccuracy() < 0) return;
         if (fix.getTime() < 1577836800000L || fix.getTime() > System.currentTimeMillis()+300000L) { status("Неверное время GPS или системных часов. Проверьте дату ГУ."); return; }
         if (fix.hasSpeed() && (!Float.isFinite(fix.getSpeed()) || fix.getSpeed() < 0 || fix.getSpeed()*3.6 > 400)) return;
         if (lastFixElapsed > 0 && SystemClock.elapsedRealtime()-lastFixElapsed < 900) return;
         lastFixElapsed = SystemClock.elapsedRealtime();
+        if (gps) gpsLocked = true;
         final String base=Config.destination(this),relayToken=Config.prefs(this).getString("disk_oauth",""),vehicle=Config.prefs(this).getString("vehicle", "jolion"),token=Config.key(this);
         writer.execute(() -> {
             try {
@@ -193,4 +206,18 @@ public class TrackingService extends Service implements LocationListener {
         }, "locator-close").start();
         super.onDestroy();
     }
+    /**
+     * Whether a position from {@code provider} is worth recording.
+     *
+     * The satellite receiver is precise but slow to lock after a cold start; the
+     * network provider reports a coarse position in seconds. The coarse fixes are
+     * accepted only while the satellite receiver is still warming up, so the track
+     * begins immediately and is never smeared once GPS takes over.
+     */
+    static boolean acceptProvider(String provider, float accuracy, boolean gpsLocked) {
+        boolean gps = LocationManager.GPS_PROVIDER.equals(provider);
+        if (accuracy > (gps ? GPS_MAX_ACCURACY_M : NETWORK_COLD_START_ACCURACY_M)) return false;
+        return gps || !gpsLocked;
+    }
 }
+
