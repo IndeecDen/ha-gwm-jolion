@@ -67,6 +67,28 @@
   // underneath it is noise; but the segment must still be drawn, because omitting
   // it leaves a hole in the route.
   const PARKED_NEAR_M=200;
+  // Round the corners of a polyline in geometry, not just in the stroke.
+// Leaflet's round joins only soften the paint where two layers meet; the route
+// itself still turns on a spike at every GPS sample, which is what reads as a
+// saw blade. Replacing each interior vertex with a short quadratic arc makes the
+// turn a bend. The endpoints stay put so the line still starts and ends on the
+// measured position.
+function roundCorners(points,steps){
+  if(!Array.isArray(points)||points.length<3)return points;
+  const parts=steps||2;
+  if(parts<2)return points;
+  const out=[points[0]];
+  for(let i=1;i<points.length-1;i++){
+    const a=points[i-1],b=points[i],c=points[i+1];
+    for(let s=1;s<parts;s++){
+      const t=s/parts,u=1-t;
+      out.push([u*u*a[0]+2*u*t*b[0]+t*t*c[0],u*u*a[1]+2*u*t*b[1]+t*t*c[1]]);
+    }
+    out.push(b);
+  }
+  out.push(points[points.length-1]);
+  return out;
+}
   class TripsCard extends HTMLElement {
     static getConfigElement() { return document.createElement('gwm-jolion-trips-card-editor'); }
     static getStubConfig(hass) {
@@ -248,7 +270,7 @@
         const inferredNote=root.querySelector('.inferred-note');
         if(inferredNote)inferredNote.hidden=!parkingSpots.some(spot=>spot&&spot.inferred===true);
         for(const [segmentIndex,segment] of data.segments.entries()){
-          if(!hasSpeeds){if(segment.length>1)L.polyline(segment,{color:'#009fce',weight:4,opacity:.85,lineCap:'round',lineJoin:'round',smoothFactor:1.5}).addTo(this._layer);continue;}
+          if(!hasSpeeds){if(segment.length>1)L.polyline(roundCorners(segment),{color:'#009fce',weight:4,opacity:.85,lineCap:'round',lineJoin:'round',smoothFactor:1.5}).addTo(this._layer);continue;}
           const speeds=speedSegments[segmentIndex]||[],kinds=speedKinds[segmentIndex]||[];
           const runs=stationaryRuns(segment,kinds);
           // Consecutive pieces of the same speed were drawn one polyline per GPS
@@ -257,7 +279,7 @@
           // Leaflet round the corners.
           let run=[],runColor=null,runSpeed=0;
           const flush=()=>{
-            if(run.length>1)L.polyline(run,{color:runColor,weight:4,opacity:.9,lineCap:'round',lineJoin:'round',smoothFactor:1.5})
+            if(run.length>1)L.polyline(roundCorners(run),{color:runColor,weight:4,opacity:.9,lineCap:'round',lineJoin:'round',smoothFactor:1.5})
               .bindTooltip(`Средняя скорость: ${Math.round(runSpeed)} км/ч`).addTo(this._layer);
             run=[];runColor=null;
           };
@@ -271,7 +293,7 @@
                 // every stop. The wander is softened instead - one thin dashed line
                 // per run rather than a solid grey line per GPS pair, so it stops
                 // reading as a road without taking the route with it.
-                L.polyline(run.points,{color:'#88949f',weight:2,opacity:.45,lineCap:'round',lineJoin:'round',dashArray:'2 6'}).bindTooltip('Замедленное движение по записанным GPS-точкам').addTo(this._layer);
+                L.polyline(roundCorners(run.points),{color:'#88949f',weight:2,opacity:.45,lineCap:'round',lineJoin:'round',dashArray:'2 6'}).bindTooltip('Замедленное движение по записанным GPS-точкам').addTo(this._layer);
                 index=run.end;
               }
               continue;
@@ -345,3 +367,5 @@
   if(!customElements.get('gwm-jolion-trips-card-editor'))customElements.define('gwm-jolion-trips-card-editor',TripsEditor);
   window.customCards=window.customCards || [];window.customCards.push({type:'gwm-jolion-trips-card',name:'GWM Jolion — Поездки',description:'Карта маршрута и пробег за день или период',preview:true});
 })();
+
+
