@@ -123,24 +123,32 @@
     else if(content)element.append(content);
     return element;
   }
-  // The route is drawn on Home Assistant's own <ha-map>. There is no second engine
-  // and no fallback: if the map cannot be opened the card says so instead of quietly
-  // swapping in a different one, because the card's whole point is to follow the
-  // map settings the dashboard already uses.
-  // Home Assistant only registers <ha-map> once something needs it. A dashboard
-  // with no map card of its own may never define it, so a single lookup is not
-  // enough: the card waits to see whether it turns up before giving up. Should it
-  // appear later, the next refresh picks it up on its own.
-  function haMapDefined(){
-    if(customElements.get('ha-map'))return Promise.resolve(true);
+  // The route is drawn on Home Assistant's own map element. There is no second
+  // engine and no fallback: if the map cannot be opened the card says so instead
+  // of quietly swapping in a different one, because the card's whole point is to
+  // follow the map settings the dashboard already uses.
+  // Home Assistant's map element is the only map this card draws on. Its tag name
+  // is not something to assume: the interface registers the map lazily, and a
+  // future release is free to rename it. So the card looks for the names in turn
+  // rather than insisting on one, and when none of them are there it says which it
+  // looked for.
+  const HA_MAP_TAGS=['ha-map','ha-map-entity','hui-map'];
+  function haMapTag(){return HA_MAP_TAGS.find(tag=>customElements.get(tag))||null;}
+  function mapDiagnostics(tag){
+    if(tag)return `Используется карта Home Assistant <${tag}>.`;
+    return `Карта Home Assistant не зарегистрирована. Проверено: ${HA_MAP_TAGS.join(', ')}. Добавьте на панель стандартную карту «Карта» и обновите страницу — карта подъедет сама.`;
+  }
+  function waitForHaMapTag(){
+    if(haMapTag())return Promise.resolve(haMapTag());
     return Promise.race([
-      customElements.whenDefined('ha-map').then(()=>true),
-      new Promise(resolve=>setTimeout(()=>resolve(false),8000)),
+      Promise.race(HA_MAP_TAGS.map(tag=>customElements.whenDefined(tag).then(()=>tag).catch(()=>null))),
+      new Promise(resolve=>setTimeout(()=>resolve(null),8000)),
     ]);
   }
   async function createSurface(card, container){
-    if(!await haMapDefined())return {surface:null,note:'Карта Home Assistant недоступна. Обновите интерфейс Home Assistant.'};
-    const haMap=document.createElement('ha-map');
+    const tag=await waitForHaMapTag();
+    if(!tag)return {surface:null,note:mapDiagnostics(null)};
+    const haMap=document.createElement(tag);
     if(card._hass)haMap.hass=card._hass;
     container.append(haMap);
     try{
@@ -156,12 +164,12 @@
         if(map)break;
         await new Promise(resolve=>setTimeout(resolve,150));
       }
-      if(!map||typeof map.addSource!=='function')throw new Error('ha-map did not hand over a map');
+      if(!map||typeof map.addSource!=='function')throw new Error(`${tag} не отдал карту`);
       return {surface:createHaMapSurface(card, haMap, map, ml)};
     }catch(error){
       haMap.remove();
       console.warn('GWM Jolion trips card: Home Assistant map unavailable',error);
-      return {surface:null,note:'Не удалось открыть карту Home Assistant. Пробег и выбор периода ниже работают.'};
+      return {surface:null,note:`${mapDiagnostics(tag)} Не удалось получить карту: ${error && error.message ? error.message : 'причина неизвестна'}. Пробег и выбор периода ниже работают.`};
     }
   }
   function createHaMapSurface(card, haMap, map, ml){

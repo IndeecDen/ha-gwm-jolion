@@ -386,7 +386,7 @@ async function openCard(browser,stub){
   // so plainly instead of drawing something the reader did not ask for.
   const bare=await openCard(browser,null);
   await bare.page.waitForFunction(()=>card.shadowRoot.querySelector('.map-status').textContent.length>0);
-  assert.match(await bare.page.locator('.map-status').textContent(),/Карта Home Assistant недоступна/);
+  assert.match(await bare.page.locator('.map-status').textContent(),/Карта Home Assistant не зарегистрирована\. Проверено: ha-map, ha-map-entity, hui-map\./);
   assert.equal(await bare.page.evaluate(()=>card._surface),null);
   assert.equal(await bare.page.locator('.km').textContent(),'14,6','пробег остаётся доступен без карты');
   assert.deepEqual(bare.errors,[]);
@@ -419,11 +419,11 @@ async function openCard(browser,stub){
    customElements.define('ha-map',class extends HTMLElement{
     connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
    });`);
-  await silent.page.waitForFunction(()=>card.shadowRoot.querySelector('.map-status').textContent.includes('Не удалось открыть'),null,{timeout:20000});
+  await silent.page.waitForFunction(()=>card.shadowRoot.querySelector('.map-status').textContent.includes('Не удалось получить карту'),null,{timeout:20000});
   assert.equal(await silent.page.evaluate(()=>card._surface),null);
   assert.equal(await silent.page.locator('.km').textContent(),'14,6','пробег остаётся доступен без карты');
   assert.equal(await silent.page.locator('[data-mode="today"]').count(),1,'выбор периода остаётся доступен');
-  assert.deepEqual(silent.errors.filter(text=>!/did not hand over a map/.test(text)),[],'падение карты не должно вылетать наружу');
+  assert.deepEqual(silent.errors.filter(text=>!/не отдал карту/.test(text)),[],'падение карты не должно вылетать наружу');
   await silent.page.close();
 
   // Home Assistant registers <ha-map> lazily, and a dashboard with no map card of
@@ -450,6 +450,29 @@ async function openCard(browser,stub){
   assert.deepEqual(lazy.errors,[]);
   await lazy.page.close();
 
-  console.log('Trips card on the Home Assistant map: route lines, A/B/C parking points, period-wide labels, date-aware popups, configurable speed ranges, centering, map interaction, fullscreen, calendar, no second map engine, always-cleaned track, late, lazily registered and missing map, mobile layout, empty history and errors: PASS');
+  // A future interface release is free to rename the element. Pinning one tag name
+  // would break the card on that day with no explanation; the card looks the known
+  // names up in turn instead.
+  const renamed=await openCard(browser,`
+   customElements.define('ha-map-entity',class extends HTMLElement{
+    connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
+    async getMap(){
+     const ml=window.GwmTripsMapLibre || window.maplibregl;
+     const div=document.createElement('div');div.style.cssText='position:absolute;inset:0;width:100%;height:100%';
+     this.append(div);
+     this._map=new ml.Map({container:div,attributionControl:false,style:{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9ede8'}}]}});
+     window.__draws=new Map();
+     await new Promise(res=>this._map.once('load',res));
+     return this._map;
+    }
+   });
+  `);
+  assert.equal(await renamed.page.evaluate(()=>!!customElements.get('ha-map')),false,'старого имени нет');
+  await renamed.page.waitForFunction(()=>card._surface&&card._surface.engine==='ha'&&card._surface._lines.length===2,null,{timeout:20000});
+  assert.equal(await renamed.page.evaluate(()=>card._surface.hasOverlays()),true,'маршрут лёг на переименованный элемент карты');
+  assert.deepEqual(renamed.errors,[]);
+  await renamed.page.close();
+
+  console.log('Trips card on the Home Assistant map: route lines, A/B/C parking points, period-wide labels, date-aware popups, configurable speed ranges, centering, map interaction, fullscreen, calendar, no second map engine, always-cleaned track, late, lazily registered, renamed and missing map, mobile layout, empty history and errors: PASS');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});
