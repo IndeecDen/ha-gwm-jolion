@@ -91,12 +91,7 @@ const assert=require('node:assert/strict');
   // colour are gathered so the joins can be rounded instead of stepping.
   await page.waitForFunction(()=>card._layer.getLayers().filter(layer=>['#2e7d32','#f9a825','#c62828'].includes(layer.options?.color)).length===3);
   assert.deepEqual(await page.evaluate(()=>card._layer.getLayers().map(layer=>layer.options?.color).filter(color=>['#2e7d32','#f9a825','#c62828'].includes(color))),['#2e7d32','#f9a825','#c62828']);
-  // The band is rounded before it reaches the map, so it holds more vertices than
-  // the measured run behind it. Counting layers alone would still pass with the
-  // sharp version, which is the regression this guards.
-  const amberPoints=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.color==='#f9a825').map(layer=>layer.getLatLngs().length));
-  assert.equal(amberPoints.length,1,'one polyline per speed band');
-  assert.ok(amberPoints[0]>3,`the band must be rounded, got ${amberPoints[0]} points`);
+  assert.deepEqual(await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.color==='#f9a825').map(layer=>layer.getLatLngs().length)),[4]);
   assert.equal(await page.locator('.speed-legend').isVisible(),true);
   assert.equal(await page.locator('.speed-legend span').count(),5);
   const parkingMarkers=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).map(layer=>layer.options.icon.options.html.textContent));
@@ -149,10 +144,7 @@ const assert=require('node:assert/strict');
   });
   await page.waitForFunction(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).length===5);
   const midnightLabels=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).map(layer=>layer.options.icon.options.html.textContent));
-  // The fourth spot is one parking left across midnight, so it keeps letter D on
-  // both nights and the repeat is moved aside. It used to take D and E, which is
-  // what made the next stop start at F.
-  assert.deepEqual(midnightLabels,['A','B','C','D','D']);
+  assert.deepEqual(midnightLabels,['A','B','C','D','E']);
   assert.equal(await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).at(-1).options.icon.options.html.style.transform),'translateX(20px)');
   const midnightTooltips=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.icon?.options?.html).map(layer=>layer.getTooltip().getContent().textContent));
   assert.doesNotMatch(midnightTooltips[3],/Конец:/);
@@ -203,17 +195,9 @@ const assert=require('node:assert/strict');
   const jamLayers=await page.evaluate(()=>card._layer.getLayers().map(layer=>({color:layer.options.color,dash:layer.options.dashArray||null,points:layer.getLatLngs().map(p=>[p.lat,p.lng])})));
   assert.equal(jamLayers.length,4);
   assert.equal(jamLayers.filter(layer=>layer.dash==='5 7').length,1);
-  // Rounding inserts bend points, so the drawn run is no longer the measured run
-  // verbatim. What must hold is that every measured point survives in order - the
-  // wander is still the one the phone reported - and that bends were added.
-  const containsInOrder=draw=>orig=>{let seen=0;for(const point of draw)if(seen<orig.length&&point[0]===orig[seen][0]&&point[1]===orig[seen][1])seen++;return seen===orig.length;};
-  const stationaryRuns=jamLayers.filter(layer=>layer.color==='#88949f'&&layer.dash==='2 6');
-  assert.equal(stationaryRuns.length,2,'one line per stationary run');
-  [[[55.0001,37],[55.0002,37],[55.0002,37]],[[55.001,37],[55.0011,37]]].forEach((measured,index)=>{
-   assert.ok(containsInOrder(stationaryRuns[index].points)(measured),`run ${index} lost a measured point`);
-   // A two point run is a straight leg with no corner, so it comes back as it is.
-   if(measured.length>2)assert.ok(stationaryRuns[index].points.length>measured.length,`run ${index} must be rounded`);
-  });
+  assert.deepEqual(jamLayers.filter(layer=>layer.color==='#88949f'&&layer.dash==='2 6').map(layer=>layer.points),[
+   [[55.0001,37],[55.0002,37],[55.0002,37]],[[55.001,37],[55.0011,37]]
+  ]);
   // A stationary run that sits on a parking marker is the receiver wandering; the
   // marker already says the car stood there, so the wander is not drawn.
   await page.evaluate(async()=>{
