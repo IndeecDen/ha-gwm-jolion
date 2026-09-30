@@ -207,7 +207,8 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
 
     await hass.http.async_register_static_paths(
         [StaticPathConfig(static_url, str(path), False) for path, static_url, _ in available_assets]
-        + [StaticPathConfig("/gwm-jolion/leaflet", str(FRONTEND_DIR / "leaflet"), True)]
+        # Only MapLibre is vendored: the trips card draws on Home Assistant's own
+        # map and needs MapLibre solely to build the markers that go on top of it.
         + [StaticPathConfig("/gwm-jolion/maplibre", str(FRONTEND_DIR / "maplibre"), True)]
     )
     for _, _, frontend_url in available_assets:

@@ -7,17 +7,31 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',route=>{
    const url=new URL(route.request().url());
-   if(url.pathname.startsWith('/gwm-jolion/')){const file=path.resolve('custom_components/gwm_jolion/frontend',url.pathname.slice('/gwm-jolion/'.length));return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.css')?'text/css; charset=utf-8':'application/javascript; charset=utf-8'});}
-   if(url.hostname==='tile.openstreetmap.org')return route.fulfill({status:200,contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64')});
+   if(url.pathname.startsWith('/gwm-jolion/')){const file=path.resolve('custom_components/gwm_jolion/frontend',url.pathname.slice('/gwm-jolion/'.length));if(!fs.existsSync(file))return route.fulfill({status:404,contentType:'text/plain',body:'not found'});return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.css')?'text/css; charset=utf-8':'application/javascript; charset=utf-8'});}
    return route.fulfill({contentType:'text/html',body:`<style>body{margin:12px;font:15px Arial;background:#eff4f6;--primary-text-color:#183340;--secondary-text-color:#526b78;--card-background-color:white;--secondary-background-color:#eff4f6}ha-card{display:block;background:white;border-radius:14px}</style><gwm-jolion-trips-card></gwm-jolion-trips-card><script src="/gwm-jolion/gwm-jolion-trips-card.js"></script><script src="/gwm-jolion/gwm-jolion-locator-card.js"></script>`});
   });
+  // Home Assistant defines its own map before any card runs, so the harness has to
+  // as well: without <ha-map> the card has nothing to draw on and says so.
+  await page.addInitScript(()=>{customElements.define('ha-map',class extends HTMLElement{
+   connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
+   async getMap(){
+    if(!this._map){
+     const ml=window.GwmTripsMapLibre || window.maplibregl;
+     const div=document.createElement('div');div.style.cssText='position:absolute;inset:0;width:100%;height:100%';
+     this.append(div);
+     this._map=new ml.Map({container:div,attributionControl:false,style:{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9ede8'}}]}});
+     await new Promise(res=>this._map.once('load',res));
+    }
+    return this._map;
+   }
+  });});
   await page.goto('https://locator.test');
   await page.waitForFunction(()=>customElements.get('gwm-jolion-locator-card'));
   await page.evaluate(()=>{
    window.card=document.querySelector('gwm-jolion-trips-card');window.calls=[];
    const now=Date.now();window.points=Array.from({length:20},(_,i)=>({timestamp_ms:now-20000+i*1000,latitude:55.75+i*.0001,longitude:37.62+i*.0001,source:'app',accuracy_m:5,speed_accuracy_kmh:1.8,speed_kmh:40+i,speed_estimated:false}));
    window.hass={config:{time_zone:'Europe/Moscow'},states:{'device_tracker.car':{attributes:{golion_locator_enabled:true,latitude:55.75,longitude:37.62}}},callWS:async msg=>{calls.push(msg);return {samples:20,segments:[points.map(p=>[p.latitude,p.longitude])],segment_speeds_kmh:[points.slice(1).map(p=>p.speed_kmh)],segment_kinds:[points.slice(1).map(()=>'moving')],gaps:[],parking_spots:[],km:1.2,method:'gps',playback:points};}};
-   card.setConfig({entity:'device_tracker.car',map_style:'osm'});card.hass=hass;
+   card.setConfig({entity:'device_tracker.car'});card.hass=hass;
   });
   await page.waitForFunction(()=>card._map&&card._points?.length===20);
   await page.locator('.timeline').fill('5');assert.match(await page.locator('.selected').textContent(),/45 км\/ч.*GPS приложения/);
@@ -26,11 +40,11 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
   await page.evaluate(async()=>{points.unshift({...points[0],timestamp_ms:points[0].timestamp_ms-1000});await card._load();});
   assert.equal(await page.evaluate(()=>card._selectedTime),selected);
   assert.equal(await page.locator('.timeline').inputValue(),'6');
-  await page.getByRole('button',{name:'Трек: очищенный',exact:true}).click();
-  await page.waitForFunction(()=>calls.at(-1).raw===true);
+  // The cleaned/raw switch is gone: there is no second track to toggle to, and
+  // every request asks for the cleaned one.
+  assert.equal(await page.getByRole('button',{name:'Трек: очищенный'}).count(),0);
+  assert.equal(await page.evaluate(()=>calls.some(msg=>'raw' in msg)),false);
   assert.equal(await page.evaluate(()=>card._selectedTime),selected);
-  await page.getByRole('button',{name:'Трек: исходный',exact:true}).click();
-  await page.waitForFunction(()=>!calls.at(-1).raw);
   await page.evaluate(()=>{points.shift();});
   assert.equal(await page.getByRole('button',{name:'Подключить приложение'}).count(),0);
   assert.equal(await page.locator('.stops').count(),0);
@@ -49,7 +63,7 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
   await page.locator('.timeline').fill('6');assert.match(await page.locator('.selected').textContent(),/≈ 46 км\/ч.*облако/);
   assert(await page.locator('ha-card').evaluate(e=>e.getBoundingClientRect().height)<=height);
   fs.mkdirSync('dist',{recursive:true});await page.screenshot({path:'dist/unified-trips-mobile.png'});
-  await page.evaluate(()=>{window.alias=document.createElement('gwm-jolion-locator-card');document.body.append(alias);alias.setConfig({entity:'device_tracker.car',map_style:'osm'});alias.hass=hass;});
+  await page.evaluate(()=>{window.alias=document.createElement('gwm-jolion-locator-card');document.body.append(alias);alias.setConfig({entity:'device_tracker.car'});alias.hass=hass;});
   await page.waitForFunction(()=>alias._map&&alias._points?.length===20);
   assert(await page.evaluate(()=>alias instanceof customElements.get('gwm-jolion-trips-card')));
   assert.deepStrictEqual(errors,[]);

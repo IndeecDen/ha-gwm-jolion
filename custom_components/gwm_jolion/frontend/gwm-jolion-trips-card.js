@@ -1,7 +1,5 @@
-/* GWM Jolion Trips Card v0.2.0-beta.2 */
+/* GWM Jolion Trips Card v0.2.0-beta.3 */
 (() => {
-  let leaflet;
-  const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
   const SPEED_COLORS = {low:'#2e7d32',medium:'#f9a825',high:'#c62828'};
   const DEFAULT_SPEED_LIMITS = {green:80,red:110};
   function speedLimits(config={}){
@@ -11,24 +9,24 @@
     if(red<=green)red=Math.min(300,green+1);
     return {green,red};
   }
-  let vectorMaps;
+  let mapLibre;
   function loadScript(src){return new Promise((resolve,reject)=>{
-    const script=document.createElement('script');const timer=setTimeout(()=>{script.remove();reject(new Error('Не удалось загрузить оформление карты'));},15000);
-    script.src=src;script.onload=()=>{clearTimeout(timer);resolve();};script.onerror=()=>{clearTimeout(timer);script.remove();reject(new Error('Не удалось загрузить оформление карты'));};document.head.append(script);
+    const script=document.createElement('script');const timer=setTimeout(()=>{script.remove();reject(new Error('Не удалось загрузить карту'));},15000);
+    script.src=src;script.onload=()=>{clearTimeout(timer);resolve();};script.onerror=()=>{clearTimeout(timer);script.remove();reject(new Error('Не удалось загрузить карту'));};document.head.append(script);
   });}
-  function loadVector(L){return vectorMaps ||= (async()=>{
-    window.GwmTripsLeaflet=L;
-    if(!window.GwmTripsMapLibre){const previous=window.maplibregl;await loadScript('/gwm-jolion/maplibre/maplibre-gl.js');window.GwmTripsMapLibre=window.maplibregl;window.maplibregl=previous;}
-    if(!L.maplibreGL)await loadScript('/gwm-jolion/maplibre/leaflet-maplibre-gl.js');
-  })().catch(error=>{vectorMaps=null;throw error;});}
-  const loadMap = () => leaflet ||= new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    const timer = setTimeout(() => { script.remove(); leaflet = null; reject(new Error('Не удалось загрузить карту')); }, 15000);
-    script.src = '/gwm-jolion/leaflet/leaflet.js';
-    script.onload = () => { clearTimeout(timer); resolve(window.L.noConflict()); };
-    script.onerror = () => { clearTimeout(timer); script.remove(); leaflet = null; reject(new Error('Не удалось загрузить карту')); };
-    document.head.append(script);
-  });
+  // The route is drawn on Home Assistant's own map, <ha-map>. MapLibre is only
+  // needed to build the markers and popups that go on top of it, so the build
+  // shipped with the integration is loaded into a private slot: Home Assistant has
+  // already set window.maplibregl to its own copy and overwriting it would break
+  // the very map being drawn on.
+  function loadMapLibre(){return mapLibre ||= (async()=>{
+    if(!window.GwmTripsMapLibre){
+      const previous=window.maplibregl;
+      await loadScript('/gwm-jolion/maplibre/maplibre-gl.js');
+      window.GwmTripsMapLibre=window.maplibregl;window.maplibregl=previous;
+    }
+    return window.GwmTripsMapLibre;
+  })().catch(error=>{mapLibre=null;throw error;});}
   function dateInZone(zone) {
     const parts = new Intl.DateTimeFormat('en', {timeZone: zone, year:'numeric', month:'2-digit', day:'2-digit'}).formatToParts(new Date());
     const get = type => parts.find(p => p.type === type).value;
@@ -110,65 +108,40 @@
     }
     return points.filter((_,index)=>keep[index]);
   }
-  // A map surface draws the same set of overlays onto one of two engines: the
-  // bundled Leaflet map, or Home Assistant's own <ha-map>. The card prepares the
-  // overlays (colours, labels, simplification) and hands them to the surface, so
-  // both engines render the identical route.
-  async function createSurface(engine, L, card, container){
-    if(engine!=='ha'){
-      const surface=createLeafletSurface(L, card);surface.mount(container);
-      return {surface};
-    }
-    if(!customElements.get('ha-map')){
-      const surface=createLeafletSurface(L, card);surface.mount(container);
-      return {surface, note:'Компонент карты Home Assistant недоступен — показана встроенная карта.'};
-    }
+  // A marker is handed to MapLibre, which appends it into the map - below this
+  // card's shadow root - so the card's stylesheet cannot reach it. Its look is
+  // therefore set inline.
+  //
+  // The offset that moves a parking repeated on several days aside goes on the
+  // margin, not the transform: MapLibre rewrites the transform on every frame to
+  // place the marker, and would drop an offset written there.
+  const MARKER_CSS='width:28px;height:28px;border-radius:50%;background:#fff;color:#263238;border:3px solid #455a64;box-shadow:0 1px 5px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;font:700 13px/1 Arial,sans-serif;box-sizing:border-box';
+  function markerElement(content,offset=0){
+    const element=document.createElement('div');
+    element.style.cssText=MARKER_CSS+(offset?`;margin-left:${offset*20}px`:'');
+    if(typeof content==='string')element.textContent=content;
+    else if(content)element.append(content);
+    return element;
+  }
+  // The route is drawn on Home Assistant's own <ha-map>. There is no second engine
+  // and no fallback: if the map cannot be opened the card says so instead of quietly
+  // swapping in a different one, because the card's whole point is to follow the
+  // map settings the dashboard already uses.
+  async function createSurface(card, container){
+    if(!customElements.get('ha-map'))return {surface:null,note:'Карта Home Assistant недоступна. Обновите интерфейс Home Assistant.'};
     const haMap=document.createElement('ha-map');
     if(card._hass)haMap.hass=card._hass;
     container.append(haMap);
     try{
-      await loadVector(L);
+      const ml=await loadMapLibre();
       const map=await haMap.getMap();
-      const ml=window.GwmTripsMapLibre || window.maplibregl;
-      return {surface:createHaMapSurface(L, card, haMap, map, ml)};
+      return {surface:createHaMapSurface(card, haMap, map, ml)};
     }catch(error){
       haMap.remove();
-      const surface=createLeafletSurface(L, card);surface.mount(container);
-      return {surface, note:'Не удалось открыть карту Home Assistant — показана встроенная карта.'};
+      return {surface:null,note:'Не удалось открыть карту Home Assistant.'};
     }
   }
-  function createLeafletSurface(L, card){
-    const surface={engine:'leaflet',map:null,layer:null,cursor:null,_L:L};
-    surface.mount=container=>{
-      surface.map=L.map(container,{scrollWheelZoom:true,dragging:true,touchZoom:true,tap:true}).setView([20,0],2);
-      surface.map.attributionControl.setPrefix(false);
-      surface.layer=L.featureGroup().addTo(surface.map);
-    };
-    surface.destroy=()=>{surface.map?.remove();surface.map=null;surface.layer=null;surface.cursor=null;};
-    surface.clear=()=>{surface.layer?.clearLayers();surface.cursor=null;};
-    surface.hasOverlays=()=>!!(surface.layer && surface.layer.getLayers().length);
-    surface.addLine=(coords,{color,weight=4,opacity=1,dashArray=null,tooltip=null}={})=>{
-      const options={color,weight,opacity,lineCap:'round',lineJoin:'round',smoothFactor:1.5};
-      if(dashArray)options.dashArray=dashArray;
-      let line=L.polyline(coords,options);
-      if(tooltip)line=line.bindTooltip(tooltip);
-      line.addTo(surface.layer);
-    };
-    surface.addMarker=(latlng,{iconElement,title,tooltip=null})=>{
-      const icon=L.divIcon({className:'',html:iconElement,iconSize:[28,28],iconAnchor:[14,14]});
-      let marker=L.marker(latlng,{icon,keyboard:true,title});
-      if(tooltip!=null)marker=marker.bindTooltip(tooltip,{direction:'top',offset:[0,-8]});
-      marker.addTo(surface.layer);
-    };
-    surface.addCursor=latlng=>{surface.cursor?.remove();surface.cursor=L.circleMarker(latlng,{radius:7,color:'#039ecc',fillOpacity:1}).addTo(surface.map);};
-    surface.fitOverlays=()=>surface.map.fitBounds(surface.layer.getBounds(),{padding:[25,25],maxZoom:16});
-    surface.resetView=()=>surface.map.setView([20,0],2);
-    surface.flyTo=(latlng,zoom)=>surface.map.flyTo(latlng,zoom,{duration:.45});
-    surface.panTo=latlng=>surface.map.panTo(latlng);
-    surface.resize=()=>surface.map.invalidateSize();
-    return surface;
-  }
-  function createHaMapSurface(L, card, haMap, map, ml){
+  function createHaMapSurface(card, haMap, map, ml){
     const surface={engine:'ha', map, _haMap:haMap, _ml:ml, _seq:0, _cursor:null, _markers:[], _lines:[], _coords:[]};
     const removeLine=id=>{try{map.removeLayer(id);}catch{}try{map.removeSource(id);}catch{};};
     const removeCursor=()=>{surface._cursor?.remove();surface._cursor=null;};
@@ -189,7 +162,7 @@
         map.on('mouseleave',id,()=>popup.remove());
       }
     };
-    surface.addMarker=(latlng,{iconElement,title,tooltip=null})=>{
+    surface.addMarker=(latlng,{iconElement,tooltip=null})=>{
       const marker=new ml.Marker({element:iconElement}).setLngLat([latlng[1],latlng[0]]).addTo(map);
       if(tooltip!=null){
         const popup=new ml.Popup({offset:30,closeButton:false,closeOnClick:false});
@@ -219,12 +192,11 @@
   class TripsCard extends HTMLElement {
     static getConfigElement() { return document.createElement('gwm-jolion-trips-card-editor'); }
     static getStubConfig(hass) {
-      return {entity: Object.keys(hass.states).find(id => id.startsWith('device_tracker.') && id.endsWith('_location')) || '', title:'Поездки',map_style:'positron',map_engine:'leaflet',speed_green_max:80,speed_red_min:110};
+      return {entity: Object.keys(hass.states).find(id => id.startsWith('device_tracker.') && id.endsWith('_location')) || '', title:'Поездки',speed_green_max:80,speed_red_min:110};
     }
     constructor() {
       super(); this.attachShadow({mode:'open'}); this._mode='today'; this._serial=0;
-      this.shadowRoot.innerHTML = `<link rel="stylesheet" href="/gwm-jolion/leaflet/leaflet.css">
-      <link rel="stylesheet" href="/gwm-jolion/maplibre/maplibre-gl.css">
+      this.shadowRoot.innerHTML = `<link rel="stylesheet" href="/gwm-jolion/maplibre/maplibre-gl.css">
       <style>
         :host(.fallback-fullscreen) .playback,ha-card:fullscreen .playback{display:none}
         :host{display:block}ha-card{overflow:hidden}.content{padding:10px 14px 12px}
@@ -234,22 +206,16 @@
         button:focus-visible,input:focus-visible{outline:2px solid var(--primary-color,#03a9f4);outline-offset:2px}
         .dates{margin:10px 0 0}.dates[hidden]{display:none}label{display:flex;flex:1;min-width:110px;flex-direction:column;gap:5px;color:var(--secondary-text-color);font-size:12px}input{width:100%;color-scheme:light dark}
         .summary{justify-content:center;margin:0 0 8px;gap:8px}.km{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}.summary ha-icon{color:var(--secondary-text-color);--mdc-icon-size:22px}.shortcuts{justify-content:center;flex-wrap:nowrap;gap:6px}#calendar{display:flex;align-items:center;justify-content:center;width:34px;height:32px;padding:0}#calendar ha-icon{--mdc-icon-size:19px}
-        .speed-legend{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:0 0 10px;color:var(--secondary-text-color);font-size:11px}.speed-legend[hidden]{display:none}.speed-legend span{display:flex;align-items:center;gap:4px}.speed-legend i{width:10px;height:4px;border-radius:2px;background:#888}.speed-legend b{font-weight:400}.speed-legend .low{background:#2e7d32}.speed-legend .medium{background:#f9a825}.speed-legend .high{background:#c62828}.speed-legend .parking{width:18px;height:18px;border-radius:50%;background:#fff;border:2px solid #455a64;color:#263238;font-style:normal;font-weight:700;line-height:14px;text-align:center}.speed-legend .parking.inferred{border-style:dashed;background:#eef3f7;font-size:9px}.speed-legend .inferred-note[hidden]{display:none}
-        .route-point{width:28px;height:28px;border-radius:50%;background:#fff;color:#263238;border:3px solid #455a64;box-shadow:0 1px 5px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;font:700 13px/1 Arial,sans-serif;box-sizing:border-box}
-        .route-point.inferred{border-style:dashed;background:#eef3f7}
         .error,.map-status{color:var(--secondary-text-color);font-size:12px;text-align:center}.error:empty,.map-status:empty{display:none}.error:not(:empty),.map-status:not(:empty){margin-top:8px}.map-wrap{position:relative;height:300px;background:#e9edef}.map{height:100%;background:#e9edef;z-index:0}
         .map-actions{position:absolute;top:8px;right:8px;z-index:1000;display:flex;gap:6px}.map-actions button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;background:var(--card-background-color,#fff);box-shadow:0 1px 5px rgba(0,0,0,.28)}.map-actions ha-icon{--mdc-icon-size:19px}
         :host(.fallback-fullscreen){position:fixed;inset:0;z-index:1000;display:block;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) ha-card,ha-card:fullscreen{width:100%;height:100%;min-height:100%;display:flex;flex-direction:column;border-radius:0;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) .map-wrap,ha-card:fullscreen .map-wrap{flex:1;height:auto;min-height:0}:host(.fallback-fullscreen) .content,ha-card:fullscreen .content{display:none}
-        .leaflet-container{font-family:inherit}.leaflet-control-attribution{font-size:10px}
         @media(max-width:350px){button{padding:7px 8px}.content{padding:10px}.map-wrap{height:260px}}
       </style><ha-card><div class="map-wrap"><div class="map" aria-label="Карта маршрута"></div><div class="map-actions"><button id="centerBtn" type="button" title="Показать автомобиль в центре карты" aria-label="Показать автомобиль в центре карты"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button><button id="fullscreenBtn" type="button" title="Развернуть карту" aria-label="Развернуть карту" aria-pressed="false"><ha-icon icon="mdi:fullscreen"></ha-icon></button></div></div><div class="content">
-      <div class="speed-legend" aria-label="Цвета средней скорости и стоянки" hidden><span><i class="low"></i><b class="low-range">до 80 км/ч</b></span><span><i class="medium"></i><b class="medium-range">80–110 км/ч</b></span><span><i class="high"></i><b class="high-range">110+ км/ч</b></span><span><i class="parking">A</i><b>A, B, C</b></span><span class="inferred-note" hidden><i class="parking inferred">A*</i><b>A* — стоянка выведена по молчанию и пробегу</b></span></div>
       <div class="summary"><ha-icon icon="mdi:counter" aria-hidden="true"></ha-icon><span class="km" aria-label="Пробег за выбранный период">—</span></div>
       <div class="shortcuts"><button data-mode="today">Сегодня</button><button data-mode="yesterday">Вчера</button><button data-mode="week">Неделя</button><button id="calendar" title="Выбрать период" aria-label="Выбрать период" aria-expanded="false" aria-controls="period"><ha-icon icon="mdi:calendar-range"></ha-icon></button></div>
       <div class="dates" id="period" hidden><label>С<input type="date" id="start"></label><label>По<input type="date" id="end"></label><button id="show">Выбрать</button></div>
-      <div class="error" role="status"></div><div class="map-status" role="status"></div></div><div class="playback" style="padding:0 14px 12px" hidden><svg class="speed-chart" viewBox="0 0 600 55" style="width:100%;height:55px" aria-label="Скорость по времени"><path fill="none" stroke="#039ecc" stroke-width="2"></path></svg><input class="timeline" type="range" min="0" max="0" value="0" aria-label="Просмотр трека по времени" style="width:100%;box-sizing:border-box"><button class="track-mode" type="button" aria-pressed="false" style="display:block;margin:0 auto 4px">Трек: очищенный</button><div class="selected" style="font-size:12px;text-align:center"></div></div></ha-card>`;
+      <div class="error" role="status"></div><div class="map-status" role="status"></div></div><div class="playback" style="padding:0 14px 12px" hidden><svg class="speed-chart" viewBox="0 0 600 55" style="width:100%;height:55px" aria-label="Скорость по времени"><path fill="none" stroke="#039ecc" stroke-width="2"></path></svg><input class="timeline" type="range" min="0" max="0" value="0" aria-label="Просмотр трека по времени" style="width:100%;box-sizing:border-box"><div class="selected" style="font-size:12px;text-align:center"></div></div></ha-card>`;
       this.shadowRoot.querySelector('.timeline').oninput=e=>this._selectPoint(Number(e.target.value));
-      this.shadowRoot.querySelector('.track-mode').onclick=()=>{this._raw=!this._raw;const button=this.shadowRoot.querySelector('.track-mode');button.textContent=this._raw?'Трек: исходный':'Трек: очищенный';button.setAttribute('aria-pressed',String(this._raw));this._load();};
       this._mapCard=this.shadowRoot.querySelector('ha-card');
       this._fullscreenBtn=this.shadowRoot.querySelector('#fullscreenBtn');
       this.shadowRoot.querySelector('#centerBtn').onclick=()=>this._centerVehicle();
@@ -259,10 +225,8 @@
       this.shadowRoot.querySelector('#show').onclick=()=>{const start=this.shadowRoot.querySelector('#start').value,end=this.shadowRoot.querySelector('#end').value;if(!start || !end || start>end){this.shadowRoot.querySelector('.error').textContent='Проверьте даты.';return;}this._mode='custom';this._range=[start,end];this._calendar(false);this._load();};
       this.shadowRoot.querySelector('#calendar').onclick=()=>this._calendar(this.shadowRoot.querySelector('.dates').hidden);
     }
-    // Backward-compatible names for the Leaflet surface, kept so the card's tests
-    // and any consumer can still read the map and overlay group directly.
+    // The map itself, so the card's tests and any consumer can reach it directly.
     get _map(){return this._surface?.map ?? null;}
-    get _layer(){return this._surface?.layer ?? null;}
     _renderPlayback(data){
       this._points=data.playback || [];
       const root=this.shadowRoot,box=root.querySelector('.playback'),slider=root.querySelector('.timeline');
@@ -285,19 +249,20 @@
     _selectPoint(index,pan=true){
       const p=this._points?.[index];if(!p||!this._surface?.map)return;
       this._selectedTime=p.timestamp_ms;this.shadowRoot.querySelector('.timeline').value=String(index);
-      const selectedPoints=this._points;
       const text=new Intl.DateTimeFormat('ru-RU',{timeZone:this._hass.config.time_zone,day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(p.timestamp_ms));
       this.shadowRoot.querySelector('.selected').textContent=`${text} · ${p.speed_kmh==null?'скорость неизвестна':`${p.speed_estimated?'≈ ':''}${Math.round(p.speed_kmh)} км/ч`} · ${p.source==='app'?'GPS приложения':'облако'}${p.accuracy_m!=null?` · GPS ±${Math.round(p.accuracy_m)} м`:''}${p.source==='app'?` · погрешность скорости: ${p.speed_accuracy_kmh==null?'неизвестна':`±${Number(p.speed_accuracy_kmh.toFixed(1))} км/ч`}`:''}${p.display_filtered?' · сглажено':''}`;
-      loadMap().then(L=>{if(!this.isConnected||this._points!==selectedPoints||this._selectedTime!==p.timestamp_ms)return;this._surface?.addCursor([p.latitude,p.longitude]);if(pan)this._surface?.panTo([p.latitude,p.longitude]);});
+      this._surface.addCursor([p.latitude,p.longitude]);if(pan)this._surface.panTo([p.latitude,p.longitude]);
     }
     setConfig(config) {
       this._config={...config}; this._serial++;this._fitKey=null;
       this.setAttribute('aria-label',config.title || 'Поездки');
-      this._updateSpeedLegend();
       this._surface?.clear(); this._load();
     }
     set hass(hass) {
       const first=!this._hass; this._hass=hass;
+      // <ha-map> reads its theme and entities off hass, so it has to be handed the
+      // current one, not the one that happened to arrive when the map was created.
+      if(this._surface?._haMap)this._surface._haMap.hass=hass;
       if(first) this._load();
     }
     connectedCallback() {
@@ -306,11 +271,10 @@
       this._resize=new ResizeObserver(()=>this._surface?.resize());this._resize.observe(this);
       this._load();
     }
-    disconnectedCallback(){ clearInterval(this._timer);this._resize?.disconnect();document.removeEventListener('fullscreenchange',this._onFullscreenChange);this.classList.remove('fallback-fullscreen');if(document.fullscreenElement===this._mapCard&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});this._serial++;this._surface?.destroy();this._surface=null;this._base=null;this._baseStyle=null;this._fitKey=null; }
+    disconnectedCallback(){ clearInterval(this._timer);this._resize?.disconnect();document.removeEventListener('fullscreenchange',this._onFullscreenChange);this.classList.remove('fallback-fullscreen');if(document.fullscreenElement===this._mapCard&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});this._serial++;this._surface?.destroy();this._surface=null;this._fitKey=null; }
     getCardSize(){return 6;}
     _calendar(open){this.shadowRoot.querySelector('.dates').hidden=!open;this.shadowRoot.querySelector('#calendar').setAttribute('aria-expanded',String(open));if(open)this.shadowRoot.querySelector('#start').focus();}
     _highlight(){this.shadowRoot.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===this._mode));this.shadowRoot.querySelector('#calendar').classList.toggle('active',this._mode==='custom');}
-    _updateSpeedLegend(){const limits=speedLimits(this._config);this.shadowRoot.querySelector('.low-range').textContent=`до ${limits.green} км/ч`;this.shadowRoot.querySelector('.medium-range').textContent=`${limits.green}–${limits.red} км/ч`;this.shadowRoot.querySelector('.high-range').textContent=`${limits.red}+ км/ч`;}
     _centerVehicle(){
       const state=this._hass?.states[this._config?.entity];
       const latitude=Number(state?.attributes.latitude),longitude=Number(state?.attributes.longitude);
@@ -334,29 +298,6 @@
       this._fullscreenBtn.title=active?'Свернуть карту':'Развернуть карту';
       this._fullscreenBtn.querySelector('ha-icon').setAttribute('icon',active?'mdi:fullscreen-exit':'mdi:fullscreen');
     }
-    _osm(L){return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,referrerPolicy:'strict-origin-when-cross-origin',attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'})
-      .on('tileerror',()=>{this._baseNeedsRetry=true;this.shadowRoot.querySelector('.map-status').textContent='Подложка карты недоступна.';});}
-    async _setBasemap(L,serial){
-      const style=this._config.map_style || 'positron';
-      if(!Object.hasOwn(STYLES,style))throw new Error('Выберите оформление карты в настройках.');
-      if(this._baseStyle===style && !this._baseNeedsRetry)return;
-      this._baseNeedsRetry=false;
-      const status=this.shadowRoot.querySelector('.map-status');
-      try{
-        if(style!=='osm')await loadVector(L);
-        if(serial!==this._serial || !this.isConnected)return;
-        if(this._base)this._surface.map.removeLayer(this._base);this._base=null;status.textContent='';
-        this._base=style==='osm'?this._osm(L):L.maplibreGL({style:`https://tiles.openfreemap.org/styles/${style}`,attributionControl:{customAttribution:'<a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a> · © <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'}});
-        this._base.addTo(this._surface.map);this._baseStyle=style;
-        const activeBase=this._base;
-        this._base.getMaplibreMap?.().on('error',()=>{if(this._base===activeBase){this._baseNeedsRetry=true;status.textContent='Не удалось загрузить часть карты. Повторим при обновлении.';}});
-      }catch(error){
-        if(serial!==this._serial || !this.isConnected)return;
-        if(this._base && this._surface.map.hasLayer(this._base))this._surface.map.removeLayer(this._base);
-        this._base=this._osm(L).addTo(this._surface.map);this._baseStyle=style;
-        status.textContent='OpenFreeMap недоступна. Показана OpenStreetMap.';
-      }
-    }
     async _load(){
       if(!this.isConnected || !this._hass || !this._config)return;
       const serial=++this._serial;
@@ -377,40 +318,32 @@
       error.textContent='';root.querySelector('.summary').setAttribute('aria-busy','true');
       let timeout;
       try{
-        const data=await Promise.race([this._hass.callWS({type:'gwm_jolion/trips',entity_id:this._config.entity,start,end,...(this._raw?{raw:true}:{}),...(this._config.odometer_entity?{odometer_entity:this._config.odometer_entity}:{})}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Не удалось загрузить историю. Выберите период ещё раз.')),20000);})]);
+        const data=await Promise.race([this._hass.callWS({type:'gwm_jolion/trips',entity_id:this._config.entity,start,end,...(this._config.odometer_entity?{odometer_entity:this._config.odometer_entity}:{})}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Не удалось загрузить историю. Выберите период ещё раз.')),20000);})]);
         if(serial!==this._serial || !this.isConnected)return;
         error.textContent=data.samples?'':'За этот период нет записей.';
         root.querySelector('.km').textContent=data.samples?`${data.method==='odometer'?'':'≈ '}${data.km.toLocaleString('ru-RU')}`:'—';
         root.querySelector('.km').title=`${start} — ${end} · км${data.method==='odometer'?'':' · оценка'}`;
-        const L=await loadMap();if(serial!==this._serial || !this.isConnected)return;
-        const engine=this._config.map_engine==='ha'?'ha':'leaflet';
-        if(this._requestedEngine!==engine){
-          this._surface?.destroy();
-          const {surface,note}=await createSurface(engine,L,this,root.querySelector('.map'));
-          this._surface=surface;this._requestedEngine=engine;
-          if(note)this.shadowRoot.querySelector('.map-status').textContent=note;
-          this._base=null;this._baseStyle=null;this._fitKey=null;
+        if(!this._surface){
+          const {surface,note}=await createSurface(this,root.querySelector('.map'));
+          if(serial!==this._serial || !this.isConnected){surface?.destroy();return;}
+          this._surface=surface;this._fitKey=null;
+          if(note)root.querySelector('.map-status').textContent=note;
         }
-        if(this._surface.engine==='leaflet')await this._setBasemap(L,serial);if(serial!==this._serial || !this.isConnected)return;
+        if(!this._surface)return;
         this._surface.clear();this._renderPlayback(data);
         for(const gap of data.gaps || [])this._surface.addLine(gap,{color:'#88949f',weight:2,dashArray:'5 7',opacity:.7,tooltip:'Нет GPS-данных: связь между точками, не записанный маршрут'});
         const speedSegments=Array.isArray(data.segment_speeds_kmh)?data.segment_speeds_kmh:[];
         const speedKinds=Array.isArray(data.segment_kinds)?data.segment_kinds:[];
         const parkingSpots=Array.isArray(data.parking_spots)?data.parking_spots:[];
         const hasSpeeds=speedSegments.length===data.segments.length;
-        const hasSpeedData=hasSpeeds&&speedSegments.some(segment=>Array.isArray(segment)&&segment.some(speed=>Number(speed)>0));
         const limits=speedLimits(this._config);
-        root.querySelector('.speed-legend').hidden=!hasSpeedData&&!parkingSpots.length;
-        const inferredNote=root.querySelector('.inferred-note');
-        if(inferredNote)inferredNote.hidden=!parkingSpots.some(spot=>spot&&spot.inferred===true);
         for(const [segmentIndex,segment] of data.segments.entries()){
           if(!hasSpeeds){if(segment.length>1)this._surface.addLine(simplifyPath(segment),{color:'#009fce',weight:4,opacity:.85});continue;}
           const speeds=speedSegments[segmentIndex]||[],kinds=speedKinds[segmentIndex]||[];
           const runs=stationaryRuns(segment,kinds);
-          // Consecutive pieces of the same speed were drawn one polyline per GPS
-          // pair, so every join showed as a hard step and a turn looked like a
-          // saw blade. Gather each run of one colour into a single line and let
-          // Leaflet round the corners.
+          // Consecutive pieces of the same speed were drawn one line per GPS
+          // pair, so every join showed as a hard step. Gather each run of one
+          // colour into a single line, so the map joins them with round caps.
           let run=[],runColor=null,runSpeed=0;
           const flush=()=>{
             if(run.length>1)this._surface.addLine(simplifyPath(run),{color:runColor,weight:4,opacity:.9,tooltip:`Средняя скорость: ${Math.round(runSpeed)} км/ч`});
@@ -448,8 +381,10 @@
           const inferredNote=parking.inferred?(parking.inferred_by==='odometer'?'\nПробег не менялся: стоянка выведена по молчанию и пробегу.':'\nПробег рядом недоступен: стоянка выведена по молчанию и координатам.'):'';
           label.textContent=`Стоянка ${parking.label}${parking.inferred?'*':''}\nНачало: ${tripTime(parkingStart,this._hass.config.time_zone,showDates)}${parking.show_end?`\nКонец: ${tripTime(parkingEnd,this._hass.config.time_zone,showDates)}`:''}${inferredNote}`;
           for(const gap of parking.interruptions || [])label.textContent+=`\nНет данных: ${tripTime(gap[0],this._hass.config.time_zone,true)} — ${tripTime(gap[1],this._hass.config.time_zone,true)}`;
-          const iconElement=document.createElement('div');iconElement.className='route-point'+(parking.inferred?' inferred':'');iconElement.textContent=parking.label+(parking.inferred?'*':'');if(parking.offset_index)iconElement.style.transform=`translateX(${parking.offset_index*20}px)`;
-          this._surface.addMarker([latitude,longitude],{iconElement,title:`Стоянка ${parking.label}`,tooltip:label});
+          // The star is explained in full in the popup: with the legend gone from
+          // under the map, the tooltip is the only place the reader learns that a
+          // stop marked with one was inferred rather than measured.
+          this._surface.addMarker([latitude,longitude],{iconElement:markerElement(parking.label+(parking.inferred?'*':''),parking.offset_index),tooltip:label});
         }
         if(!this._surface.hasOverlays() && start<=today && today<=end){
           const validPosition=value=>value && value.latitude!==null && value.longitude!==null && value.latitude!=='' && value.longitude!=='' && Number.isFinite(Number(value.latitude)) && Number.isFinite(Number(value.longitude)) && Math.abs(Number(value.latitude))<=90 && Math.abs(Number(value.longitude))<=180 && (Number(value.latitude)!==0 || Number(value.longitude)!==0);
@@ -457,8 +392,8 @@
           const filtered=current?.golion_locator_enabled && validPosition(data.last_position);
           const position=filtered?data.last_position:validPosition(current)?current:validPosition(data.last_position)?data.last_position:null;
           if(position){
-            const iconElement=document.createElement('ha-icon');iconElement.setAttribute('icon','mdi:car');iconElement.className='route-point';
-            this._surface.addMarker([Number(position.latitude),Number(position.longitude)],{iconElement,title:'Последнее известное положение автомобиля',tooltip:'Последнее известное положение автомобиля'});
+            const icon=document.createElement('ha-icon');icon.setAttribute('icon','mdi:car');
+            this._surface.addMarker([Number(position.latitude),Number(position.longitude)],{iconElement:markerElement(icon),tooltip:'Последнее известное положение автомобиля'});
           }
         }
         if(this._surface.hasOverlays()){this._surface.resize();const key=`${this._config.entity}|${start}|${end}`;if(this._fitKey!==key){this._surface.fitOverlays();this._fitKey=key;}}
@@ -471,7 +406,7 @@
     setConfig(config){
       this._config=config;const limits=speedLimits(config);
       for(const [key,field] of Object.entries(this._fields || {})){
-        field.value=key==='speed_green_max'?limits.green:key==='speed_red_min'?limits.red:config[key] || (key==='map_style'?'positron':key==='map_engine'?'leaflet':'');
+        field.value=key==='speed_green_max'?limits.green:key==='speed_red_min'?limits.red:config[key] || '';
       }
       this._render();
     }
@@ -482,12 +417,9 @@
         const field=document.createElement('ha-selector');field.hass=this._hass;field.selector={entity:{domain}};field.value=this._config[key] || '';field.style.display='block';field.style.marginBottom='16px';this._fields[key]=field;
         field.addEventListener('value-changed',e=>{this._config={...this._config,[key]:e.detail.value || ''};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(label,field);
       }
-      const engineLabel=document.createElement('label');engineLabel.textContent='Движок карты';
-      const engineField=document.createElement('ha-selector');engineField.hass=this._hass;engineField.selector={select:{mode:'dropdown',options:[{value:'leaflet',label:'Встроенная (OpenFreeMap / OSM)'},{value:'ha',label:'Карта Home Assistant'}]}};engineField.value=this._config.map_engine || 'leaflet';this._fields.map_engine=engineField;
-      engineField.addEventListener('value-changed',e=>{this._config={...this._config,map_engine:e.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(engineLabel,engineField);
-      const label=document.createElement('label');label.textContent='Оформление карты';
-      const field=document.createElement('ha-selector');field.hass=this._hass;field.selector={select:{mode:'dropdown',options:Object.entries(STYLES).map(([value,label])=>({value,label}))}};field.value=this._config.map_style || 'positron';this._fields.map_style=field;
-      field.addEventListener('value-changed',e=>{this._config={...this._config,map_style:e.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(label,field);
+      // No map selector: the route is drawn on Home Assistant's own map, which
+      // already uses whatever the dashboard is set to. A second choice here could
+      // only contradict that.
       const section=document.createElement('div');section.textContent='Диапазоны цветов скорости';section.style.cssText='font-weight:600;margin:4px 0 12px';this.append(section);
       const limits=speedLimits(this._config);
       for(const [key,title] of [['speed_green_max','Зелёный: до, км/ч'],['speed_red_min','Красный: от, км/ч']]){

@@ -4,17 +4,11 @@
 
 The Android application uses [ZXing Core 3.5.3](https://github.com/zxing/zxing) for pairing QR codes (Apache-2.0). The bundled browser decoder is [jsQR 1.4.0](https://github.com/cozmo/jsQR) (Apache-2.0). The [Apache-2.0 license text](custom_components/gwm_jolion/frontend/vendor/jsQR-LICENSE.txt) is bundled with the integration.
 
-## OpenFreeMap and MapLibre
+## MapLibre
 
-The trips card supports [OpenFreeMap](https://openfreemap.org/quick_start/) styles and tiles, with visible attribution to OpenFreeMap, OpenMapTiles and OpenStreetMap contributors.
+The trips card draws the route on Home Assistant's own map, `<ha-map>`, so the map style, tiles and attribution are whatever the dashboard already uses. The integration requests no tile service of its own.
 
-Bundled [MapLibre GL JS 5.24.0](https://github.com/maplibre/maplibre-gl-js) is distributed under BSD 3-Clause; see [LICENSE.txt](custom_components/gwm_jolion/frontend/maplibre/LICENSE.txt). Bundled [MapLibre GL Leaflet 0.1.4](https://github.com/maplibre/maplibre-gl-leaflet) is distributed under ISC; see [LICENSE.leaflet](custom_components/gwm_jolion/frontend/maplibre/LICENSE.leaflet). The adapter's browser globals are scoped to this card to avoid conflicts with Home Assistant maps, and removal tolerates failed WebGL initialization. Thanks to all MapLibre, OpenFreeMap and OpenMapTiles contributors.
-
-## Leaflet and OpenStreetMap
-
-The trips card uses [Leaflet 1.9.4](https://github.com/Leaflet/Leaflet/tree/v1.9.4), distributed under the BSD 2-Clause License. Copyright (c) 2010–2023 Volodymyr Agafonkin; Copyright (c) 2010–2011 CloudMade. The complete license is bundled in [frontend/leaflet/LICENSE](custom_components/gwm_jolion/frontend/leaflet/LICENSE).
-
-Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under ODbL. Visible map tiles are requested by the browser from OpenStreetMap; trip history is stored locally. Thanks to all Leaflet authors and OpenStreetMap contributors.
+Bundled [MapLibre GL JS 5.24.0](https://github.com/maplibre/maplibre-gl-js) is distributed under BSD 3-Clause; see [LICENSE.txt](custom_components/gwm_jolion/frontend/maplibre/LICENSE.txt). It is loaded into a private global rather than `window.maplibregl`, which Home Assistant has already set to its own copy, and it is used only to build the parking markers and their popups that sit on top of `<ha-map>`. Thanks to all MapLibre contributors.
 
 Parts of the GWM protocol client and Home Assistant integration structure are adapted from MIT-licensed projects.
 
