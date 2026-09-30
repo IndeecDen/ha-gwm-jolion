@@ -74,6 +74,9 @@ function seed(){
  card.hass=hass;
 }
 
+const STUB_LATE=`\n   customElements.define('ha-map',class extends HTMLElement{\n    connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}\n    async getMap(){\n     const ml=window.GwmTripsMapLibre || window.maplibregl;\n     const div=document.createElement('div');div.style.cssText='position:absolute;inset:0;width:100%;height:100%';\n     this.append(div);\n     this.map=new ml.Map({container:div,attributionControl:false,style:{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9ede8'}}]}});\n     window.__draws=new Map();\n     await new Promise(res=>this.map.once('load',res));\n     return undefined;\n    }\n   });\n`;
+const STUB_SILENT=`\n   customElements.define('ha-map',class extends HTMLElement{\n    connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}\n   });\n`;
+
 async function openCard(browser,stub){
  const page=await browser.newPage({viewport:{width:430,height:1050}}),errors=[],requested=[];
  page.on('pageerror',e=>errors.push(e.stack || e.message));
@@ -383,76 +386,44 @@ async function openCard(browser,stub){
   assert.deepEqual(afterRemoval,[],'removal must raise nothing but the dead render loop');
   await page.close();
 
-  // Without <ha-map> there is no Home Assistant map to draw on, and that must
-  // not mean the track is lost: the card draws the route on its own map and says
-  // so instead of showing nothing.
+// Without <ha-map> there is no Home Assistant map to draw on, and that must
+  // not mean the track is lost: the card draws the route on its own map at once.
   const bare=await openCard(browser,null);
   await bare.page.waitForFunction(()=>card._surface&&card._surface.engine==='ha'&&card._surface._lines.length===2);
-  await bare.page.waitForFunction(()=>card._surface&&card._surface.engine==='ha'&&card._surface._lines.length===2);
-  assert.match(await bare.page.locator('.map-status').textContent(),/Показан маршрут на карте интеграции/);
+  assert.equal(await bare.page.locator('.map-status').textContent(),'');
   assert.equal(await bare.page.evaluate(()=>card._surface.hasOverlays()),true,'трек нарисован на собственной карте');
   assert.equal(await bare.page.locator('.km').textContent(),'14,6','пробег остаётся доступен');
   assert.deepEqual(bare.errors,[]);
   await bare.page.close();
 
   // Home Assistant builds its map in firstUpdated, so getMap() can hand back
-  // nothing on the first call. That must not be read as "no map available": the
-  // card waits for the map and then draws on it as usual.
-  const late=await openCard(browser,`
-   customElements.define('ha-map',class extends HTMLElement{
-    connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
-    async getMap(){
-     const ml=window.GwmTripsMapLibre || window.maplibregl;
-     const div=document.createElement('div');div.style.cssText='position:absolute;inset:0;width:100%;height:100%';
-     this.append(div);
-     this.map=new ml.Map({container:div,attributionControl:false,style:{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9ede8'}}]}});
-     window.__draws=new Map();
-     await new Promise(res=>this.map.once('load',res));
-     return undefined;
-    }
-   });`);
+  // nothing on the first call. The card then reads the map off the element and
+  // draws on it as usual.
+  const late=await openCard(browser,STUB_LATE);
   await late.page.waitForFunction(()=>card._surface && card._surface.engine==='ha' && card._surface._lines.length===2);
-  assert.equal(await late.page.evaluate(()=>card._surface.hasOverlays()),true,'маршрут лёг на карту, которая появилась не сразу');
+  assert.equal(await late.page.evaluate(()=>card._surface.hasOverlays()),true,'маршрут лёг на карту, которая не отдала getMap');
   assert.deepEqual(late.errors,[]);
   await late.page.close();
 
-  // A map element that exists but refuses to hand over a usable map is the same
-  // situation: the route must still be drawn, with the reason stated under the map,
-  // and the odometer and period selector must keep working.
-  const silent=await openCard(browser,`
-   customElements.define('ha-map',class extends HTMLElement{
-    connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
-   });
-  `);
+  // A map element that exists but refuses to hand over a usable map: the route
+  // still has to be drawn, so the card falls to its own map, silently.
+  const silent=await openCard(browser,STUB_SILENT);
   await silent.page.waitForFunction(()=>card._surface&&card._surface._lines.length===2);
-  assert.match(await silent.page.locator('.map-status').textContent(),/не дала карту/);
-  assert.match(await silent.page.locator('.map-status').textContent(),/Показан маршрут на карте интеграции/);
+  assert.equal(await silent.page.locator('.map-status').textContent(),'');
   assert.equal(await silent.page.evaluate(()=>card._surface.hasOverlays()),true,'трек нарисован, хотя карта HA не отдала карту');
   assert.equal(await silent.page.locator('.km').textContent(),'14,6','пробег остаётся доступен');
   assert.equal(await silent.page.locator('[data-mode="today"]').count(),1,'выбор периода остаётся доступен');
   assert.deepEqual(silent.errors,[]);
   await silent.page.close();
 
-  // Home Assistant registers <ha-map> lazily, and a dashboard with no map card of
-  // its own may only end up defining it well after this card has loaded. A single
-  // lookup at load time would read that as "no map" and never draw.
-  const lazy=await openCard(browser,`
-   setTimeout(()=>{customElements.define('ha-map',class extends HTMLElement{
-     connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
-     async getMap(){
-      const ml=window.GwmTripsMapLibre || window.maplibregl;
-      const div=document.createElement('div');div.style.cssText='position:absolute;inset:0;width:100%;height:100%';
-      this.append(div);
-      this._map=new ml.Map({container:div,attributionControl:false,style:{version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9ede8'}}]}});
-      window.__draws=new Map();
-      await new Promise(res=>this._map.once('load',res));
-      return this._map;
-     }
-    });},1200);
-  `);
-  assert.equal(await lazy.page.evaluate(()=>customElements.get('ha-map')),undefined,'ha-map сначала не определён');
-  await lazy.page.waitForFunction(()=>card._surface&&card._surface.engine==='ha'&&card._surface._lines.length===2,null,{timeout:20000});
-  assert.equal(await lazy.page.evaluate(()=>card._surface.hasOverlays()),true,'карта появилась позже и маршрут лёг на неё');
+  // The card must open as fast as Home Assistant's own map card: it does not wait
+  // for the element to turn up, it draws on its own map straight away.
+  const lazy=await openCard(browser,null);
+  const t0=await lazy.page.evaluate(()=>performance.now());
+  await lazy.page.waitForFunction(()=>card._surface&&card._surface._lines.length===2);
+  const elapsed=(await lazy.page.evaluate(()=>performance.now()))-t0;
+  assert.ok(elapsed<5000,'карта поднялась за '+elapsed.toFixed(0)+' мс, а не после ожидания Home Assistant');
+  assert.equal(await lazy.page.evaluate(()=>card._surface.hasOverlays()),true,'трек на собственной карте');
   assert.equal(await lazy.page.locator('.map-status').textContent(),'');
   assert.deepEqual(lazy.errors,[]);
   await lazy.page.close();
@@ -480,6 +451,6 @@ async function openCard(browser,stub){
   assert.deepEqual(renamed.errors,[]);
   await renamed.page.close();
 
-  console.log('Trips card on the Home Assistant map: route lines, A/B/C parking points, period-wide labels, date-aware popups, configurable speed ranges, centering, map interaction, fullscreen, calendar, no second map engine, always-cleaned track, late, lazily registered, renamed and missing map, mobile layout, empty history and errors: PASS');
+  console.log('Trips card on the Home Assistant map: route lines, A/B/C parking points, period-wide labels, date-aware popups, configurable speed ranges, centering, map interaction, fullscreen, calendar, no second map engine, always-cleaned track, late, renamed, own-map fallback, fast-open, mobile layout, empty history and errors: PASS');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

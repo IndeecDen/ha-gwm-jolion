@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.2.0-beta.4 */
+/* GWM Jolion Trips Card v0.2.0-beta.5 */
 (() => {
   const SPEED_COLORS = {low:'#2e7d32',medium:'#f9a825',high:'#c62828'};
   const DEFAULT_SPEED_LIMITS = {green:80,red:110};
@@ -127,33 +127,26 @@
   // and never depends on it: if the element is absent or refuses to hand over a
   // usable map, the route is drawn on the map the integration already ships, so a
   // dashboard without Home Assistant's map can still show the track.
+  // Home Assistant's map element is used when it is already registered, and the
+  // card does not wait for it to turn up: waiting was the seconds-long pause this
+  // card showed in the field. When the element is absent, the route is drawn on the
+  // map the integration already ships, so the card opens as fast as Home Assistant's
+  // own map card and the track is always there.
   const HA_MAP_TAGS=['ha-map','ha-map-entity','hui-map'];
   function haMapTag(){return HA_MAP_TAGS.find(tag=>customElements.get(tag))||null;}
-  function mapDiagnostics(tag){
-    if(tag)return `Карта Home Assistant <${tag}> не дала карту. `;
-    return `Карта Home Assistant не зарегистрирована (проверено: ${HA_MAP_TAGS.join(', ')}). `;
-  }
-  function waitForHaMapTag(){
-    if(haMapTag())return Promise.resolve(haMapTag());
-    return Promise.race([
-      Promise.race(HA_MAP_TAGS.map(tag=>customElements.whenDefined(tag).then(()=>tag).catch(()=>null))),
-      new Promise(resolve=>setTimeout(()=>resolve(null),8000)),
-    ]);
-  }
   // The route drawn when Home Assistant's element is unusable: the integration's
   // own MapLibre map over OpenFreeMap's Positron style, which needs no API key. If
   // the style cannot be fetched the map falls back to a plain background and the
   // route itself is still drawn, so the track survives offline.
   const FALLBACK_STYLE='https://tiles.openfreemap.org/styles/positron';
-  async function createOwnMap(card, container, ml){
+  function createOwnMap(card, container, ml){
     const host=document.createElement('div');
     host.style.cssText='position:absolute;inset:0';
     container.append(host);
     const map=new ml.Map({container:host,style:FALLBACK_STYLE});
     let plain=false;
     map.on('error',()=>{if(plain)return;plain=true;try{map.setStyle({version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9edef'}}]});}catch{}});
-    await mapReady(map);
-    return createHaMapSurface(card,{remove:()=>host.remove()},map,ml);
+    return mapReady(map).then(()=>createHaMapSurface(card,{remove:()=>host.remove()},map,ml));
   }
   function mapReady(map){
     return new Promise(resolve=>{const done=()=>{map.off('load',done);map.off('error',done);resolve();};map.once('load',done);map.once('error',done);});
@@ -161,39 +154,33 @@
   async function createSurface(card, container){
     // The MapLibre build is needed for both paths: the markers that sit on Home
     // Assistant's map, and the route when this card draws its own.
-    let ml=null, note='';
+    let ml=null;
     try{ml=await loadMapLibre();}catch(error){}
-    const tag=await waitForHaMapTag();
+    const tag=haMapTag();
     if(tag){
       const haMap=document.createElement(tag);
       if(card._hass)haMap.hass=card._hass;
       container.append(haMap);
       try{
         // <ha-map> builds its map in firstUpdated, so getMap() is the supported way
-        // in and it may hand back nothing until it is ready.
+        // in and it may hand back nothing until it is ready. The wait is short by
+        // design: a map that needs longer is not worth the seconds of blank card.
         let map=null;
-        for(let attempt=0;attempt<40&&!map;attempt++){
+        for(let attempt=0;attempt<24&&!map;attempt++){
           if(typeof haMap.getMap==='function')map=await haMap.getMap();
           if(!map)map=haMap.map||haMap._map||null;
           if(map)break;
-          await new Promise(resolve=>setTimeout(resolve,150));
+          await new Promise(resolve=>setTimeout(resolve,100));
         }
         if(map&&typeof map.addSource==='function')return {surface:createHaMapSurface(card, haMap, map, ml||window.GwmTripsMapLibre)};
-        throw new Error(`${tag} не отдал карту`);
+        haMap.remove();
       }catch(error){
         haMap.remove();
-        note=mapDiagnostics(tag)+(error&&error.message?error.message:'причина неизвестна')+'. ';
+        console.warn('GWM Jolion trips card: Home Assistant map unusable',error);
       }
-    }else{
-      note=mapDiagnostics(null);
     }
-    if(ml){
-      // Regardless of the note, the route must be drawn. The card owns the map, so
-      // Home Assistant's element being unusable is no longer a reason to show nothing.
-      const surface=await createOwnMap(card, container, ml);
-      return {surface,note:note+'Показан маршрут на карте интеграции.'};
-    }
-    return {surface:null,note:note+'Своя карта тоже не загрузилась.'};
+    if(ml)return {surface:await createOwnMap(card, container, ml)};
+    return {surface:null,note:'Не удалось открыть карту маршрута.'};
   }
   function createHaMapSurface(card, haMap, map, ml){
     const surface={engine:'ha', map, _haMap:haMap, _ml:ml, _seq:0, _cursor:null, _markers:[], _lines:[], _coords:[]};
@@ -268,8 +255,7 @@
       <div class="summary"><ha-icon icon="mdi:counter" aria-hidden="true"></ha-icon><span class="km" aria-label="Пробег за выбранный период">—</span></div>
       <div class="shortcuts"><button data-mode="today">Сегодня</button><button data-mode="yesterday">Вчера</button><button data-mode="week">Неделя</button><button id="calendar" title="Выбрать период" aria-label="Выбрать период" aria-expanded="false" aria-controls="period"><ha-icon icon="mdi:calendar-range"></ha-icon></button></div>
       <div class="dates" id="period" hidden><label>С<input type="date" id="start"></label><label>По<input type="date" id="end"></label><button id="show">Выбрать</button></div>
-      <div class="error" role="status"></div><div class="map-status" role="status"></div></div><div class="playback" style="padding:0 14px 12px" hidden><svg class="speed-chart" viewBox="0 0 600 55" style="width:100%;height:55px" aria-label="Скорость по времени"><path fill="none" stroke="#039ecc" stroke-width="2"></path></svg><input class="timeline" type="range" min="0" max="0" value="0" aria-label="Просмотр трека по времени" style="width:100%;box-sizing:border-box"><div class="selected" style="font-size:12px;text-align:center"></div></div></ha-card>`;
-      this.shadowRoot.querySelector('.timeline').oninput=e=>this._selectPoint(Number(e.target.value));
+      <div class="error" role="status"></div><div class="map-status" role="status"></div></div></ha-card>`;
       this._mapCard=this.shadowRoot.querySelector('ha-card');
       this._fullscreenBtn=this.shadowRoot.querySelector('#fullscreenBtn');
       this.shadowRoot.querySelector('#centerBtn').onclick=()=>this._centerVehicle();
@@ -281,32 +267,6 @@
     }
     // The map itself, so the card's tests and any consumer can reach it directly.
     get _map(){return this._surface?.map ?? null;}
-    _renderPlayback(data){
-      this._points=data.playback || [];
-      const root=this.shadowRoot,box=root.querySelector('.playback'),slider=root.querySelector('.timeline');
-      box.hidden=!this._points.length;slider.max=String(Math.max(0,this._points.length-1));slider.value='0';slider.oninput=e=>this._selectPoint(Number(e.target.value));
-      slider.title=data.playback_sample_step>1?'Для посекундного просмотра выберите один день':'Все записанные точки выбранного периода';
-      const points=this._points, max=points.reduce((m,p)=>Math.max(m,p.speed_kmh||0),1),first=points[0]?.timestamp_ms,last=points.at(-1)?.timestamp_ms;
-      let drawing='',gap=true;
-      const stride=Math.max(1,Math.ceil(points.length/2000));
-      points.forEach((p,i)=>{if(p.speed_kmh==null){gap=true;return;}if(p.display_break||(i&&p.timestamp_ms-points[i-1].timestamp_ms>120000))gap=true;if(i%stride&&i!==points.length-1)return;const x=(p.timestamp_ms-first)/Math.max(1,last-first)*600,y=53-p.speed_kmh/max*50;drawing+=`${gap?'M':'L'}${x.toFixed(1)},${y.toFixed(1)} `;gap=false;});
-      root.querySelector('.speed-chart path').setAttribute('d',drawing);this._cursor?.remove();this._cursor=null;
-      root.querySelector('.selected').textContent=points.length?'Выберите точку трека':'';
-      if(this._selectedTime!=null && points.length){
-        let low=0,high=points.length;
-        while(low<high){const mid=(low+high)>>1;if(points[mid].timestamp_ms<this._selectedTime)low=mid+1;else high=mid;}
-        let index=Math.min(low,points.length-1);
-        if(index>0&&Math.abs(points[index-1].timestamp_ms-this._selectedTime)<Math.abs(points[index].timestamp_ms-this._selectedTime))index--;
-        this._selectPoint(index,false);
-      }
-    }
-    _selectPoint(index,pan=true){
-      const p=this._points?.[index];if(!p||!this._surface?.map)return;
-      this._selectedTime=p.timestamp_ms;this.shadowRoot.querySelector('.timeline').value=String(index);
-      const text=new Intl.DateTimeFormat('ru-RU',{timeZone:this._hass.config.time_zone,day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(p.timestamp_ms));
-      this.shadowRoot.querySelector('.selected').textContent=`${text} · ${p.speed_kmh==null?'скорость неизвестна':`${p.speed_estimated?'≈ ':''}${Math.round(p.speed_kmh)} км/ч`} · ${p.source==='app'?'GPS приложения':'облако'}${p.accuracy_m!=null?` · GPS ±${Math.round(p.accuracy_m)} м`:''}${p.source==='app'?` · погрешность скорости: ${p.speed_accuracy_kmh==null?'неизвестна':`±${Number(p.speed_accuracy_kmh.toFixed(1))} км/ч`}`:''}${p.display_filtered?' · сглажено':''}`;
-      this._surface.addCursor([p.latitude,p.longitude]);if(pan)this._surface.panTo([p.latitude,p.longitude]);
-    }
     setConfig(config) {
       this._config={...config}; this._serial++;this._fitKey=null;
       this.setAttribute('aria-label',config.title || 'Поездки');
@@ -368,7 +328,7 @@
       this._highlight();
       if(!start || !end || start>end){error.textContent='Проверьте начало и конец периода.';return;}
       const queryKey=`${this._config.entity}|${this._config.odometer_entity || ''}|${start}|${end}`;
-      if(this._queryKey!==queryKey){this._selectedTime=null;this._renderPlayback({playback:[]});this._surface?.clear();root.querySelector('.km').textContent='—';this._queryKey=queryKey;}
+      if(this._queryKey!==queryKey){this._surface?.clear();root.querySelector('.km').textContent='—';this._queryKey=queryKey;}
       error.textContent='';root.querySelector('.summary').setAttribute('aria-busy','true');
       let timeout;
       try{
@@ -384,7 +344,7 @@
           if(note)root.querySelector('.map-status').textContent=note;
         }
         if(!this._surface)return;
-        this._surface.clear();this._renderPlayback(data);
+        this._surface.clear();
         for(const gap of data.gaps || [])this._surface.addLine(gap,{color:'#88949f',weight:2,dashArray:'5 7',opacity:.7,tooltip:'Нет GPS-данных: связь между точками, не записанный маршрут'});
         const speedSegments=Array.isArray(data.segment_speeds_kmh)?data.segment_speeds_kmh:[];
         const speedKinds=Array.isArray(data.segment_kinds)?data.segment_kinds:[];
