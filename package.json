@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "ha-gwm-jolion-browser-checks",
-  "version": "0.2.0-beta.1",
+  "version": "0.2.0-beta.2",
   "scripts": {
     "test:browser": "node tests/trips_labels.cjs && node tests/trips_simplify.cjs && node tests/trips_simplify_real.cjs && node tests/trips_card_browser.cjs && node tests/locator_card_browser.cjs && node tests/main_card_preview.cjs && node tests/profile_card_browser.cjs && node tests/seat_card_browser.cjs && node tests/remote_card_browser.cjs && node tests/stability_card_browser.cjs && node tests/options_qr_browser.cjs && node tests/pairing_browser.cjs && node tests/pairing_panel_browser.cjs"
   },
@@ -9,6 +9,7 @@
     "playwright": "1.63.0"
   }
 }
+
 
 
 

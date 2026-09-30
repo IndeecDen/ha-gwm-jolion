@@ -41,12 +41,18 @@ def main() -> int:
     found["const.py"] = re.search(r'VERSION = "([^"]+)"', const).group(1)
 
     init = (COMPONENT / "__init__.py").read_text(encoding="utf-8")
-    assets = set(re.findall(r"\?v=([0-9A-Za-z.\-]+)", init))
-    own = assets - VENDOR_VERSIONS
-    if len(own) != 1:
-        print(f"INCONSISTENT: mixed cache-buster versions in __init__.py: {sorted(own)}")
+    # The cache buster is now derived from the manifest instead of being written out
+    # per asset. Verify that wiring and reject any leftover hardcoded revision, which
+    # is exactly what lets the browser keep serving a stale card.
+    if "INTEGRATION_VERSION" not in init or "manifest.json" not in init:
+        print("INCONSISTENT: __init__.py does not derive the cache buster from the manifest")
         return 1
-    found["__init__.py cache-buster"] = own.pop()
+    literal = set(re.findall(r"\?v=([0-9A-Za-z.\-]+)", init))
+    stale = literal - VENDOR_VERSIONS
+    if stale:
+        print(f"INCONSISTENT: hardcoded cache-buster(s) in __init__.py: {sorted(stale)}")
+        return 1
+    found["__init__.py cache-buster"] = version
 
     found["package.json"] = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
 

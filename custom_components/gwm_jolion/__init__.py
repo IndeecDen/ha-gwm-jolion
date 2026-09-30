@@ -216,7 +216,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     await panel_custom.async_register_panel(
         hass, frontend_url_path="gwm-jolion-pairing",
         webcomponent_name="gwm-jolion-pairing-panel",
-        module_url="/gwm-jolion/gwm-jolion-pairing-panel.js?v=0.2.0-beta.2",
+        module_url=f"/gwm-jolion/gwm-jolion-pairing-panel.js?v={INTEGRATION_VERSION}",
         sidebar_title=None,
         require_admin=True,
     )
