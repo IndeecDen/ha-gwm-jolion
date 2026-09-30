@@ -352,6 +352,17 @@ async function openCard(browser,stub){
   assert.equal((await page.evaluate(READ_DRAWS)).lines.filter(line=>line.color==='#88949f').length,1,'the parked wander must stay on the map');
   assert.match(await page.locator('.km').textContent(),/1,2/);
   await page.evaluate(()=>{sample={...sample,samples:0,segments:[],segment_speeds_kmh:[],segment_kinds:[],gaps:[],parking_spots:[]};});
+  await page.evaluate(async()=>{
+   window.__tooltips=[];
+   window.GwmTripsMapLibre.Popup=class extends window.GwmTripsMapLibre.Popup{setText(text){window.__tooltips.push(String(text));return super.setText(text);}};
+   const pts=[[55,37],[55.001,37],[55.002,37],[55.003,37],[55.004,37],[55.005,37],[55.006,37],[55.007,37],[55.008,37]];
+   sample={...sample,samples:8,km:5,method:"gps",segments:[pts],segment_speeds_kmh:[[70,70,70,70,70,30,30,30]],segment_kinds:[Array(8).fill("moving")],gaps:[],parking_spots:[]};
+   await card._load();
+  });
+  // The band runs at 70 for five edges then slows to 30 for three: the true mean
+  // is 55, and a running halving average would report the tail and say 35.
+  await page.waitForFunction(()=>window.__tooltips.some(text=>text.includes("Средняя скорость: 55 км/ч")));
+  await page.evaluate(()=>{sample={...sample,samples:0,segments:[],segment_speeds_kmh:[],segment_kinds:[],parking_spots:[],gaps:[]};});
   // At 00:08 no driving line or ten-minute parking marker is required to show the car.
   await page.clock.install({time:new Date('2026-09-24T21:08:00Z')});
   await page.evaluate(async()=>{card._mode='today';sample.last_position=null;await card._load();});

@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.2.0-beta.5 */
+/* GWM Jolion Trips Card v0.2.0-beta.6 */
 (() => {
   const SPEED_COLORS = {low:'#2e7d32',medium:'#f9a825',high:'#c62828'};
   const DEFAULT_SPEED_LIMITS = {green:80,red:110};
@@ -283,7 +283,23 @@
       clearInterval(this._timer); this._timer=setInterval(()=>this._load(),60000);
       document.addEventListener('fullscreenchange',this._onFullscreenChange);
       this._resize=new ResizeObserver(()=>this._surface?.resize());this._resize.observe(this);
+      // Start the map now: MapLibre and the tiles load while the history request
+      // is still in flight, so the route is drawn the moment the data arrives.
+      this._ensureSurface();
       this._load();
+    }
+    async _ensureSurface(){
+      if(this._surface)return this._surface;
+      if(this._surfacePromise)return this._surfacePromise;
+      // The surface is a persistent resource, not part of one load: it lives until
+      // the card disconnects, so switching periods must never discard it.
+      this._surfacePromise=createSurface(this,this.shadowRoot.querySelector('.map')).then(({surface,note})=>{
+        if(!this.isConnected){surface?.destroy();return null;}
+        this._surface=surface;this._fitKey=null;
+        if(note)this.shadowRoot.querySelector('.map-status').textContent=note;
+        return surface;
+      }).finally(()=>{this._surfacePromise=null;});
+      return this._surfacePromise;
     }
     disconnectedCallback(){ clearInterval(this._timer);this._resize?.disconnect();document.removeEventListener('fullscreenchange',this._onFullscreenChange);this.classList.remove('fallback-fullscreen');if(document.fullscreenElement===this._mapCard&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});this._serial++;this._surface?.destroy();this._surface=null;this._fitKey=null; }
     getCardSize(){return 6;}
@@ -337,12 +353,7 @@
         error.textContent=data.samples?'':'За этот период нет записей.';
         root.querySelector('.km').textContent=data.samples?`${data.method==='odometer'?'':'≈ '}${data.km.toLocaleString('ru-RU')}`:'—';
         root.querySelector('.km').title=`${start} — ${end} · км${data.method==='odometer'?'':' · оценка'}`;
-        if(!this._surface){
-          const {surface,note}=await createSurface(this,root.querySelector('.map'));
-          if(serial!==this._serial || !this.isConnected){surface?.destroy();return;}
-          this._surface=surface;this._fitKey=null;
-          if(note)root.querySelector('.map-status').textContent=note;
-        }
+        this._surface=await this._ensureSurface();
         if(!this._surface)return;
         this._surface.clear();
         for(const gap of data.gaps || [])this._surface.addLine(gap,{color:'#88949f',weight:2,dashArray:'5 7',opacity:.7,tooltip:'Нет GPS-данных: связь между точками, не записанный маршрут'});
@@ -358,10 +369,10 @@
           // Consecutive pieces of the same speed were drawn one line per GPS
           // pair, so every join showed as a hard step. Gather each run of one
           // colour into a single line, so the map joins them with round caps.
-          let run=[],runColor=null,runSpeed=0;
+          let run=[],runColor=null,runSum=0,runCount=0;
           const flush=()=>{
-            if(run.length>1)this._surface.addLine(simplifyPath(run),{color:runColor,weight:4,opacity:.9,tooltip:`Средняя скорость: ${Math.round(runSpeed)} км/ч`});
-            run=[];runColor=null;
+            if(run.length>1)this._surface.addLine(simplifyPath(run),{color:runColor,weight:4,opacity:.9,tooltip:`Средняя скорость: ${runCount?Math.round(runSum/runCount):0} км/ч`});
+            run=[];runColor=null;runSum=0;runCount=0;
           };
           for(let index=1;index<segment.length;index++){
             const rawSpeed=speeds[index-1],speed=Number(rawSpeed);
@@ -380,8 +391,8 @@
             }
             if(kinds[index-1]==='unknown'||rawSpeed===null||rawSpeed===undefined||!Number.isFinite(speed)||speed<=0){flush();continue;}
             const color=speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
-            if(color!==runColor){flush();runColor=color;runSpeed=speed;run=[segment[index-1]];}
-            else runSpeed=Math.round((runSpeed+speed)/2);
+            if(color!==runColor){flush();runColor=color;runSum=speed;runCount=1;run=[segment[index-1]];}
+            else {runSum+=speed;runCount++;}
             run.push(segment[index]);
           }
           flush();

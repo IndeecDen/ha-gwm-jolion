@@ -1,5 +1,5 @@
 import './jsQR.js?v=1.4.0';
-import './gwm-jolion-pairing.js?v=0.2.0-beta.5';
+import './gwm-jolion-pairing.js?v=0.2.0-beta.6';
 
 class JolionPairingPanel extends HTMLElement {
   constructor() {
