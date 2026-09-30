@@ -52,15 +52,21 @@ jobs:
     # The unit tests load single modules by path, so nothing ever ran
     # async_setup_entry. This job loads the real config entry, which is the only
     # way to catch a missing import or a broken platform before the user's
-    # instance does. Linux only: the harness blocks sockets, and Windows asyncio
-    # needs an AF_INET socket pair to build an event loop.
-    runs-on: ubuntu-latest
+    # instance does. Windows is included: tests/ha/conftest.py lifts the harness
+    # socket guard around fixture setup, which is what lets asyncio build its
+    # AF_INET self-pipe there.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
       - name: Install the Home Assistant test harness
+        shell: bash
         run: |
           python -m pip install --disable-pip-version-check \
             --extra-index-url https://pypi.home-assistant.io/simple \
