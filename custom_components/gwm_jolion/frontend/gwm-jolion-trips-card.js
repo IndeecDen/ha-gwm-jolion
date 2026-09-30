@@ -123,20 +123,15 @@
     else if(content)element.append(content);
     return element;
   }
-  // The route is drawn on Home Assistant's own map element. There is no second
-  // engine and no fallback: if the map cannot be opened the card says so instead
-  // of quietly swapping in a different one, because the card's whole point is to
-  // follow the map settings the dashboard already uses.
-  // Home Assistant's map element is the only map this card draws on. Its tag name
-  // is not something to assume: the interface registers the map lazily, and a
-  // future release is free to rename it. So the card looks for the names in turn
-  // rather than insisting on one, and when none of them are there it says which it
-  // looked for.
+  // The route is drawn on Home Assistant's own map element when that element works,
+  // and never depends on it: if the element is absent or refuses to hand over a
+  // usable map, the route is drawn on the map the integration already ships, so a
+  // dashboard without Home Assistant's map can still show the track.
   const HA_MAP_TAGS=['ha-map','ha-map-entity','hui-map'];
   function haMapTag(){return HA_MAP_TAGS.find(tag=>customElements.get(tag))||null;}
   function mapDiagnostics(tag){
-    if(tag)return `Используется карта Home Assistant <${tag}>.`;
-    return `Карта Home Assistant не зарегистрирована. Проверено: ${HA_MAP_TAGS.join(', ')}. Добавьте на панель стандартную карту «Карта» и обновите страницу — карта подъедет сама.`;
+    if(tag)return `Карта Home Assistant <${tag}> не дала карту. `;
+    return `Карта Home Assistant не зарегистрирована (проверено: ${HA_MAP_TAGS.join(', ')}). `;
   }
   function waitForHaMapTag(){
     if(haMapTag())return Promise.resolve(haMapTag());
@@ -145,32 +140,60 @@
       new Promise(resolve=>setTimeout(()=>resolve(null),8000)),
     ]);
   }
+  // The route drawn when Home Assistant's element is unusable: the integration's
+  // own MapLibre map over OpenFreeMap's Positron style, which needs no API key. If
+  // the style cannot be fetched the map falls back to a plain background and the
+  // route itself is still drawn, so the track survives offline.
+  const FALLBACK_STYLE='https://tiles.openfreemap.org/styles/positron';
+  async function createOwnMap(card, container, ml){
+    const host=document.createElement('div');
+    host.style.cssText='position:absolute;inset:0';
+    container.append(host);
+    const map=new ml.Map({container:host,style:FALLBACK_STYLE});
+    let plain=false;
+    map.on('error',()=>{if(plain)return;plain=true;try{map.setStyle({version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9edef'}}]});}catch{}});
+    await mapReady(map);
+    return createHaMapSurface(card,{remove:()=>host.remove()},map,ml);
+  }
+  function mapReady(map){
+    return new Promise(resolve=>{const done=()=>{map.off('load',done);map.off('error',done);resolve();};map.once('load',done);map.once('error',done);});
+  }
   async function createSurface(card, container){
+    // The MapLibre build is needed for both paths: the markers that sit on Home
+    // Assistant's map, and the route when this card draws its own.
+    let ml=null, note='';
+    try{ml=await loadMapLibre();}catch(error){}
     const tag=await waitForHaMapTag();
-    if(!tag)return {surface:null,note:mapDiagnostics(null)};
-    const haMap=document.createElement(tag);
-    if(card._hass)haMap.hass=card._hass;
-    container.append(haMap);
-    try{
-      const ml=await loadMapLibre();
-      // <ha-map> builds its map in firstUpdated, so getMap() is the supported way
-      // in and it may hand back nothing until it is ready. Either way the card has
-      // to end up with a real map: without one the route cannot be drawn, and
-      // drawing onto it would throw instead of saying so.
-      let map=null;
-      for(let attempt=0;attempt<40&&!map;attempt++){
-        if(typeof haMap.getMap==='function')map=await haMap.getMap();
-        if(!map)map=haMap.map||haMap._map||null;
-        if(map)break;
-        await new Promise(resolve=>setTimeout(resolve,150));
+    if(tag){
+      const haMap=document.createElement(tag);
+      if(card._hass)haMap.hass=card._hass;
+      container.append(haMap);
+      try{
+        // <ha-map> builds its map in firstUpdated, so getMap() is the supported way
+        // in and it may hand back nothing until it is ready.
+        let map=null;
+        for(let attempt=0;attempt<40&&!map;attempt++){
+          if(typeof haMap.getMap==='function')map=await haMap.getMap();
+          if(!map)map=haMap.map||haMap._map||null;
+          if(map)break;
+          await new Promise(resolve=>setTimeout(resolve,150));
+        }
+        if(map&&typeof map.addSource==='function')return {surface:createHaMapSurface(card, haMap, map, ml||window.GwmTripsMapLibre)};
+        throw new Error(`${tag} не отдал карту`);
+      }catch(error){
+        haMap.remove();
+        note=mapDiagnostics(tag)+(error&&error.message?error.message:'причина неизвестна')+'. ';
       }
-      if(!map||typeof map.addSource!=='function')throw new Error(`${tag} не отдал карту`);
-      return {surface:createHaMapSurface(card, haMap, map, ml)};
-    }catch(error){
-      haMap.remove();
-      console.warn('GWM Jolion trips card: Home Assistant map unavailable',error);
-      return {surface:null,note:`${mapDiagnostics(tag)} Не удалось получить карту: ${error && error.message ? error.message : 'причина неизвестна'}. Пробег и выбор периода ниже работают.`};
+    }else{
+      note=mapDiagnostics(null);
     }
+    if(ml){
+      // Regardless of the note, the route must be drawn. The card owns the map, so
+      // Home Assistant's element being unusable is no longer a reason to show nothing.
+      const surface=await createOwnMap(card, container, ml);
+      return {surface,note:note+'Показан маршрут на карте интеграции.'};
+    }
+    return {surface:null,note:note+'Своя карта тоже не загрузилась.'};
   }
   function createHaMapSurface(card, haMap, map, ml){
     const surface={engine:'ha', map, _haMap:haMap, _ml:ml, _seq:0, _cursor:null, _markers:[], _lines:[], _coords:[]};

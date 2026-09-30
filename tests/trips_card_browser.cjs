@@ -81,8 +81,9 @@ async function openCard(browser,stub){
  // map, so the card finds <ha-map> on its very first load attempt. After a goto it
  // would only apply to the next navigation, which is never coming.
  if(stub)await page.addInitScript({content:stub});
- await page.route('**/*',async route=>{
+  await page.route('**/*',async route=>{
   const url=new URL(route.request().url());
+  if(url.hostname==='tiles.openfreemap.org')return route.fulfill({contentType:'application/json',body:JSON.stringify({version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9ede8'}}]})});
   if(url.pathname.startsWith('/gwm-jolion/')){
    requested.push(url.pathname);
    const file=path.resolve('custom_components/gwm_jolion/frontend',url.pathname.slice('/gwm-jolion/'.length));
@@ -382,13 +383,15 @@ async function openCard(browser,stub){
   assert.deepEqual(afterRemoval,[],'removal must raise nothing but the dead render loop');
   await page.close();
 
-  // Without <ha-map> there is no other map to fall back on. The card has to say
-  // so plainly instead of drawing something the reader did not ask for.
+  // Without <ha-map> there is no Home Assistant map to draw on, and that must
+  // not mean the track is lost: the card draws the route on its own map and says
+  // so instead of showing nothing.
   const bare=await openCard(browser,null);
-  await bare.page.waitForFunction(()=>card.shadowRoot.querySelector('.map-status').textContent.length>0);
-  assert.match(await bare.page.locator('.map-status').textContent(),/Карта Home Assistant не зарегистрирована\. Проверено: ha-map, ha-map-entity, hui-map\./);
-  assert.equal(await bare.page.evaluate(()=>card._surface),null);
-  assert.equal(await bare.page.locator('.km').textContent(),'14,6','пробег остаётся доступен без карты');
+  await bare.page.waitForFunction(()=>card._surface&&card._surface.engine==='ha'&&card._surface._lines.length===2);
+  await bare.page.waitForFunction(()=>card._surface&&card._surface.engine==='ha'&&card._surface._lines.length===2);
+  assert.match(await bare.page.locator('.map-status').textContent(),/Показан маршрут на карте интеграции/);
+  assert.equal(await bare.page.evaluate(()=>card._surface.hasOverlays()),true,'трек нарисован на собственной карте');
+  assert.equal(await bare.page.locator('.km').textContent(),'14,6','пробег остаётся доступен');
   assert.deepEqual(bare.errors,[]);
   await bare.page.close();
 
@@ -413,17 +416,21 @@ async function openCard(browser,stub){
   assert.deepEqual(late.errors,[]);
   await late.page.close();
 
-  // A map that never arrives is the worst case: the route cannot be drawn, but the
-  // odometer and the period selector must still work and no error may escape.
+  // A map element that exists but refuses to hand over a usable map is the same
+  // situation: the route must still be drawn, with the reason stated under the map,
+  // and the odometer and period selector must keep working.
   const silent=await openCard(browser,`
    customElements.define('ha-map',class extends HTMLElement{
     connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
-   });`);
-  await silent.page.waitForFunction(()=>card.shadowRoot.querySelector('.map-status').textContent.includes('Не удалось получить карту'),null,{timeout:20000});
-  assert.equal(await silent.page.evaluate(()=>card._surface),null);
-  assert.equal(await silent.page.locator('.km').textContent(),'14,6','пробег остаётся доступен без карты');
+   });
+  `);
+  await silent.page.waitForFunction(()=>card._surface&&card._surface._lines.length===2);
+  assert.match(await silent.page.locator('.map-status').textContent(),/не дала карту/);
+  assert.match(await silent.page.locator('.map-status').textContent(),/Показан маршрут на карте интеграции/);
+  assert.equal(await silent.page.evaluate(()=>card._surface.hasOverlays()),true,'трек нарисован, хотя карта HA не отдала карту');
+  assert.equal(await silent.page.locator('.km').textContent(),'14,6','пробег остаётся доступен');
   assert.equal(await silent.page.locator('[data-mode="today"]').count(),1,'выбор периода остаётся доступен');
-  assert.deepEqual(silent.errors.filter(text=>!/не отдал карту/.test(text)),[],'падение карты не должно вылетать наружу');
+  assert.deepEqual(silent.errors,[]);
   await silent.page.close();
 
   // Home Assistant registers <ha-map> lazily, and a dashboard with no map card of
