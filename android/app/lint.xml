@@ -1,0 +1,4 @@
+<lint>
+    <!-- Private sideloaded APK for Android 8.1 head units, not a Google Play release. -->
+    <issue id="ExpiredTargetSdkVersion" severity="ignore" />
+</lint>

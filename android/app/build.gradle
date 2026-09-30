@@ -1,0 +1,19 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'ru.jolion.locator'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'ru.jolion.locator'
+        minSdk 27
+        targetSdk 28
+        versionCode 10
+        versionName '0.2.0-beta.1'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+}
+dependencies {
+    implementation 'com.google.zxing:core:3.5.3'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+}
+

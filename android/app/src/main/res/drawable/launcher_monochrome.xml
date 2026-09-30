@@ -1,0 +1,6 @@
+<!-- Alpha-only car silhouette for Android 13 themed launcher icons. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M35,38Q36,34 40,34L68,34Q72,34 73,38L79,53L81,56L81,69Q81,72 78,72L75,72L75,77L68,77L68,72L40,72L40,77L33,77L33,72L30,72Q27,72 27,69L27,56L29,53ZM40,40L35,52L73,52L68,40ZM34,57L34,63L44,63L44,57ZM64,57L64,63L74,63L74,57ZM46,65L46,68L62,68L62,65Z" />
+</vector>
