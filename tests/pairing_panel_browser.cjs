@@ -1,5 +1,9 @@
 const {chromium}=require('playwright');
 const fs=require('fs'),path=require('path'),assert=require('assert');
+// The version comes from the manifest. Writing it out here once loaded the panel at
+// one revision and the module it imports at another, so the browser defined the same
+// custom element twice - a fixture bug that looked like a card bug.
+const VERSION=JSON.parse(fs.readFileSync('custom_components/gwm_jolion/manifest.json','utf8')).version;
 (async()=>{
  const browser=await chromium.launch({channel:'msedge',headless:true});
  try{
@@ -12,7 +16,7 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
     const file=path.join('custom_components/gwm_jolion/frontend',name==='jsQR.js'?'vendor/jsQR.js':name);
     return route.fulfill({body:fs.readFileSync(file),contentType:'application/javascript'});
    }
-   return route.fulfill({contentType:'text/html',body:`<gwm-jolion-pairing-panel></gwm-jolion-pairing-panel><script type="module" src="/gwm-jolion/gwm-jolion-pairing-panel.js?v=0.2.0-beta.1"></script><script type="module" src="/gwm-jolion/gwm-jolion-pairing.js?v=0.2.0-beta.1"></script>`});
+   return route.fulfill({contentType:'text/html',body:`<gwm-jolion-pairing-panel></gwm-jolion-pairing-panel><script type="module" src="/gwm-jolion/gwm-jolion-pairing-panel.js?v=${VERSION}"></script><script type="module" src="/gwm-jolion/gwm-jolion-pairing.js?v=${VERSION}"></script>`});
   });
   await page.goto('https://ha.test/gwm-jolion-pairing?entry_id=car');
   await page.waitForFunction(()=>customElements.get('gwm-jolion-pairing-panel'));
@@ -37,3 +41,4 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
   console.log('Direct settings URL, selected entry, bundled modules, QR photo save, navigation cleanup: PASS');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});
+

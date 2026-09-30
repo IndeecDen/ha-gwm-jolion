@@ -1,5 +1,5 @@
 import './jsQR.js?v=1.4.0';
-import './gwm-jolion-pairing.js?v=0.2.0-beta.1';
+import './gwm-jolion-pairing.js?v=0.2.0-beta.2';
 
 class JolionPairingPanel extends HTMLElement {
   constructor() {
@@ -38,3 +38,4 @@ class JolionPairingPanel extends HTMLElement {
   }
 }
 customElements.define('gwm-jolion-pairing-panel',JolionPairingPanel);
+

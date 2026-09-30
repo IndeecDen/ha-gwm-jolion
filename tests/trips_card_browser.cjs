@@ -227,9 +227,31 @@ const assert=require('node:assert/strict');
   const jamLayers=await page.evaluate(()=>card._layer.getLayers().map(layer=>({color:layer.options.color,dash:layer.options.dashArray||null,points:layer.getLatLngs().map(p=>[p.lat,p.lng])})));
   assert.equal(jamLayers.length,4);
   assert.equal(jamLayers.filter(layer=>layer.dash==='5 7').length,1);
-  assert.deepEqual(jamLayers.filter(layer=>layer.color==='#88949f'&&layer.dash==='2 6').map(layer=>layer.points),[
-   [[55.0001,37],[55.0002,37],[55.0002,37]],[[55.001,37],[55.0011,37]]
-  ]);
+  // The wander is simplified like the route, so its vertex count is no longer the
+  // measured one. What must hold is that it is still drawn, that both ends stay on
+  // the measured positions, and that it never leaves the measured run by more than
+  // the tolerance.
+  const wander=await page.evaluate(()=>card._layer.getLayers().filter(layer=>layer.options?.color==='#88949f'&&layer.options?.dashArray==='2 6').map(layer=>layer.getLatLngs().map(p=>[p.lat,p.lng])));
+  assert.equal(wander.length,2,'one dashed line per stationary run');
+  const wanderMeasured=[[[55.0001,37],[55.0002,37],[55.0002,37]],[[55.001,37],[55.0011,37]]];
+  wanderMeasured.forEach((measured,index)=>{
+   assert.deepEqual(wander[index][0],measured[0],`run ${index} must start on the measured point`);
+   assert.deepEqual(wander[index][wander[index].length-1],measured[measured.length-1],`run ${index} must end on the measured point`);
+   const mPerDegLon=111320*Math.cos(55.001*Math.PI/180);
+   const off=point=>{
+    const p=[(point[1]-wander[index][0][1])*mPerDegLon,(point[0]-wander[index][0][0])*111320];
+    let best=Infinity;
+    for(let i=0;i+1<wander[index].length;i++){
+     const a=[(wander[index][i][1]-wander[index][0][1])*mPerDegLon,(wander[index][i][0]-wander[index][0][0])*111320];
+     const b=[(wander[index][i+1][1]-wander[index][0][1])*mPerDegLon,(wander[index][i+1][0]-wander[index][0][0])*111320];
+     const vx=b[0]-a[0],vy=b[1]-a[1],len2=vx*vx+vy*vy;
+     let t=len2?((p[0]-a[0])*vx+(p[1]-a[1])*vy)/len2:0;t=t<0?0:(t>1?1:t);
+     best=Math.min(best,Math.hypot(p[0]-a[0]-t*vx,p[1]-a[1]-t*vy));
+    }
+    return best;
+   };
+   for(const point of measured)assert.ok(off(point)<=8,`run ${index} strays ${off(point).toFixed(1)} m from the measured wander`);
+  });
   // A stationary run that sits on a parking marker is the receiver wandering; the
   // marker already says the car stood there, so the wander is not drawn.
   await page.evaluate(async()=>{

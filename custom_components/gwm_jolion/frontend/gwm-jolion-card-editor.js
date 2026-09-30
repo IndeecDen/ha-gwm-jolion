@@ -1,6 +1,6 @@
-/* GWM Jolion primary card visual editor v0.2.0-beta.1 */
+/* GWM Jolion primary card visual editor v0.2.0-beta.2 */
 (() => {
-  const CARD_VERSION = "0.2.0-beta.1";
+  const CARD_VERSION = "0.2.0-beta.2";
 
   const CONTROL_OPTIONS = [
     ["engine", "Двигатель"],
@@ -411,3 +411,4 @@
     "background:#263238;color:white;padding:2px 6px;border-radius:3px"
   );
 })();
+

@@ -1,4 +1,8 @@
 const {chromium}=require('playwright');
+const fs0=require('fs');
+// Read the revision instead of pinning it: the page loads one module by import and
+// another by URL, and a mismatched pin makes the browser define both twice.
+const VERSION=JSON.parse(fs0.readFileSync('custom_components/gwm_jolion/manifest.json','utf8')).version;
 const fs=require('fs'),path=require('path'),assert=require('assert');
 (async()=>{
  const browser=await chromium.launch({channel:'msedge',headless:true});
@@ -19,7 +23,7 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
     requestUpdate(){this.updated();}updated(){}
    });
   });
-  await page.addScriptTag({url:'/gwm-jolion/gwm-jolion-options.js?v=0.2.0-beta.1',type:'module'});
+  await page.addScriptTag({url:"/gwm-jolion/gwm-jolion-options.js?v="+VERSION,type:'module'});
   await page.evaluate(()=>{window.form=document.createElement('ha-form');document.body.append(form);form.requestUpdate();});
   assert.equal(await page.getByRole('button',{name:'Ввести с QR'}).isVisible(),false);
   await page.evaluate(()=>{form.data={...form.data,golion_locator_enabled:true};form.requestUpdate();});
@@ -43,3 +47,6 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
   assert.deepStrictEqual(errors,[]);console.log('Options checkbox visibility, inline QR, saved ID/key, reopen, scan and transfer: PASS');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});
+
+
+

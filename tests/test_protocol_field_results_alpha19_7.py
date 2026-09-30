@@ -36,7 +36,11 @@ def test_high_beam_code_remains_candidate_not_confirmed() -> None:
 
 def test_const_keeps_raw_window_protocol_but_exposes_clean_binary_names() -> None:
     const = _load("gwm_const_alpha20", "custom_components/gwm_jolion/const.py")
-    assert const.VERSION == "0.2.0-beta.1"
+    # Read from the manifest rather than repeating the number: a version bump must
+    # not fail a protocol test.
+    import json
+    manifest = ROOT / "custom_components/gwm_jolion/manifest.json"
+    assert const.VERSION == json.loads(manifest.read_text(encoding="utf-8"))["version"]
     expected_raw = {
         "2210001": "Окно переднее левое (raw)",
         "2210002": "Окно переднее правое (raw)",

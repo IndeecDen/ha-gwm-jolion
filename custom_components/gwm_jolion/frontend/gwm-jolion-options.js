@@ -1,5 +1,5 @@
 import './jsQR.js?v=1.4.0';
-import './gwm-jolion-pairing.js?v=0.2.0-beta.1';
+import './gwm-jolion-pairing.js?v=0.2.0-beta.2';
 
 // HA's form schema has no custom button selector. Augment only our three
 // uniquely named fields; all values and persistence remain in the options flow.
@@ -43,3 +43,4 @@ customElements.whenDefined('ha-form').then(()=>{
   const updated=proto.updated;
   proto.updated=function(changed){updated?.call(this,changed);enhance(this);const key=[...(this.shadowRoot?.querySelector('.root')?.children||[])].find(e=>e.schema?.name===KEY);key?.updateComplete?.then(()=>enhance(this));};
 });
+

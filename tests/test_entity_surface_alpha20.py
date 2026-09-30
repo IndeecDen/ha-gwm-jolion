@@ -7,6 +7,17 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def shipped_version() -> str:
+    """The version the integration actually announces.
+
+    Read from the manifest instead of being repeated here: a hardcoded copy turns
+    every version bump into a test failure that has nothing to do with the change.
+    """
+    import json
+    manifest = (ROOT / "custom_components/gwm_jolion/manifest.json").read_text(encoding="utf-8")
+    return json.loads(manifest)["version"]
+
+
 def _load(name: str, relative: str):
     spec = importlib.util.spec_from_file_location(name, ROOT / relative)
     assert spec and spec.loader
@@ -108,11 +119,16 @@ def test_alpha20_frontend_uses_clean_entity_attributes() -> None:
     patch = (ROOT / "custom_components/gwm_jolion/frontend/gwm-jolion-alpha20.js").read_text(encoding="utf-8")
     init_source = (ROOT / "custom_components/gwm_jolion/__init__.py").read_text(encoding="utf-8")
 
-    assert 'const VERSION = "0.2.0-beta.1"' in patch
+    assert f'const VERSION = "{shipped_version()}"' in patch
     assert 'signal_level_raw' in patch
     assert 'feature_flags' in patch
     assert 'last_successful_update' in patch
     assert 'if (id === "windows") return ""' not in patch
     assert 'entities.windowFl = oldFr' in patch
     assert 'entities.windowFr = oldFl' in patch
-    assert 'gwm-jolion-alpha20.js?v=0.2.0-beta.1' in init_source
+    # The cache buster is now attached from the manifest by the integration, so the
+    # URL is not written out here to drift. Check the wiring instead: the version is
+    # read from the manifest and the asset goes through the helper that appends it.
+    assert '"manifest.json"' in init_source
+    assert "INTEGRATION_VERSION" in init_source
+    assert '_asset("gwm-jolion-alpha20.js"' in init_source

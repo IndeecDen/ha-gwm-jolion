@@ -12,6 +12,7 @@ It needs that plugin, so it skips in the plain test venv and runs in .venv-ha.
 Run: .venv-ha\\Scripts\\python.exe -m pytest -q tests/ha
 """
 from unittest.mock import AsyncMock, patch
+from pathlib import Path
 import sys
 
 import pytest
@@ -21,13 +22,35 @@ pytest.importorskip(
     reason="needs pytest-homeassistant-custom-component",
 )
 
-# The harness blocks sockets for the session, and on Windows asyncio cannot build
-# its event loop without an AF_INET socket pair. That makes every test error in
-# fixture setup, before a test body runs, so nothing here can run on Windows.
-# CI runs this file on ubuntu-latest, where the harness works as intended.
+def _environment_can_set_the_entry_up() -> bool:
+    """Whether this virtualenv provides what setting the entry up needs.
+
+    Two things have to be present and neither is about this integration:
+
+    * `hass_frontend`, because the `frontend` component builds each static path as
+      `root / name` and needs `where()` to be a Path. The package ships from Home
+      Assistant's own index, which is not reachable everywhere.
+    * `OptionsFlowWithReload`, which `config_flow` builds on. A virtualenv older
+      than the integration fails with a bare import error instead.
+
+    The alternative - skipping on `sys.platform == "win32"` - hid both, and that
+    skip is what let a broken import reach the user's instance before.
+    """
+    try:
+        import hass_frontend
+        from homeassistant import config_entries
+    except Exception:
+        return False
+    return isinstance(hass_frontend.where(), Path) and hasattr(config_entries, "OptionsFlowWithReload")
+
+
+# Windows asyncio needs an AF_INET socket pair, which the harness socket guard
+# rejects; tests/ha/conftest.py lifts the guard around fixture setup so the event
+# loop can be built. What is left is the environment above, so it is probed rather
+# than assumed from the platform.
 pytestmark = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="pytest-homeassistant-custom-component cannot build an event loop on Windows",
+    not _environment_can_set_the_entry_up(),
+    reason="this virtualenv cannot set a Home Assistant config entry up (frontend assets or Home Assistant version)",
 )
 
 pytest_plugins = "pytest_homeassistant_custom_component"

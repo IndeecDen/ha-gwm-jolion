@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.2.0-beta.1 */
+/* GWM Jolion Trips Card v0.2.0-beta.2 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -314,7 +314,7 @@
                 // every stop. The wander is softened instead - one thin dashed line
                 // per run rather than a solid grey line per GPS pair, so it stops
                 // reading as a road without taking the route with it.
-                L.polyline(run.points,{color:'#88949f',weight:2,opacity:.45,lineCap:'round',lineJoin:'round',dashArray:'2 6'}).bindTooltip('Замедленное движение по записанным GPS-точкам').addTo(this._layer);
+                L.polyline(simplifyPath(run.points),{color:'#88949f',weight:2,opacity:.45,lineCap:'round',lineJoin:'round',dashArray:'2 6'}).bindTooltip('Замедленное движение по записанным GPS-точкам').addTo(this._layer);
                 index=run.end;
               }
               continue;
@@ -388,4 +388,5 @@
   if(!customElements.get('gwm-jolion-trips-card-editor'))customElements.define('gwm-jolion-trips-card-editor',TripsEditor);
   window.customCards=window.customCards || [];window.customCards.push({type:'gwm-jolion-trips-card',name:'GWM Jolion — Поездки',description:'Карта маршрута и пробег за день или период',preview:true});
 })();
+
 

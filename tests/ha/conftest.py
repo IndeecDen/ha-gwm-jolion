@@ -1,15 +1,19 @@
 """Local overrides for the Home Assistant test harness.
 
-pytest-homeassistant-custom-component blocks sockets for the whole session so a
-test cannot reach the network. On Linux that is harmless, because asyncio builds
-its self-pipe from an AF_UNIX socket. On Windows asyncio falls back to an AF_INET
-socket pair, so the blocked `socket.socket()` call makes the event loop
-unbuildable and every test errors during fixture setup - before any test body can
-run, which is why a fixture cannot fix it in time.
+pytest-homeassistant-custom-component blocks sockets so a test cannot reach the
+network. On Linux that is harmless: asyncio builds its self-pipe from an AF_UNIX
+socket, which the harness guard allows. On Windows asyncio uses an AF_INET socket
+pair instead, so the guard rejects it, the event loop cannot be constructed, and
+every test errors while the `event_loop` fixture is set up - the loop is left half
+built, which is where the later `'_ssock'` AttributeError comes from.
 
-`enable_socket()` only restores `socket.socket`, and the harness patches it once in
-its own pytest_configure, so undoing it here sticks for the session. The cloud API
-is never reached anyway: the tests replace the client with an AsyncMock.
+The harness disables sockets again for every test from its own
+`pytest_runtest_setup`, and a conftest hook of the same name does not run after it,
+so the block is lifted right before each fixture is built instead. That is the last
+moment before the event loop exists.
+
+The cloud API is never reached anyway: the tests replace the client with an
+AsyncMock.
 
 Run with asyncio auto mode, which the `hass` fixture needs:
     .venv-ha\\Scripts\\python.exe -m pytest -q tests\\ha -o asyncio_mode=auto
@@ -26,9 +30,16 @@ import pytest_socket
 
 @pytest.hookimpl(trylast=True)
 def pytest_configure(config) -> None:
-    """Undo the harness socket block before any event loop is built.
+    """Undo the harness block before anything else builds an event loop."""
+    pytest_socket.enable_socket()
 
-    trylast matters: the harness installs the block in its own pytest_configure,
-    and this hook has to run after it.
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_fixture_setup(fixturedef, request):
+    """Let sockets through while a fixture - and so any event loop - is built.
+
+    tryfirst keeps this wrapper outside the pytest-asyncio one, so the release
+    happens before that wrapper asks the fixture for its result.
     """
     pytest_socket.enable_socket()
+    yield

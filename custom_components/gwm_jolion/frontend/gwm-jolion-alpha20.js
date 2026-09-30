@@ -1,6 +1,6 @@
 /* GWM Jolion alpha.20 entity-surface compatibility layer */
 (() => {
-  const VERSION = "0.2.0-beta.1";
+  const VERSION = "0.2.0-beta.2";
   const SAFE_CAPABILITIES = new Set([
     "seat_heat_driver",
     "seat_heat_passenger",
@@ -274,3 +274,4 @@
     "background:#526474;color:white;padding:2px 6px;border-radius:3px",
   );
 })();
+

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -50,41 +51,31 @@ from .protocol_capture import (
 _LOGGER = logging.getLogger(__name__)
 
 FRONTEND_DIR = Path(__file__).parent / "frontend"
+# The cache buster is the manifest version, read rather than repeated: the version
+# used to be written out by hand in this table, in the manifest and in two card
+# constants, and bumping one of them left the browser serving a stale card.
+INTEGRATION_VERSION = json.loads(
+    (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
+)["version"]
+
+
+def _asset(filename: str, url: str, revision: str | None = None) -> tuple[Path, str, str]:
+    """A frontend file with its cache-busted URL."""
+    return (FRONTEND_DIR / filename, url, f"{url}?v={revision or INTEGRATION_VERSION}")
+
+
 FRONTEND_ASSETS = (
-    (FRONTEND_DIR / "gwm-jolion-options.js", "/gwm-jolion/gwm-jolion-options.js", "/gwm-jolion/gwm-jolion-options.js?v=0.2.0-beta.1"),
-    (FRONTEND_DIR / "gwm-jolion-pairing-panel.js", "/gwm-jolion/gwm-jolion-pairing-panel.js", "/gwm-jolion/gwm-jolion-pairing-panel.js?v=0.2.0-beta.1"),
-    (FRONTEND_DIR / "vendor/jsQR.js", "/gwm-jolion/jsQR.js", "/gwm-jolion/jsQR.js?v=1.4.0"),
-    (FRONTEND_DIR / "gwm-jolion-pairing.js", "/gwm-jolion/gwm-jolion-pairing.js", "/gwm-jolion/gwm-jolion-pairing.js?v=0.2.0-beta.1"),
-    (
-        FRONTEND_DIR / "gwm-jolion-locator-card.js",
-        "/gwm-jolion/gwm-jolion-locator-card.js",
-        "/gwm-jolion/gwm-jolion-locator-card.js?v=0.2.0-beta.1",
-    ),
-    (
-        FRONTEND_DIR / "gwm-jolion-trips-card.js",
-        "/gwm-jolion/gwm-jolion-trips-card.js",
-        "/gwm-jolion/gwm-jolion-trips-card.js?v=0.2.0-beta.1",
-    ),
-    (
-        FRONTEND_DIR / "gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js",
-        "/gwm-jolion/gwm-jolion-card-editor.js?v=0.2.0-beta.1",
-    ),
-    (
-        FRONTEND_DIR / "gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js",
-        "/gwm-jolion/gwm-jolion-card.js?v=0.2.0-beta.1",
-    ),
-    (
-        FRONTEND_DIR / "gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js",
-        "/gwm-jolion/gwm-jolion-remote-card.js?v=0.2.0-beta.1",
-    ),
-    (
-        FRONTEND_DIR / "gwm-jolion-alpha20.js",
-        "/gwm-jolion/gwm-jolion-alpha20.js",
-        "/gwm-jolion/gwm-jolion-alpha20.js?v=0.2.0-beta.1",
-    ),
+    _asset("gwm-jolion-options.js", "/gwm-jolion/gwm-jolion-options.js"),
+    _asset("gwm-jolion-pairing-panel.js", "/gwm-jolion/gwm-jolion-pairing-panel.js"),
+    # Vendored, so it carries the upstream version rather than ours.
+    _asset("vendor/jsQR.js", "/gwm-jolion/jsQR.js", "1.4.0"),
+    _asset("gwm-jolion-pairing.js", "/gwm-jolion/gwm-jolion-pairing.js"),
+    _asset("gwm-jolion-locator-card.js", "/gwm-jolion/gwm-jolion-locator-card.js"),
+    _asset("gwm-jolion-trips-card.js", "/gwm-jolion/gwm-jolion-trips-card.js"),
+    _asset("gwm-jolion-card-editor.js", "/gwm-jolion/gwm-jolion-card-editor.js"),
+    _asset("gwm-jolion-card.js", "/gwm-jolion/gwm-jolion-card.js"),
+    _asset("gwm-jolion-remote-card.js", "/gwm-jolion/gwm-jolion-remote-card.js"),
+    _asset("gwm-jolion-alpha20.js", "/gwm-jolion/gwm-jolion-alpha20.js"),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
 SERVICE_ADD_CAPTURE_MARKER = "add_capture_marker"
@@ -225,7 +216,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     await panel_custom.async_register_panel(
         hass, frontend_url_path="gwm-jolion-pairing",
         webcomponent_name="gwm-jolion-pairing-panel",
-        module_url="/gwm-jolion/gwm-jolion-pairing-panel.js?v=0.2.0-beta.1",
+        module_url="/gwm-jolion/gwm-jolion-pairing-panel.js?v=0.2.0-beta.2",
         sidebar_title=None,
         require_admin=True,
     )
@@ -350,3 +341,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if hass.services.has_service(DOMAIN, SERVICE_ADD_CAPTURE_MARKER):
                 hass.services.async_remove(DOMAIN, SERVICE_ADD_CAPTURE_MARKER)
     return unload_ok
+

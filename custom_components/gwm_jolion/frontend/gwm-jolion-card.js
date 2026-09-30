@@ -1,6 +1,6 @@
-/* GWM Jolion Card v0.2.0-beta.1 */
+/* GWM Jolion Card v0.2.0-beta.2 */
 (() => {
-  const CARD_VERSION = "0.2.0-beta.1";
+  const CARD_VERSION = "0.2.0-beta.2";
   const INTEGRATION = "gwm_jolion";
 
   const SUFFIX = {
@@ -1670,3 +1670,4 @@
     "background:#263238;color:white;padding:2px 6px;border-radius:3px"
   );
 })();
+
