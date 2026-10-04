@@ -194,7 +194,7 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
     stops = [stop for stop in stops if stop["duration"] >= MIN_PARKING_SECONDS]
     stops = [stop for stop in stops if stop["observed_until"] >= low]
     stop_index = 0
-    days, segments, segment_edges, gaps = {}, [], [], []
+    days, segments, segment_edges, gaps, segment_timestamps = {}, [], [], [], []
     previous = None
     last_fix = None
     odometer = None
@@ -255,9 +255,11 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
                 edges = []
                 segments.append(segment)
                 segment_edges.append(edges)
+                segment_timestamps.append([])
                 if last_fix and not explicit_break and (lat, lon) != (last_fix[1], last_fix[2]):
                     gaps.append([[last_fix[1], last_fix[2]], [lat, lon]])
             segment.append([lat, lon])
+            segment_timestamps[-1].append(stamp)
             last_fix = row
         else:
             segment = edges = None
@@ -271,10 +273,29 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
         info["km"] = round(info["odo_km"] if method == "odometer" else info["gps_km"], 2)
         total += info["km"]
         methods.add(method)
+    trip_windows = []
+    active = []
+    previous_trip = None
+    for row in rows:
+        stamp, lat, lon, _ = row
+        if stamp < low or stamp >= high or lat is None or lon is None:
+            continue
+        if previous_trip and stamp - previous_trip[0] > 600:
+            if len(active) > 1:
+                trip_windows.append({"start":active[0][0], "end":active[-1][0],
+                                     "seconds":int(active[-1][0]-active[0][0]),
+                                     "km":round(sum(distance(a,b) for a,b in zip(active,active[1:])),2)})
+            active = []
+        active.append(row)
+        previous_trip = row
+    if len(active) > 1:
+        trip_windows.append({"start":active[0][0], "end":active[-1][0],
+                             "seconds":int(active[-1][0]-active[0][0]),
+                             "km":round(sum(distance(a,b) for a,b in zip(active,active[1:])),2)})
     # Limit route payload while preserving segment boundaries and endpoints.
     stride = max(1, math.ceil(sum(map(len, segments)) / MAX_ROUTE_POINTS))
-    routes, route_speeds, route_kinds = [], [], []
-    for points, edges in zip(segments, segment_edges):
+    routes, route_speeds, route_kinds, route_times = [], [], [], []
+    for points, edges, timestamps in zip(segments, segment_edges, segment_timestamps):
         indices = list(range(0, len(points), stride))
         if indices[-1] != len(points) - 1:
             indices.append(len(points) - 1)
@@ -295,9 +316,11 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
         routes.append(reduced)
         route_speeds.append(reduced_speeds)
         route_kinds.append(reduced_kinds)
+        route_times.append([timestamps[index] for index in indices])
     return {"km":round(total, 2), "method":next(iter(methods)) if len(methods)==1 else "mixed",
             "days":list(days.values()), "segments":routes[:5000],
             "segment_speeds_kmh":route_speeds[:5000], "segment_kinds":route_kinds[:5000],
+            "segment_timestamps":route_times[:5000], "trips":trip_windows,
             "gaps":gaps[:5000], "parking_spots":stops[:1000],
             "samples":sum(day["samples"] for day in days.values()),
             "moving_seconds":sum(day["moving_seconds"] for day in days.values()),
@@ -398,10 +421,13 @@ class TripHistory:
         if lat is None or lon is None or not -90 <= lat <= 90 or not -180 <= lon <= 180 or (lat == 0 and lon == 0):
             lat = lon = None
         if odo is not None and odo < 0: odo = None
-        with self._connect() as db:
+        db = self._connect()
+        try:
             db.execute("INSERT OR REPLACE INTO points VALUES (?, ?, ?, ?)", (stamp, lat, lon, odo))
             db.execute("DELETE FROM points WHERE ts < ?", (stamp-self.retention*86400,))
-        db.close()
+            db.commit()
+        finally:
+            db.close()
 
     async def append(self, stamp, location):
         async with self.lock:
@@ -409,13 +435,15 @@ class TripHistory:
 
     def _query(self, start, end, zone, archive=None, raw=False):
         low, high = period(start, end, zone)
-        with self._connect() as db:
+        db = self._connect()
+        try:
             rows = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts >= ? AND ts < ? ORDER BY ts", (low - PARKING_BASELINE_SECONDS, high)).fetchall()
             odometer_baseline = db.execute("SELECT ts,NULL,NULL,odo FROM points WHERE ts < ? AND odo IS NOT NULL ORDER BY ts DESC LIMIT 1", (low,)).fetchone()
             if odometer_baseline and all(row[0] != odometer_baseline[0] for row in rows):
                 rows.append(odometer_baseline)
                 rows.sort(key=lambda row: row[0])
-        db.close()
+        finally:
+            db.close()
         result = with_archive(rows, archive or ([], []), start, end, zone)
         result["retention_days"] = self.retention
         return result
@@ -423,6 +451,3 @@ class TripHistory:
     async def query(self, start, end, zone, archive=None, raw=False):
         async with self.lock:
             return await self.hass.async_add_executor_job(self._query, start, end, zone, archive, raw)
-
-
-

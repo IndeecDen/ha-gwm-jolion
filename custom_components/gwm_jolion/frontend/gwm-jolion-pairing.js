@@ -69,6 +69,6 @@
       finally{button.disabled=false;}
     }
   }
-  customElements.define('gwm-jolion-pairing',Pairing);
+  if(!customElements.get('gwm-jolion-pairing'))customElements.define('gwm-jolion-pairing',Pairing);
   window.gwmJolionPair = (hass,entity,initial,onApply) => {if(document.querySelector('gwm-jolion-pairing'))return;const dialog=document.createElement('gwm-jolion-pairing');dialog.hass=hass;dialog.entity=entity;dialog.initial=initial;dialog.onApply=onApply;document.body.append(dialog);return dialog;};
 })();

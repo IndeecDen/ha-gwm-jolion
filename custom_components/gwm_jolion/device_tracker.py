@@ -55,28 +55,35 @@ class GwmJolionLocationTracker(GwmJolionEntity, TrackerEntity):
 
     @property
     def latitude(self) -> float | None:
-        return _coordinate((self.coordinator.data.get("location") or {}).get("latitude"))
+        return _coordinate(self._location().get("latitude"))
 
     @property
     def longitude(self) -> float | None:
-        return _coordinate((self.coordinator.data.get("location") or {}).get("longitude"))
+        return _coordinate(self._location().get("longitude"))
+
+    def _location(self):
+        history = getattr(self.coordinator.parent, "trip_history", None)
+        if getattr(history, "enabled", False):
+            return history.location(self.coordinator.data.get("location") or {})
+        return self.coordinator.data.get("location") or {}
 
     @property
     def location_accuracy(self) -> float:
         # Must never be None: Home Assistant passes this into zone matching, and
         # a None radius raises TypeError while writing the state, which drops the
         # entity entirely rather than just showing it as unavailable.
-        return accuracy_meters((self.coordinator.data.get("location") or {}).get("gps_accuracy"))
+        return accuracy_meters(self._location().get("gps_accuracy"))
 
     @property
     def extra_state_attributes(self):
-        location = self.coordinator.data.get("location") or {}
+        location = self._location()
         history = getattr(self.coordinator.parent, "trip_history", None)
-        return {"golion_locator_enabled": bool(getattr(history, "enabled", False)),
-                "locator_transport": ("yandex_disk" if getattr(history,"relay",None) else "https"),
-                "locator_relay_status": getattr(getattr(history,"relay",None),"status",None),
-                "location_source": location.get("source", "cloud"),
+        attributes = {"location_source": location.get("source", "cloud"),
                 "gps_timestamp_ms": location.get("gps_timestamp_ms"),
                 "gps_time_known": location.get("time_known", False),
                 "gps_accuracy_known": location.get("accuracy_known", False),
                 "speed_kmh": location.get("speed_kmh"), "speed_accuracy_kmh": location.get("speed_accuracy_kmh"), "bearing": location.get("bearing")}
+        if getattr(history, "enabled", False):
+            attributes.update(locator_transport=("yandex_disk" if getattr(history,"relay",None) else "https"),
+                              locator_relay_status=getattr(getattr(history,"relay",None),"status",None))
+        return attributes

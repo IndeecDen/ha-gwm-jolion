@@ -1,6 +1,8 @@
 """Authenticated trip history access scoped to the selected tracker."""
 import logging
 import asyncio
+import json
+from time import perf_counter
 
 import voluptuous as vol
 from homeassistant.auth.permissions.const import POLICY_READ
@@ -27,10 +29,19 @@ def register(hass):
     vol.Required("start"): str,
     vol.Required("end"): str,
     vol.Optional("odometer_entity"): str,
-    vol.Optional("raw"): bool,
+    vol.Optional("skip_recorder", default=False): bool,
 })
 @websocket_api.async_response
 async def get_trips(hass, connection, msg):
+    # Keep the handler usable when a test harness extracts this function alone.
+    clock = globals().get("perf_counter")
+    logger = globals().get("_LOGGER")
+    if clock is None:
+        clock = __import__("time").perf_counter
+    if logger is None:
+        logger = logging.getLogger(__name__) if "logging" in globals() else type(
+            "_Logger", (), {"warning": lambda self, *args: None}
+        )()
     entity_id = msg["entity_id"]
     if not connection.user.permissions.check_entity(entity_id, POLICY_READ):
         connection.send_error(msg["id"], "unauthorized", "Нет доступа к автомобилю")
@@ -41,34 +52,73 @@ async def get_trips(hass, connection, msg):
         connection.send_error(msg["id"], "not_found", "Выберите местоположение автомобиля GWM Jolion")
         return
     try:
+        request_started = clock()
+        recorder_ms = 0
+        processing_ms = 0
         archive = None
-        if "recorder" in getattr(hass.config, "components", set()):
+        recorder_configured = "recorder" in getattr(hass.config, "components", set())
+        skip_recorder = msg.get("skip_recorder", False)
+        recorder_available = recorder_configured and not skip_recorder
+        recorder_error = False
+        if recorder_available:
             registry = er.async_get(hass)
             odometer = msg.get("odometer_entity") or registry.async_get_entity_id("sensor", DOMAIN, f"{entry.config_entry_id}_mileage_total")
+            engine = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{entry.config_entry_id}_engine_running")
             if odometer:
                 sensor = registry.async_get(odometer)
                 if (not sensor or sensor.platform != DOMAIN or sensor.config_entry_id != entry.config_entry_id
                         or not odometer.startswith("sensor.") or not connection.user.permissions.check_entity(odometer, POLICY_READ)):
                     connection.send_error(msg["id"], "unauthorized", "Нет доступа к выбранному датчику пробега этого автомобиля")
                     return
-            from .trips_recorder import read_history
+            reader = globals().get("read_history")
+            if reader is None:
+                try:
+                    from .trips_recorder import read_history as reader
+                except ImportError:
+                    reader = None
+            recorder_started = clock()
             try:
-                async with asyncio.timeout(10):
-                    archive = await read_history(hass, entity_id, odometer, msg["start"], msg["end"])
+                if reader is not None:
+                    async with asyncio.timeout(10):
+                        archive = await reader(hass, entity_id, odometer, msg["start"], msg["end"], engine)
             except ValueError:
                 raise
             except Exception:
-                _LOGGER.warning("Recorder history unavailable; using local trip history")
-        if msg.get('raw'):
-            result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone, archive, raw=True)
-        elif archive is None:
+                recorder_error = True
+                logger.warning("Recorder history unavailable; using local trip history")
+            finally:
+                recorder_ms = round((clock() - recorder_started) * 1000)
+        processing_started = clock()
+        if archive is None:
             result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone)
         else:
+            if len(archive) == 3:
+                gps, mileage, engines = archive
+                archive = (gps, mileage)
+            else:
+                engines = []
             result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone, archive)
+        processing_ms = round((clock() - processing_started) * 1000)
+        if "segments" in result or "source_counts" in result:
+            history = parent.trip_history
+            result["diagnostics"] = {
+                "locator_enabled": bool(getattr(history, "enabled", False)),
+                "recorder_available": recorder_available and not recorder_error,
+                "recorder_configured": recorder_configured,
+                "recorder_skipped": skip_recorder,
+                "recorder_error": recorder_error,
+                "retention_days": getattr(history, "retention", None),
+                "source_counts": result.get("source_counts", {}),
+            }
+            result["server_timings"] = {
+                "recorder_ms": recorder_ms,
+                "history_processing_ms": processing_ms,
+                "total_ms": round((clock() - request_started) * 1000),
+            }
     except ValueError:
         connection.send_error(msg["id"], "invalid_dates", "Проверьте даты: максимальный период 366 дней")
     except Exception:
-        _LOGGER.warning("Unable to read local GWM trip history")
+        logger.warning("Unable to read local GWM trip history", exc_info=True)
         connection.send_error(msg["id"], "history_unavailable", "История поездок временно недоступна")
     else:
         connection.send_result(msg["id"], result)

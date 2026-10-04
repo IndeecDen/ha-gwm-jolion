@@ -1,5 +1,7 @@
 import './jsQR.js?v=1.4.0';
-import './gwm-jolion-pairing.js?v=0.2.0-beta.6';
+// The pairing dialog is also imported by the panel. Its registration is
+// idempotent because HA may execute both standalone modules in one registry.
+import './gwm-jolion-pairing.js';
 
 // HA's form schema has no custom button selector. Augment only our three
 // uniquely named fields; all values and persistence remain in the options flow.

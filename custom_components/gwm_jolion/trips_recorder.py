@@ -7,7 +7,7 @@ from homeassistant.components.recorder import get_instance, history
 from .trips import PARKING_BASELINE_SECONDS, number, period
 
 
-def observations(states, tracker, odometer):
+def observations(states, tracker, odometer, engine=None):
     gps, mileage = [], []
     for state in states.get(tracker, []):
         lat, lon = (number(state.attributes.get(key)) for key in ("latitude", "longitude"))
@@ -23,16 +23,25 @@ def observations(states, tracker, odometer):
             value = None
         if value is not None and value < 0: value = None
         mileage.append((state.last_updated.timestamp(), None, None, value))
-    return gps, mileage
+    engines=[]
+    active_off=None
+    for state in states.get(engine, []) if engine else []:
+        value = state.state if state.state in ("on", "off", "unknown", "unavailable") else None
+        stamp=state.last_updated.timestamp()
+        if value == "off" and active_off is None:
+            active_off=stamp
+        elif value == "on" and active_off is not None:
+            engines.append((active_off, stamp));active_off=None
+    return (gps, mileage, engines) if engine else (gps, mileage)
 
 
-async def read_history(hass, tracker, odometer, start, end):
+async def read_history(hass, tracker, odometer, start, end, engine=None):
     low, high = period(start, end, hass.config.time_zone)
     states = await get_instance(hass).async_add_executor_job(partial(
         history.get_significant_states, hass,
         datetime.fromtimestamp(low - PARKING_BASELINE_SECONDS, timezone.utc), datetime.fromtimestamp(high, timezone.utc),
-        [tracker] + ([odometer] if odometer else []),
+        [tracker] + ([odometer] if odometer else []) + ([engine] if engine else []),
         include_start_time_state=True, significant_changes_only=False,
         minimal_response=False, no_attributes=False,
     ))
-    return observations(states, tracker, odometer)
+    return observations(states, tracker, odometer, engine)

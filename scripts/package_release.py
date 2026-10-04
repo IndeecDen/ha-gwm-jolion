@@ -14,13 +14,13 @@ APK_VERSION = (ROOT / "android" / "app" / "build.gradle").read_text(encoding="ut
 if f"versionName '{VERSION}'" not in APK_VERSION:
     raise SystemExit("HA and Android versions differ")
 
-APK = ROOT / "android" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
+APK = ROOT / "android" / "app" / "build" / "outputs" / "apk" / "release" / "app-release.apk"
 if not APK.is_file():
-    raise SystemExit(f"Build the Android APK first: {APK}")
+    raise SystemExit(f"Build the signed Android release APK first: {APK}")
 
 OUT = ROOT / "dist"
 OUT.mkdir(exist_ok=True)
-apk_out = OUT / f"JolionLocator-{VERSION}-debug.apk"
+apk_out = OUT / "Jolion Locator 0.2.0.apk"
 apk_out.write_bytes(APK.read_bytes())
 
 ha_out = OUT / f"ha-gwm-jolion-{VERSION}.zip"

@@ -57,7 +57,14 @@ public class MainActivity extends Activity {
         layout.addView(show);
         CheckBox boot = new CheckBox(this); boot.setText("Автозапуск записи после включения ГУ"); boot.setChecked(p.getBoolean("autostart", true));
         boot.setOnCheckedChangeListener((b, checked) -> Config.prefs(this).edit().putBoolean("autostart", checked).commit()); layout.addView(boot);
-        Button background = new Button(this); background.setText("Разрешить фоновую работу / автозапуск"); background.setOnClickListener(v -> backgroundSettings()); layout.addView(background);
+        Button background = new Button(this); background.setText("Разрешить фоновую работу / автозапуск"); background.setOnClickListener(v -> {
+            new android.app.AlertDialog.Builder(this)
+                .setTitle("Фоновая работа")
+                .setMessage("Для непрерывной записи Android и прошивка ГУ не должны останавливать приложение. Если система предложит исключение из оптимизации батареи, разрешите его. Также добавьте Jolion Locator в список автозапуска прошивки, если такой список есть.")
+                .setNegativeButton("Не сейчас", null)
+                .setPositiveButton("Открыть настройки", (dialog, which) -> backgroundSettings())
+                .show();
+        }); layout.addView(background);
         TextView bootHelp = new TextView(this); bootHelp.setText("Для автозапуска сначала сохраните настройки и начните запись. Кнопка «Остановить запись» отключает запись до следующего ручного запуска. Если прошивка ГУ управляет списком автозапуска, разрешите в нём Jolion Locator."); layout.addView(bootHelp);
         Button qr = new Button(this); qr.setText("Показать QR подключения"); qr.setOnClickListener(v -> showPairing()); layout.addView(qr);
         Button start = new Button(this); start.setText("Сохранить и начать запись"); start.setOnClickListener(v -> start()); layout.addView(start);

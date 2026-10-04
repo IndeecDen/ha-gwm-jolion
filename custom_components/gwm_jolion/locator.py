@@ -8,6 +8,7 @@ import logging
 import math
 import re
 import time
+from time import perf_counter
 
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView, KEY_HASS_USER
@@ -17,8 +18,7 @@ from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN
 from .locator_merge import cloud_point, choose_live, fuse
 from .locator_protocol import Archive, validate, analyze, distance
-from .trips import TripHistory, period, with_archive, summarize
-from .trips import playback
+from .trips import TripHistory, period, with_archive, summarize, playback
 from .locator_filter import filter_display
 
 _LOGGER = logging.getLogger(__name__)
@@ -94,6 +94,50 @@ class HybridHistory(TripHistory):
         self.gps = None
         self.last_prune = 0
         self.relay = None
+        self._query_cache = {}
+        self._cache_revision = 0
+        self._query_inflight = {}
+
+    def _connect(self):
+        """Keep the cloud observation store in the existing trip-history database."""
+        return self._cloud_connect()
+
+    def _trip_connect(self):
+        from .trips import TripHistory as LocalTripHistory
+        return LocalTripHistory._connect(self)
+
+    def _cloud_connect(self):
+        import sqlite3
+        from pathlib import Path
+        path = Path(self.hass.config.path(".storage", f"gwm_jolion_{self.entry.entry_id}_trips.sqlite"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        db = sqlite3.connect(path, timeout=10)
+        db.execute("CREATE TABLE IF NOT EXISTS points (ts REAL PRIMARY KEY, lat REAL, lon REAL, odo REAL)")
+        return db
+
+    def _append(self, stamp, location):
+        import sqlite3
+        from .trips import number
+        lat, lon, odo = (number(location.get(key)) for key in ("latitude", "longitude", "odometer"))
+        if lat is None or lon is None or not -90 <= lat <= 90 or not -180 <= lon <= 180 or (lat == 0 and lon == 0):
+            lat = lon = None
+        if odo is not None and odo < 0:
+            odo = None
+        db = self._cloud_connect()
+        try:
+            db.execute("INSERT OR REPLACE INTO points VALUES (?, ?, ?, ?)", (stamp, lat, lon, odo))
+            db.execute("DELETE FROM points WHERE ts < ?", (stamp-self.retention*86400,))
+            db.commit()
+        finally:
+            db.close()
+
+    @property
+    def enabled(self):
+        return getattr(self, "_hybrid_enabled", False)
+
+    @enabled.setter
+    def enabled(self, value):
+        self._hybrid_enabled = bool(value)
 
     async def initialize(self):
         await self.hass.async_add_executor_job(self.app_archive.initialize)
@@ -109,7 +153,7 @@ class HybridHistory(TripHistory):
         return {**point, "source": "app", "time_known": True, "accuracy_known": True} if point else None
 
     def _cloud_latest(self):
-        db = self._connect()
+        db = self._cloud_connect()
         try:
             row = db.execute("SELECT ts,lat,lon FROM points WHERE lat IS NOT NULL AND lon IS NOT NULL ORDER BY ts DESC LIMIT 1").fetchone()
         finally:
@@ -117,7 +161,8 @@ class HybridHistory(TripHistory):
         return cloud_point(row[0], {"latitude": row[1], "longitude": row[2]}) if row else None
 
     async def append(self, stamp, location):
-        await super().append(stamp, location)
+        await self.hass.async_add_executor_job(self._append, stamp, location)
+        self._cache_revision += 1
         point = cloud_point(stamp, location)
         if point and (not self.cloud_latest or point["timestamp_ms"] >= self.cloud_latest["timestamp_ms"]):
             self.cloud_latest = point
@@ -142,8 +187,19 @@ class HybridHistory(TripHistory):
         async with self.lock:
             ack = await self.hass.async_add_executor_job(self.app_archive.ingest, points)
             self.app_latest = await self.hass.async_add_executor_job(self._app_latest)
+            await self.hass.async_add_executor_job(self._mirror_app_fixes, points)
+            self._cache_revision += 1
         self.publish()
         return ack
+
+    def _mirror_app_fixes(self, points):
+        db = self._trip_connect()
+        try:
+            db.executemany("INSERT OR REPLACE INTO points VALUES (?, ?, ?, ?)",
+                           [(p["timestamp_ms"]/1000,p["latitude"],p["longitude"],None) for p in points])
+            db.commit()
+        finally:
+            db.close()
 
     async def tick(self, now):
         if self.relay:await self.relay.poll()
@@ -188,35 +244,60 @@ class HybridHistory(TripHistory):
 
     def _query(self, start, end, zone, archive=None, raw=False):
         if not self.enabled:
-            return super()._query(start,end,zone,archive)
+            return TripHistory._query(self,start,end,zone,archive,raw)
+        profile={}
+        phase=perf_counter()
         low, high = period(start,end,zone)
         points, rows = self._merged(int(low*1000) - OVERNIGHT_BASELINE_MS, int(high*1000), archive)
+        profile["fetch_merge_ms"]=round((perf_counter()-phase)*1000)
+        phase=perf_counter()
         window = [p for p in points if int(low*1000) <= p["timestamp_ms"] < int(high*1000)]
-        original=points
-        points = filter_display(points)
-        if raw:
-            points=[dict(p,display_break=filtered.get('display_break',False)) for p,filtered in zip(original,points)]
+        points = [dict(p,display_break=f.get("display_break",False)) for p,f in zip(points,filter_display(points))] if raw else filter_display(points)
+        profile["filter_ms"]=round((perf_counter()-phase)*1000)
         route = [(p["timestamp_ms"]/1000,p["latitude"],p["longitude"],None) for p in points]
         mileage = [(r[0],None,None,r[3]) for r in rows if r[3] is not None]
-        db=self._connect()
-        try:
-            baseline=db.execute("SELECT ts,NULL,NULL,odo FROM points WHERE ts<? AND odo IS NOT NULL ORDER BY ts DESC LIMIT 1",(low,)).fetchone()
-        finally:
-            db.close()
-        if baseline: mileage.append(baseline)
-        # Do not feed Recorder GPS back after fusion: it would reintroduce rejected positions.
         measured={p['timestamp_ms']:p['speed_kmh'] for p in points if p['source']=='app' and p.get('speed_kmh') is not None}
         breaks={p['timestamp_ms'] for p in points if p.get('display_break')}
-        result = with_archive(route, ([], sorted([*(archive[1] if archive else []), *mileage],key=lambda r:r[0])), start,end,zone,measured_speeds=measured,break_before=breaks)
-        # Everything the card shows about the day itself must come from the day:
-        # the baseline only exists so a parking that started yesterday keeps its
-        # start. Counting it in the source totals or the playback would leak it.
+        phase=perf_counter()
+        result = with_archive(route, ([], mileage), start, end, zone, measured_speeds=measured, break_before=breaks)
+        result['parking_spots'] = merge_inferred_parking(result.get('parking_spots') or [], points, mileage)
+        profile["route_stops_ms"]=round((perf_counter()-phase)*1000)
         shown=[p for p in points if low <= p["timestamp_ms"]/1000 < high]
-        result['parking_spots']=merge_inferred_parking(result.get('parking_spots') or [], points, mileage)
-        result.update(retention_days=self.retention, locator_enabled=True, source_counts={s:sum(p["source"]==s for p in shown) for s in ("app","cloud")})
-        result['playback']=playback(shown)
-        result['playback_sample_step']=max((p.get('sample_step',1) for p in shown),default=1)
+        result.update(retention_days=self.retention, locator_enabled=True,
+                      source_counts={s:sum(p["source"]==s for p in shown) for s in ("app","cloud")},
+                      playback_sample_step=max((p.get("sample_step",1) for p in shown),default=1))
+        phase=perf_counter()
+        result["playback"]=playback(shown)
+        profile["playback_ms"]=round((perf_counter()-phase)*1000)
+        result["history_profile"]={**profile,"points":len(points),"cache":"miss"}
         return result
+
+    async def query(self, start, end, zone, archive=None, raw=False):
+        key=(start,end,zone,raw,self._cache_revision,archive is not None)
+        now=time.monotonic()
+        if archive is None:
+            cached=self._query_cache.get(key)
+            if cached and now-cached[0]<30:
+                result=dict(cached[1])
+                result["history_profile"]={"cache":"hit","cache_lookup_ms":0,"points":cached[2]}
+                return result
+        task=self._query_inflight.get(key)
+        if task is None:
+            async def run_query():
+                async with self.lock:
+                    started=time.monotonic()
+                    result=await self.hass.async_add_executor_job(self._query,start,end,zone,archive,raw)
+                    if archive is None:
+                        self._query_cache[key]=(time.monotonic(),result,len(result.get("playback",())))
+                    return result
+            task=asyncio.create_task(run_query())
+            self._query_inflight[key]=task
+        try:
+            result=await asyncio.shield(task)
+            return dict(result)
+        finally:
+            if task.done() and self._query_inflight.get(key) is task:
+                self._query_inflight.pop(key,None)
 
     def _prepared(self, low_ms, high_ms):
         """Points the analyser accepts: unusable accuracy parked at infinity, cloud
@@ -292,9 +373,35 @@ class HybridHistory(TripHistory):
 def register(hass):
     if not hass.data[DOMAIN].get("_locator_http"):
         hass.http.register_view(LocatorUpload(hass))
-        hass.http.register_view(LocatorHistory(hass))
         hass.http.register_view(LocatorPairing(hass))
+        hass.http.register_view(LocatorHistory(hass))
         hass.data[DOMAIN]["_locator_http"] = True
+
+
+class LocatorHistory(HomeAssistantView):
+    url = "/api/gwm_jolion/locator/{entity_id}"
+    name = "api:gwm_jolion:locator_history"
+    requires_auth = True
+
+    def __init__(self, hass): self.hass = hass
+
+    async def get(self, request, entity_id):
+        if not request[KEY_HASS_USER].permissions.check_entity(entity_id, POLICY_READ):
+            return web.json_response({"error":"forbidden"}, status=403)
+        registry_entry = er.async_get(self.hass).async_get(entity_id)
+        parent = self.hass.data[DOMAIN].get(registry_entry.config_entry_id) if registry_entry else None
+        history = getattr(parent, "trip_history", None)
+        if not isinstance(history, HybridHistory) or not history.enabled:
+            return web.json_response({"error":"disabled"}, status=404)
+        try:
+            low, high = int(request.query["start_ms"]), int(request.query["end_ms"])
+            if low < 0 or not 0 < high-low <= 25*3600000:
+                raise ValueError
+            data = await self.hass.async_add_executor_job(history.card_history, low, high)
+        except (KeyError, ValueError):
+            return web.json_response({"error":"invalid_interval"}, status=400)
+        data["latest"] = history.latest
+        return web.json_response(data, headers={"Cache-Control":"no-store"})
 
 
 class LocatorPairing(HomeAssistantView):
@@ -370,30 +477,3 @@ class LocatorUpload(HomeAssistantView):
             _LOGGER.exception("Unable to store head-unit GPS batch")
             return web.json_response({"error":"storage_unavailable"},status=503)
         return web.json_response({"version":1,"ack":ack})
-
-
-class LocatorHistory(HomeAssistantView):
-    url = "/api/gwm_jolion/locator/{entity_id}"
-    name = "api:gwm_jolion:locator_history"
-    requires_auth = True
-
-    def __init__(self,hass): self.hass=hass
-
-    async def get(self,request,entity_id):
-        if not request[KEY_HASS_USER].permissions.check_entity(entity_id,POLICY_READ):
-            return web.json_response({"error":"forbidden"},status=403)
-        entry = er.async_get(self.hass).async_get(entity_id)
-        parent = self.hass.data[DOMAIN].get(entry.config_entry_id) if entry and entry.platform==DOMAIN and entity_id.startswith("device_tracker.") else None
-        history = getattr(parent,"trip_history",None)
-        if not isinstance(history,HybridHistory) or not history.enabled:
-            return web.json_response({"error":"disabled"},status=404)
-        try:
-            low,high=int(request.query["start_ms"]),int(request.query["end_ms"])
-            if low<0 or not 0<high-low<=25*3600000: raise ValueError()
-            async with history.lock:
-                data = await self.hass.async_add_executor_job(history.card_history,low,high)
-        except (KeyError,ValueError):
-            return web.json_response({"error":"invalid_interval"},status=400)
-        data["latest"]=history.latest
-        return web.json_response(data,headers={"Cache-Control":"no-store"})
-

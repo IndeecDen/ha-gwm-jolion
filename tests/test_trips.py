@@ -2,7 +2,7 @@
 import ast
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -254,6 +254,31 @@ def test_recorder_coordinates_attributes_invalid_states_and_miles():
     gps,odo=scope["observations"]({"tracker":[state("not_home",{"latitude":55,"longitude":37}),state("unavailable",{"latitude":55,"longitude":37})],"sensor":[state("100",{"unit_of_measurement":"mi"}),state("unknown",{})]},"tracker","sensor")
     assert gps[0][1:3]==(55,37) and gps[1][1:3]==(None,None)
     assert odo[0][3]==pytest.approx(160.9344) and odo[1][3] is None
+
+
+def test_recorder_engine_unavailable_does_not_break_off_interval():
+    node=next(n for n in ast.parse((ROOT/"trips_recorder.py").read_text(encoding="utf-8")).body if isinstance(n,ast.FunctionDef))
+    scope={"number":trips.number}
+    exec(compile(ast.Module(body=[node],type_ignores=[]),"recorder_engine","exec"),scope)
+    base=datetime.fromisoformat("2026-09-16T12:00:00+00:00")
+    def state(value, seconds):
+        return SimpleNamespace(last_updated=base+timedelta(seconds=seconds), state=value, attributes={})
+    result=scope["observations"]({}, "tracker", None, "engine")
+    assert result[2]==[]
+    result=scope["observations"]({"engine":[state("off",0),state("unavailable",60),state("off",120),state("on",700)]}, "tracker", None, "engine")
+    assert result[2]==[(base.timestamp(), (base+timedelta(seconds=700)).timestamp())]
+
+
+def test_summary_exports_trip_windows_and_route_timestamps():
+    base=stamp("2026-09-16T08:00:00+00:00")
+    rows=[(base,55,37,None),(base+60,55,37.001,None),(base+120,55,37.002,None),
+          (base+3*3600,55,37.003,None),(base+3*3600+60,55,37.004,None)]
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+    assert len(result["trips"])==2
+    assert result["trips"][0]=={"start":base,"end":base+120,"seconds":120,"km":pytest.approx(0.13)}
+    assert result["trips"][1]=={"start":base+3*3600,"end":base+3*3600+60,"seconds":60,"km":pytest.approx(0.06)}
+    assert len(result["segment_timestamps"])==len(result["segments"])
+    assert result["segment_timestamps"][0]==[base,base+60,base+120]
 
 
 def test_recorder_query_keeps_attribute_only_gps_changes():

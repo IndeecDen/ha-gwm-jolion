@@ -192,7 +192,6 @@ class GwmJolionOptionsFlow(config_entries.OptionsFlowWithReload):
             if locator_key and not errors:
                 options[LOCATOR_HASH] = hashlib.sha256(locator_key.encode()).hexdigest()
                 options[LOCATOR_KEY] = locator_key
-            options["trip_retention_days"] = int(user_input.get("trip_retention_days", options.get("trip_retention_days", 90)))
             options[CONF_GPS_INTERVAL] = int(user_input.get(CONF_GPS_INTERVAL, options.get(CONF_GPS_INTERVAL, options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL))))
             options[CONF_POLL_INTERVAL] = user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
             options[CONF_ENABLE_REMOTE_CONTROLS] = user_input.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)
@@ -221,7 +220,6 @@ class GwmJolionOptionsFlow(config_entries.OptionsFlowWithReload):
             vol.Optional(DISK_RELAY_INTERVAL, default=current.get(DISK_RELAY_INTERVAL, DEFAULT_RELAY_INTERVAL)): vol.All(int, vol.Range(min=MIN_RELAY_INTERVAL, max=MAX_RELAY_INTERVAL)),
             vol.Optional(LOCATOR_ID, default=current.get(LOCATOR_ID, "jolion")): str,
             vol.Optional(LOCATOR_KEY, default=current.get(LOCATOR_KEY, "")): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
-            vol.Optional("trip_retention_days", default=current.get("trip_retention_days", 90)): vol.All(int, vol.Range(min=30, max=365)),
             vol.Optional(CONF_GPS_INTERVAL, default=current.get(CONF_GPS_INTERVAL, current.get(CONF_POLL_INTERVAL, self.config_entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)))): GPS_INTERVAL_SELECTOR,
             vol.Optional(CONF_POLL_INTERVAL, default=current.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)): POLL_INTERVAL_SELECTOR,
             vol.Optional(CONF_ENABLE_REMOTE_CONTROLS, default=current.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)): bool,

@@ -10,6 +10,7 @@ dist/
 android/local.properties
 *.jks
 *.keystore
+android/signing.properties
 .env
 *.log
 *.sqlite*

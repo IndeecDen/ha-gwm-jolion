@@ -53,9 +53,22 @@ public class TrackingService extends Service implements LocationListener {
             // the GPS cold start so the track begins right away, and is dropped as
             // soon as the satellite receiver locks (see onLocationChanged).
             locations.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 30000, 0, this);
+            // A service can take a while to start (for example after boot or when
+            // the head unit is busy). LocationManager may already have a recent
+            // fix by then, so seed the queue instead of waiting for the next poll.
+            for (String provider : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER}) {
+                Location last = locations.getLastKnownLocation(provider);
+                if (last != null) onLocationChanged(last);
+            }
         } catch (RuntimeException e) { status("GPS недоступен. Проверьте разрешения и источник координат ГУ."); }
         networkCallback = new ConnectivityManager.NetworkCallback() {
-            public void onAvailable(Network n) { networkAvailable(); }
+            public void onAvailable(Network n) { retryIfValidated(n); }
+            public void onCapabilitiesChanged(Network n, NetworkCapabilities caps) {
+                // Wi-Fi can stay connected while its upstream internet disappears.
+                // Android reports recovery as a capabilities change, not onAvailable.
+                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) networkAvailable();
+            }
         };
         connectivity.registerDefaultNetworkCallback(networkCallback);
         schedule(0);
@@ -112,6 +125,10 @@ public class TrackingService extends Service implements LocationListener {
                 }
                 Config.prefs(this).edit().putString("quality", "Точность GPS: ±"+Math.round(fix.getAccuracy())+" м · погрешность скорости: "+(p.isNull("speed_accuracy_kmh")?"неизвестна":"±"+Math.round(p.getDouble("speed_accuracy_kmh"))+" км/ч")).apply();
                 Config.prefs(this).edit().putLong("last_fix", fix.getTime()).putLong("queued", db.count()).putString("storage_error", "").apply();
+                // A service may have started with an empty queue. Start the upload
+                // as soon as the first fix is durably stored instead of waiting for
+                // the next connectivity callback (which may never happen).
+                schedule(0);
             } catch (Exception e) { Config.prefs(this).edit().putString("storage_error", "ОШИБКА ЗАПИСИ: проверьте свободное место. Точка не сохранена.").apply(); }
         });
     }
@@ -123,6 +140,11 @@ public class TrackingService extends Service implements LocationListener {
     private synchronized void networkAvailable() {
         wakeup.networkAvailable();
         schedule(0);
+    }
+    private void retryIfValidated(Network network) {
+        NetworkCapabilities caps = connectivity.getNetworkCapabilities(network);
+        if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) networkAvailable();
     }
     private void upload() {
         final long started;

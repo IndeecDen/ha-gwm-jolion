@@ -1,5 +1,5 @@
-// The locator card is the trips card under its old name: both saved card types
-// share one UI. This check runs that UI with the cloud/app source data it gets in
+// The Locator data is displayed by the trips card. This check runs that UI with
+// the cloud/app source data it gets in
 // the field - the map must come up, the route has to be drawn, the always-cleaned
 // guarantee has to hold and nothing may sit under the map but the period controls.
 const {chromium}=require('playwright');
@@ -15,8 +15,7 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
    if(url.hostname==='tiles.openfreemap.org')return route.fulfill({contentType:'application/json',body:JSON.stringify({version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#e9ede8'}}]})});
    return route.fulfill({contentType:'text/html',body:`<style>body{margin:12px;font:15px Arial;background:#eff4f6;--primary-text-color:#183340;--secondary-text-color:#526b78;--card-background-color:white;--secondary-background-color:#eff4f6}ha-card{display:block;background:white;border-radius:14px}</style><gwm-jolion-trips-card></gwm-jolion-trips-card><script src="/gwm-jolion/gwm-jolion-trips-card.js"></script><script src="/gwm-jolion/gwm-jolion-locator-card.js"></script>`});
   });
-  // Home Assistant registers its own map before any card runs, so the harness does
-  // as well: the card then draws on it.
+   // The current card owns its Leaflet map; no Home Assistant map stub is needed.
   await page.addInitScript(()=>{customElements.define('ha-map',class extends HTMLElement{
    connectedCallback(){this.style.cssText='display:block;width:100%;height:100%;position:relative';}
    async getMap(){
@@ -31,14 +30,14 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
    }
   });});
   await page.goto('https://locator.test');
-  await page.waitForFunction(()=>customElements.get('gwm-jolion-locator-card'));
+   await page.waitForFunction(()=>customElements.get('gwm-jolion-trips-card'));
   await page.evaluate(()=>{
    window.card=document.querySelector('gwm-jolion-trips-card');window.calls=[];
    const now=Date.now();window.points=Array.from({length:20},(_,i)=>({timestamp_ms:now-20000+i*1000,latitude:55.75+i*.0001,longitude:37.62+i*.0001,source:'app',accuracy_m:5,speed_accuracy_kmh:1.8,speed_kmh:40+i,speed_estimated:false}));
    window.hass={config:{time_zone:'Europe/Moscow'},states:{'device_tracker.car':{attributes:{golion_locator_enabled:true,latitude:55.75,longitude:37.62}}},callWS:async msg=>{calls.push(msg);return {samples:20,segments:[points.map(p=>[p.latitude,p.longitude])],segment_speeds_kmh:[points.slice(1).map(p=>p.speed_kmh)],segment_kinds:[points.slice(1).map(()=>'moving')],gaps:[],parking_spots:[],km:1.2,method:'gps',playback:points};}};
    card.setConfig({entity:'device_tracker.car'});card.hass=hass;
   });
-  await page.waitForFunction(()=>card._surface&&card._surface.engine==='ha'&&card._surface.hasOverlays());
+   await page.waitForFunction(()=>card._map&&card._layer&&card._layer.getLayers().length);
   // The card is the map and the period: no track strip under the map, no
   // cleaned/raw switch, every request asks for the cleaned track.
   assert.equal(await page.locator('.timeline').count(),0);
@@ -59,10 +58,7 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
   assert.match(await page.locator('.km').textContent(),/≈ 1,2/,'облачный режим помечает пробег как оценку');
   assert(await page.locator('ha-card').evaluate(e=>e.getBoundingClientRect().height)<=height);
   fs.mkdirSync('dist',{recursive:true});await page.screenshot({path:'dist/unified-trips-mobile.png'});
-  await page.evaluate(()=>{window.alias=document.createElement('gwm-jolion-locator-card');document.body.append(alias);alias.setConfig({entity:'device_tracker.car'});alias.hass=hass;});
-  await page.waitForFunction(()=>alias._surface&&alias._surface.hasOverlays());
-  assert(await page.evaluate(()=>alias instanceof customElements.get('gwm-jolion-trips-card')));
-  assert.deepStrictEqual(errors,[]);
+   assert.deepStrictEqual(errors,[]);
   console.log('Unified cloud/app UI, cleaned track, own-map and HA-map drawing, periods, old card alias and compact layout: PASS');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

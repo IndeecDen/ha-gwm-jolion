@@ -31,11 +31,11 @@ const spots = [
   { latitude: 56.10, longitude: 37.99, start: base + 5 * DAY, end: null, duration: 600 },
 ];
 
-const labelled = parkingOccurrences(spots, "2026-09-18", "2026-09-24", "UTC");
+const labelled = parkingOccurrences(spots, "2026-09-18", "2026-09-24", "UTC", 0);
 const labels = labelled.map(item => item.label);
 const offsets = labelled.map(item => item.offset_index);
 
-const expectedLabels = ["A", "A", "A", "A", "B", "C"];
+const expectedLabels = ["A", "B", "C", "D", "E", "F"];
 const expectedOffsets = [0, 1, 2, 3, 0, 0];
 
 if (JSON.stringify(labels) !== JSON.stringify(expectedLabels)) {
@@ -46,4 +46,9 @@ if (JSON.stringify(offsets) !== JSON.stringify(expectedOffsets)) {
   console.error(`repeats must be moved aside: ${offsets.join(",")}`);
   process.exit(1);
 }
-console.log(`Markers: ${labels.length}, letters ${labels.join(",")} - one per parking: passed`);
+const afterRouteStart = parkingOccurrences(spots, "2026-09-18", "2026-09-24", "UTC", 1).map(item => item.label);
+if (JSON.stringify(afterRouteStart) !== JSON.stringify(["B", "C", "D", "E", "F", "G"])) {
+  console.error(`letters after route start: ${afterRouteStart.join(",")} - expected B,B,B,B,C,D`);
+  process.exit(1);
+}
+console.log(`Markers: ${labels.length}, route-start offset labels ${afterRouteStart.join(",")} - passed`);

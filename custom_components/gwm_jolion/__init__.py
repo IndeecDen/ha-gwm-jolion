@@ -29,7 +29,7 @@ from .const import (
     DEFAULT_ENABLE_REMOTE_CONTROLS, DEFAULT_POLL_INTERVAL, DOMAIN, PLATFORMS,
 )
 from .coordinator import GwmJolionCoordinator
-from .trips import TripHistory
+from .trips_ws import register as register_trips
 from .locator import (
     HybridHistory,
     ENABLED as LOCATOR_ENABLED,
@@ -39,7 +39,6 @@ from .locator import (
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from datetime import timedelta
-from .trips_ws import register as register_trips
 from .entity_surface import MIGRATION_REMOVE_ENTITY_SUFFIXES, OBSOLETE_OPTION_KEYS
 from .protocol_capture import (
     CAPTURE_DIRECTORY,
@@ -51,9 +50,7 @@ from .protocol_capture import (
 _LOGGER = logging.getLogger(__name__)
 
 FRONTEND_DIR = Path(__file__).parent / "frontend"
-# The cache buster is the manifest version, read rather than repeated: the version
-# used to be written out by hand in this table, in the manifest and in two card
-# constants, and bumping one of them left the browser serving a stale card.
+# The cache buster is the manifest version, read rather than repeated.
 INTEGRATION_VERSION = json.loads(
     (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
 )["version"]
@@ -70,11 +67,10 @@ FRONTEND_ASSETS = (
     # Vendored, so it carries the upstream version rather than ours.
     _asset("vendor/jsQR.js", "/gwm-jolion/jsQR.js", "1.4.0"),
     _asset("gwm-jolion-pairing.js", "/gwm-jolion/gwm-jolion-pairing.js"),
-    _asset("gwm-jolion-locator-card.js", "/gwm-jolion/gwm-jolion-locator-card.js"),
-    _asset("gwm-jolion-trips-card.js", "/gwm-jolion/gwm-jolion-trips-card.js"),
     _asset("gwm-jolion-card-editor.js", "/gwm-jolion/gwm-jolion-card-editor.js"),
     _asset("gwm-jolion-card.js", "/gwm-jolion/gwm-jolion-card.js"),
     _asset("gwm-jolion-remote-card.js", "/gwm-jolion/gwm-jolion-remote-card.js"),
+    _asset("gwm-jolion-trips-card.js", "/gwm-jolion/gwm-jolion-trips-card.js"),
     _asset("gwm-jolion-alpha20.js", "/gwm-jolion/gwm-jolion-alpha20.js"),
 )
 DATA_FRONTEND_REGISTERED = "_frontend_registered"
@@ -176,14 +172,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.async_on_unload(async_track_time_interval(hass, coordinator.trip_history.tick, timedelta(seconds=relay_interval(options))))
     else:
         await coordinator.async_config_entry_first_refresh()
-        coordinator.trip_history = TripHistory(hass, entry.entry_id, options.get("trip_retention_days", 90))
-    try:
-        await coordinator.trip_history.append(time.time(), {
-            **(coordinator.data.get("location") or {}),
-            "odometer": (coordinator.data.get("state") or {}).get("mileage_total"),
-        })
-    except Exception:
-        _LOGGER.warning("Unable to save initial trip observation")
     hass.data[DOMAIN][entry.entry_id] = coordinator
     register_locator(hass)
     register_trips(hass)
@@ -207,9 +195,13 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
 
     await hass.http.async_register_static_paths(
         [StaticPathConfig(static_url, str(path), False) for path, static_url, _ in available_assets]
-        # Only MapLibre is vendored: the trips card draws on Home Assistant's own
-        # map and needs MapLibre solely to build the markers that go on top of it.
-        + [StaticPathConfig("/gwm-jolion/maplibre", str(FRONTEND_DIR / "maplibre"), True)]
+        + [
+            StaticPathConfig("/gwm-jolion/leaflet/leaflet.js", str(FRONTEND_DIR / "leaflet/leaflet.js"), False),
+            StaticPathConfig("/gwm-jolion/leaflet/leaflet.css", str(FRONTEND_DIR / "leaflet/leaflet.css"), False),
+            StaticPathConfig("/gwm-jolion/maplibre/maplibre-gl.js", str(FRONTEND_DIR / "maplibre/maplibre-gl.js"), False),
+            StaticPathConfig("/gwm-jolion/maplibre/maplibre-gl.css", str(FRONTEND_DIR / "maplibre/maplibre-gl.css"), False),
+            StaticPathConfig("/gwm-jolion/maplibre/leaflet-maplibre-gl.js", str(FRONTEND_DIR / "maplibre/leaflet-maplibre-gl.js"), False),
+        ]
     )
     for _, _, frontend_url in available_assets:
         frontend.add_extra_js_url(hass, frontend_url)

@@ -1,4 +1,7 @@
 plugins { id 'com.android.application' }
+def signingProperties = new Properties()
+def signingFile = rootProject.file('signing.properties')
+if (signingFile.exists()) signingFile.withInputStream { signingProperties.load(it) }
 android {
     namespace 'ru.jolion.locator'
     compileSdk 35
@@ -6,8 +9,23 @@ android {
         applicationId 'ru.jolion.locator'
         minSdk 27
         targetSdk 28
-        versionCode 11
-        versionName '0.2.0-beta.6'
+        versionCode 13
+        versionName '0.2.0-beta.2'
+    }
+    signingConfigs {
+        release {
+            if (signingFile.exists()) {
+                storeFile rootProject.file(signingProperties.getProperty('storeFile'))
+                storePassword signingProperties.getProperty('storePassword')
+                keyAlias signingProperties.getProperty('keyAlias')
+                keyPassword signingProperties.getProperty('keyPassword')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (signingFile.exists()) signingConfig signingConfigs.release
+        }
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
 }
