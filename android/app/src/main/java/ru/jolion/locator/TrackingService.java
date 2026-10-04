@@ -29,8 +29,11 @@ public class TrackingService extends Service implements LocationListener {
     private final UploadWakeup wakeup = new UploadWakeup();
     private long lastFixElapsed = 0;
     private volatile Location lastAcceptedFix;
-    private enum GpsState { COLD_START, GPS_ACTIVE, GPS_LOST, STATIONARY }
+    private enum GpsState { COLD_START, GPS_ACTIVE, GPS_LOST, GPS_RECOVERING, STATIONARY }
     private volatile GpsState gpsState = GpsState.COLD_START;
+    private int recoveryFixes = 0;
+    private volatile Location stationaryAnchor;
+    private Location recoveryCandidate;
     // Once the GPS receiver has produced a precise fix, the coarse network
     // positions are no longer needed: they only bridge the cold start, when the
     // satellite receiver has nothing to report yet.
@@ -44,6 +47,8 @@ public class TrackingService extends Service implements LocationListener {
     private static final long SLOW_INTERVAL_MS = 4000L;
     private static final long PARKED_INTERVAL_MS = 20000L;
     private static final float MOVING_SPEED_MPS = 2.0f;
+    private static final double STATIONARY_RADIUS_M = 20.0;
+    private static final int RECOVERY_FIXES_REQUIRED = 2;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     public void onCreate() {
@@ -94,7 +99,8 @@ public class TrackingService extends Service implements LocationListener {
         public void run() {
             if (closed) return;
             String gps = lastFixElapsed == 0 ? "Ожидание GPS" : "GPS: " + ((SystemClock.elapsedRealtime()-lastFixElapsed)/1000) + " с назад";
-            if (lastFixElapsed > 0 && SystemClock.elapsedRealtime()-lastFixElapsed > GAP_RESET_MS && gpsState == GpsState.GPS_ACTIVE) {
+            if (lastFixElapsed > 0 && SystemClock.elapsedRealtime()-lastFixElapsed > GAP_RESET_MS
+                    && (gpsState == GpsState.GPS_ACTIVE || gpsState == GpsState.STATIONARY)) {
                 gpsState = GpsState.GPS_LOST; gpsLocked = true; publishState();
             }
             Config.prefs(TrackingService.this).edit().putString("gps_status", gps).putString("gps_state", gpsState.name()).apply();
@@ -115,14 +121,42 @@ public class TrackingService extends Service implements LocationListener {
         long ageNs = SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos();
         count("received");
         if (fix.isFromMockProvider() || !fix.hasAccuracy() || ageNs < 0 || ageNs > 15000000000L) { count("rejected_stale"); return; }
-        if (!acceptProvider(fix.getProvider(), fix.getAccuracy(), gpsLocked)) { count("rejected_provider"); return; }
-        if (!Double.isFinite(fix.getLatitude()) || !Double.isFinite(fix.getLongitude()) || Math.abs(fix.getLatitude()) > 90 || Math.abs(fix.getLongitude()) > 180 || !Float.isFinite(fix.getAccuracy()) || fix.getAccuracy() < 0) return;
-        if (fix.getTime() < 1577836800000L || fix.getTime() > System.currentTimeMillis()+300000L) { status("Неверное время GPS или системных часов. Проверьте дату ГУ."); return; }
-        if (fix.hasSpeed() && (!Float.isFinite(fix.getSpeed()) || fix.getSpeed() < 0 || fix.getSpeed()*3.6 > 400)) return;
-        if (lastFixElapsed > 0 && SystemClock.elapsedRealtime()-lastFixElapsed < 900) return;
-        if (!transitionAllowed(lastAcceptedFix, fix)) { count("rejected_transition"); return; }
+        boolean networkRecovery = !gps && gpsLocked && gpsState == GpsState.GPS_LOST;
+        if (!acceptProvider(fix.getProvider(), fix.getAccuracy(), gpsLocked, networkRecovery)) { count("rejected_provider"); return; }
+        if (!Double.isFinite(fix.getLatitude()) || !Double.isFinite(fix.getLongitude()) || Math.abs(fix.getLatitude()) > 90 || Math.abs(fix.getLongitude()) > 180 || !Float.isFinite(fix.getAccuracy()) || fix.getAccuracy() < 0) { count("rejected_coordinates"); return; }
+        if (fix.getTime() < 1577836800000L || fix.getTime() > System.currentTimeMillis()+300000L) { count("rejected_time"); status("Неверное время GPS или системных часов. Проверьте дату ГУ."); return; }
+        if (networkRecovery) {
+            Config.prefs(this).edit().putString("network_last_latitude", Double.toString(fix.getLatitude()))
+                    .putString("network_last_longitude", Double.toString(fix.getLongitude()))
+                    .putLong("network_last_fix", fix.getTime()).apply();
+            count("network_recovery");
+            return;
+        }
+        if (fix.hasSpeed() && (!Float.isFinite(fix.getSpeed()) || fix.getSpeed() < 0 || fix.getSpeed()*3.6 > 400)) { count("rejected_speed"); return; }
+        if (lastFixElapsed > 0 && SystemClock.elapsedRealtime()-lastFixElapsed < 900) { count("rejected_rate"); return; }
+        Location transitionReference = recoveryCandidate != null ? recoveryCandidate : lastAcceptedFix;
+        if (!transitionAllowed(transitionReference, fix)) { count("rejected_transition"); return; }
+        if (gps && gpsState == GpsState.GPS_LOST) {
+            recoveryCandidate = fix;
+            recoveryFixes = 1;
+            gpsState = GpsState.GPS_RECOVERING;
+            count("recovery_candidates");
+            publishState();
+            return;
+        }
+        if (gpsState != GpsState.GPS_RECOVERING && !isMoving(fix) && stationaryAnchor != null && distanceMeters(stationaryAnchor, fix) < STATIONARY_RADIUS_M) {
+            lastFixElapsed = SystemClock.elapsedRealtime();
+            count("rejected_stationary"); return;
+        }
         lastFixElapsed = SystemClock.elapsedRealtime();
-        if (gps) { gpsLocked = true; gpsState = isMoving(fix) ? GpsState.GPS_ACTIVE : GpsState.STATIONARY; }
+        if (gps) {
+            gpsLocked = true;
+            if (gpsState == GpsState.GPS_RECOVERING) { recoveryFixes++; if (recoveryFixes >= RECOVERY_FIXES_REQUIRED) gpsState = isMoving(fix) ? GpsState.GPS_ACTIVE : GpsState.STATIONARY; }
+            else gpsState = isMoving(fix) ? GpsState.GPS_ACTIVE : GpsState.STATIONARY;
+            recoveryCandidate = null;
+            if (!isMoving(fix)) stationaryAnchor = fix;
+            else stationaryAnchor = null;
+        }
         else if (gpsState == GpsState.COLD_START || gpsState == GpsState.GPS_LOST) gpsState = GpsState.COLD_START;
         applyLocationMode(fix); publishState();
         final String base=Config.destination(this),relayToken=Config.diskOauth(this),vehicle=Config.prefs(this).getString("vehicle", "jolion"),token=Config.key(this);
@@ -166,6 +200,11 @@ public class TrackingService extends Service implements LocationListener {
         schedule(0);
     }
     private boolean isMoving(Location fix) { return fix.hasSpeed() && Float.isFinite(fix.getSpeed()) && fix.getSpeed() >= MOVING_SPEED_MPS; }
+    private static double distanceMeters(Location a, Location b) {
+        float[] result = new float[1];
+        Location.distanceBetween(a.getLatitude(), a.getLongitude(), b.getLatitude(), b.getLongitude(), result);
+        return result[0];
+    }
     private synchronized void applyLocationMode(Location fix) {
         if (locations == null || !LocationManager.GPS_PROVIDER.equals(fix.getProvider())) return;
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
@@ -282,9 +321,12 @@ public class TrackingService extends Service implements LocationListener {
      * begins immediately and is never smeared once GPS takes over.
      */
     static boolean acceptProvider(String provider, float accuracy, boolean gpsLocked) {
+        return acceptProvider(provider, accuracy, gpsLocked, false);
+    }
+    static boolean acceptProvider(String provider, float accuracy, boolean gpsLocked, boolean recoveryNetwork) {
         boolean gps = LocationManager.GPS_PROVIDER.equals(provider);
         if (accuracy > (gps ? GPS_MAX_ACCURACY_M : NETWORK_COLD_START_ACCURACY_M)) return false;
-        return gps || !gpsLocked;
+        return gps || !gpsLocked || recoveryNetwork;
     }
 
     /** Reject duplicate GPS callbacks and physically impossible jumps before they reach SQLite. */

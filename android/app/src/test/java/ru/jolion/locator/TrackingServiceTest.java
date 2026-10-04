@@ -35,6 +35,11 @@ public class TrackingServiceTest {
         assertFalse(TrackingService.acceptProvider("network", 1501f, false));
     }
 
+    @Test public void networkMayReportOnlyDuringGpsLossRecovery() {
+        assertFalse(TrackingService.acceptProvider("network", 500f, true));
+        assertTrue(TrackingService.acceptProvider("network", 500f, true, true));
+    }
+
     private Location gps(long time, double lat, double lon) {
         Location location = new Location("gps");
         location.setTime(time);
