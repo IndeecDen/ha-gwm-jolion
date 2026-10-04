@@ -6,13 +6,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <application android:label="Jolion Locator" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="false" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
         <service android:name=".TrackingService" android:foregroundServiceType="location" android:exported="false" />
-        <provider android:name=".UpdateFileProvider" android:authorities="ru.jolion.locator.update-provider" android:exported="false" android:grantUriPermissions="true"><meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_paths" /></provider>
+        <provider android:name=".UpdateFileProvider" android:authorities="ru.jolion.locator.update-provider" android:exported="false" android:grantUriPermissions="true" />
         <receiver android:name=".BootReceiver" android:exported="true" android:directBootAware="true">
             <intent-filter><action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" /><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.USER_UNLOCKED" /><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /><action android:name="ru.jolion.locator.WATCHDOG" /></intent-filter>
         </receiver>

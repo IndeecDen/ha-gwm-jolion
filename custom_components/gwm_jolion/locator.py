@@ -116,7 +116,6 @@ class HybridHistory(TripHistory):
         return db
 
     def _append(self, stamp, location):
-        import sqlite3
         from .trips import number
         lat, lon, odo = (number(location.get(key)) for key in ("latitude", "longitude", "odometer"))
         if lat is None or lon is None or not -90 <= lat <= 90 or not -180 <= lon <= 180 or (lat == 0 and lon == 0):
@@ -251,7 +250,6 @@ class HybridHistory(TripHistory):
         points, rows = self._merged(int(low*1000) - OVERNIGHT_BASELINE_MS, int(high*1000), archive)
         profile["fetch_merge_ms"]=round((perf_counter()-phase)*1000)
         phase=perf_counter()
-        window = [p for p in points if int(low*1000) <= p["timestamp_ms"] < int(high*1000)]
         points = [dict(p,display_break=f.get("display_break",False)) for p,f in zip(points,filter_display(points))] if raw else filter_display(points)
         profile["filter_ms"]=round((perf_counter()-phase)*1000)
         route = [(p["timestamp_ms"]/1000,p["latitude"],p["longitude"],None) for p in points]
@@ -285,7 +283,6 @@ class HybridHistory(TripHistory):
         if task is None:
             async def run_query():
                 async with self.lock:
-                    started=time.monotonic()
                     result=await self.hass.async_add_executor_job(self._query,start,end,zone,archive,raw)
                     if archive is None:
                         self._query_cache[key]=(time.monotonic(),result,len(result.get("playback",())))

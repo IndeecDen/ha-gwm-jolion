@@ -8,7 +8,7 @@ from typing import Any
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import ITEM_MAP, KPA_TO_BAR, RAW_SENSOR_MAP, VEHICLE_STATUS_MAP, Conversion
-from .vehicle_basics import flatten_vehicle_basics, vehicle_basics_snapshot
+from .vehicle_basics import flatten_vehicle_basics
 from .vehicle_data import describe_structure
 
 _LOGGER = logging.getLogger(__name__)

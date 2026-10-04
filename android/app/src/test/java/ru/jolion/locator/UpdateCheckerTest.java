@@ -14,6 +14,7 @@ public class UpdateCheckerTest {
         assertTrue(UpdateChecker.compareVersions("0.2.0-beta.3", "0.2.0-beta.2") > 0);
         assertTrue(UpdateChecker.compareVersions("0.2.0", "0.2.0-beta.9") > 0);
         assertEquals(0, UpdateChecker.compareVersions("v0.2.0".substring(1), "0.2.0"));
+        assertTrue(UpdateChecker.compareVersions("1.0.0-rc.10", "1.0.0-rc.2") > 0);
     }
     @Test public void selectsApkAndChecksumAssets() throws Exception {
         JSONObject release=new JSONObject("{\"tag_name\":\"v0.2.0-beta.3\",\"body\":\"notes\",\"assets\":["
@@ -26,6 +27,12 @@ public class UpdateCheckerTest {
     @Test public void ignoresDraftAndMissingApk() throws Exception {
         assertNull(UpdateChecker.parseRelease(new JSONObject("{\"draft\":true,\"assets\":[]}")));
         assertNull(UpdateChecker.parseRelease(new JSONObject("{\"assets\":[{\"name\":\"notes.txt\"}]}")));
+    }
+    @Test public void stableChannelIgnoresPrereleases() throws Exception {
+        String releases="[{\"tag_name\":\"v1.1.0-beta.1\",\"prerelease\":true,\"assets\":[{\"name\":\"Jolion Locator.apk\",\"browser_download_url\":\"https://example/beta.apk\"}]},"
+            +"{\"tag_name\":\"v1.0.0\",\"prerelease\":false,\"assets\":[{\"name\":\"Jolion Locator.apk\",\"browser_download_url\":\"https://example/stable.apk\"}]}]";
+        assertEquals("1.0.0",UpdateChecker.findLatest(releases,false).version);
+        assertEquals("1.1.0-beta.1",UpdateChecker.findLatest(releases,true).version);
     }
     @Test public void parsesChecksumByExactOrOnlyApkAsset() {
         String hash="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

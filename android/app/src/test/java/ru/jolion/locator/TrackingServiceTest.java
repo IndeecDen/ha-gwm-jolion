@@ -67,4 +67,12 @@ public class TrackingServiceTest {
         Location first = gps(1_700_000_000_000L, 55.75, 37.62);
         assertTrue(TrackingService.transitionAllowed(first, gps(first.getTime()+2000, 55.7501, 37.62)));
     }
+
+    @Test public void stationaryGpsCanRecoverWithoutAddingJitterToNormalTrack() {
+        Location first = gps(1_700_000_000_000L, 55.75, 37.62);
+        Location samePlace = gps(first.getTime()+1000, 55.750005, 37.62);
+        assertFalse(TrackingService.transitionAllowed(first, samePlace));
+        assertTrue(TrackingService.recoveryTransitionAllowed(first, samePlace));
+        assertFalse(TrackingService.recoveryTransitionAllowed(first, gps(first.getTime(), 55.75, 37.62)));
+    }
 }

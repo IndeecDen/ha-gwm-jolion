@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +21,11 @@ if not APK.is_file():
 
 OUT = ROOT / "dist"
 OUT.mkdir(exist_ok=True)
-apk_out = OUT / "Jolion Locator 0.2.0.apk"
+safe_version = re.sub(r"[^0-9A-Za-z._-]", "_", VERSION)
+apk_out = OUT / f"Jolion Locator {safe_version}.apk"
+for stale in OUT.glob("Jolion Locator *.apk"):
+    if stale != apk_out:
+        stale.unlink()
 apk_out.write_bytes(APK.read_bytes())
 
 ha_out = OUT / f"ha-gwm-jolion-{VERSION}.zip"

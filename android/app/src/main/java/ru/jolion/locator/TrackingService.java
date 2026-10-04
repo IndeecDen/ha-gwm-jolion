@@ -29,6 +29,7 @@ public class TrackingService extends Service implements LocationListener {
     private volatile boolean closed = false;
     private final UploadWakeup wakeup = new UploadWakeup();
     private long lastFixElapsed = 0;
+    private long lastGpsSignalElapsed = 0;
     private volatile Location lastAcceptedFix;
     private enum GpsState { COLD_START, GPS_ACTIVE, GPS_LOST, GPS_RECOVERING, STATIONARY }
     private volatile GpsState gpsState = GpsState.COLD_START;
@@ -121,8 +122,9 @@ public class TrackingService extends Service implements LocationListener {
     private final Runnable health = new Runnable() {
         public void run() {
             if (closed) return;
-            String gps = lastFixElapsed == 0 ? "Ожидание GPS" : "GPS: " + ((SystemClock.elapsedRealtime()-lastFixElapsed)/1000) + " с назад";
-            if (lastFixElapsed > 0 && SystemClock.elapsedRealtime()-lastFixElapsed > GAP_RESET_MS
+            long signal = lastGpsSignalElapsed > 0 ? lastGpsSignalElapsed : lastFixElapsed;
+            String gps = signal == 0 ? "Ожидание GPS" : "GPS: " + ((SystemClock.elapsedRealtime()-signal)/1000) + " с назад";
+            if (signal > 0 && SystemClock.elapsedRealtime()-signal > GAP_RESET_MS
                     && (gpsState == GpsState.GPS_ACTIVE || gpsState == GpsState.STATIONARY)) {
                 gpsState = GpsState.GPS_LOST; gpsLocked = true; publishState();
             }
@@ -144,16 +146,12 @@ public class TrackingService extends Service implements LocationListener {
         boolean gps = LocationManager.GPS_PROVIDER.equals(fix.getProvider());
         long ageNs = SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos();
         count("received");
-        if (!firstFixRecorded && LocationManager.GPS_PROVIDER.equals(fix.getProvider())) {
-            firstFixRecorded = true;
-            long now = SystemClock.elapsedRealtime();
-            Config.prefs(this).edit().putLong("first_fix_at", System.currentTimeMillis()).putLong("cold_start_ms", gpsRequestedAt == 0 ? 0 : now-gpsRequestedAt).putString("startup_stage", "FIRST_FIX").apply();
-        }
         if (fix.isFromMockProvider() || !fix.hasAccuracy() || ageNs < 0 || ageNs > 15000000000L) { count("rejected_stale"); return; }
         boolean networkRecovery = !gps && gpsLocked && gpsState == GpsState.GPS_LOST;
         if (!acceptProvider(fix.getProvider(), fix.getAccuracy(), gpsLocked, networkRecovery)) { count("rejected_provider"); return; }
         if (!Double.isFinite(fix.getLatitude()) || !Double.isFinite(fix.getLongitude()) || Math.abs(fix.getLatitude()) > 90 || Math.abs(fix.getLongitude()) > 180 || !Float.isFinite(fix.getAccuracy()) || fix.getAccuracy() < 0) { count("rejected_coordinates"); return; }
         if (fix.getTime() < 1577836800000L || fix.getTime() > System.currentTimeMillis()+300000L) { count("rejected_time"); status("Неверное время GPS или системных часов. Проверьте дату ГУ."); return; }
+        if (gps) lastGpsSignalElapsed = SystemClock.elapsedRealtime();
         if (networkRecovery) {
             Config.prefs(this).edit().putString("network_last_latitude", Double.toString(fix.getLatitude()))
                     .putString("network_last_longitude", Double.toString(fix.getLongitude()))
@@ -164,7 +162,13 @@ public class TrackingService extends Service implements LocationListener {
         if (fix.hasSpeed() && (!Float.isFinite(fix.getSpeed()) || fix.getSpeed() < 0 || fix.getSpeed()*3.6 > 400)) { count("rejected_speed"); return; }
         if (lastFixElapsed > 0 && SystemClock.elapsedRealtime()-lastFixElapsed < 900) { count("rejected_rate"); return; }
         Location transitionReference = recoveryCandidate != null ? recoveryCandidate : lastAcceptedFix;
-        if (!transitionAllowed(transitionReference, fix)) { count("rejected_transition"); return; }
+        boolean recovering = gps && (gpsState == GpsState.GPS_LOST || gpsState == GpsState.GPS_RECOVERING);
+        if (!(recovering ? recoveryTransitionAllowed(transitionReference, fix) : transitionAllowed(transitionReference, fix))) { count("rejected_transition"); return; }
+        if (!firstFixRecorded && gps) {
+            firstFixRecorded = true;
+            long now = SystemClock.elapsedRealtime();
+            Config.prefs(this).edit().putLong("first_fix_at", System.currentTimeMillis()).putLong("cold_start_ms", gpsRequestedAt == 0 ? 0 : now-gpsRequestedAt).putString("startup_stage", "FIRST_FIX").apply();
+        }
         if (gps && gpsState == GpsState.GPS_LOST) {
             recoveryCandidate = fix;
             recoveryFixes = 1;
@@ -387,6 +391,18 @@ public class TrackingService extends Service implements LocationListener {
         if (distance < MIN_MOVEMENT_M) return false;
         double speedKmh = distance / deltaMs * 3.6e3;
         return speedKmh <= MAX_REALISTIC_SPEED_KMH;
+    }
+
+    /** During recovery, two precise stationary fixes are evidence that GPS is alive, not route jitter. */
+    static boolean recoveryTransitionAllowed(Location previous, Location current) {
+        if (previous == null) return true;
+        if (current == null || current.getTime() <= previous.getTime()) return false;
+        if (!LocationManager.GPS_PROVIDER.equals(previous.getProvider())
+                || !LocationManager.GPS_PROVIDER.equals(current.getProvider())) return true;
+        float[] result = new float[1];
+        Location.distanceBetween(previous.getLatitude(), previous.getLongitude(),
+                current.getLatitude(), current.getLongitude(), result);
+        return result[0] < MIN_MOVEMENT_M || transitionAllowed(previous, current);
     }
 }
 

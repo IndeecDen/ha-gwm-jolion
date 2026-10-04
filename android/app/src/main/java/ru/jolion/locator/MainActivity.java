@@ -18,6 +18,7 @@ public class MainActivity extends Activity {
     private EditText url, vehicle, key, diskFolder, diskOauth, interval;
     private Spinner transport;
     private TextView status;
+    private File pendingUpdate;
     private final Handler timer = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         public void run() {
@@ -134,8 +135,9 @@ public class MainActivity extends Activity {
         Toast.makeText(this, "Проверка обновлений…", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             try {
-                UpdateChecker.Release release = UpdateChecker.findLatest(UpdateChecker.get(UpdateChecker.RELEASES_URL), true);
-                if (release == null || UpdateChecker.compareVersions(release.version, UpdateChecker.installedVersion(this)) <= 0) {
+                String installed = UpdateChecker.installedVersion(this);
+                UpdateChecker.Release release = UpdateChecker.findLatest(UpdateChecker.get(UpdateChecker.RELEASES_URL), installed.contains("-"));
+                if (release == null || UpdateChecker.compareVersions(release.version, installed) <= 0) {
                     runOnUiThread(() -> Toast.makeText(this, "Установлена последняя версия", Toast.LENGTH_LONG).show()); return;
                 }
                 runOnUiThread(() -> confirmUpdate(release));
@@ -154,11 +156,31 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 File apk = UpdateChecker.download(this, release, value -> runOnUiThread(() -> progress.setProgress(value)));
-                runOnUiThread(() -> { progress.dismiss(); Intent install = new Intent(Intent.ACTION_VIEW, Uri.parse("content://" + getPackageName() + ".update-provider/" + apk.getName())); install.setDataAndType(Uri.parse("content://" + getPackageName() + ".update-provider/" + apk.getName()), "application/vnd.android.package-archive"); install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(install); });
+                runOnUiThread(() -> { progress.dismiss(); installUpdate(apk); });
             } catch (Exception error) {
                 runOnUiThread(() -> { progress.dismiss(); Toast.makeText(this, "Обновление отклонено: " + error.getMessage(), Toast.LENGTH_LONG).show(); });
             }
         }, "update-download").start();
+    }
+    private void installUpdate(File apk) {
+        if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            pendingUpdate = apk;
+            Config.prefs(this).edit().putString("pending_update", apk.getName()).apply();
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+                Toast.makeText(this, "Разрешите установку из Jolion Locator и вернитесь в приложение", Toast.LENGTH_LONG).show();
+            } catch (RuntimeException unavailable) {
+                Toast.makeText(this, "ГУ не открывает разрешение установки APK. Разрешите его в настройках приложений.", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        pendingUpdate = null;
+        Config.prefs(this).edit().remove("pending_update").apply();
+        Uri apkUri = new Uri.Builder().scheme("content").authority(getPackageName() + ".update-provider").appendPath(apk.getName()).build();
+        Intent install = new Intent(Intent.ACTION_VIEW).setDataAndType(apkUri, "application/vnd.android.package-archive");
+        install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        try { startActivity(install); }
+        catch (RuntimeException unavailable) { Toast.makeText(this, "Системный установщик APK недоступен", Toast.LENGTH_LONG).show(); }
     }
     private void start() {
         String base = url.getText().toString().trim().replaceAll("/+$", "");
@@ -195,6 +217,13 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(request, permissions, results);
         if (request == 1 && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) start();
     }
-    public void onResume() { super.onResume(); timer.post(refresh); }
+    public void onResume() {
+        super.onResume(); timer.post(refresh);
+        if (pendingUpdate == null) {
+            String name=Config.prefs(this).getString("pending_update","");
+            if(!name.isEmpty()) { File candidate=new File(new File(getCacheDir(),"updates"),name); if(candidate.isFile())pendingUpdate=candidate; else Config.prefs(this).edit().remove("pending_update").apply(); }
+        }
+        if (pendingUpdate != null && (Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls())) installUpdate(pendingUpdate);
+    }
     public void onPause() { timer.removeCallbacks(refresh); super.onPause(); }
 }

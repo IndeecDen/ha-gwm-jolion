@@ -1,8 +1,7 @@
 """Authenticated trip history access scoped to the selected tracker."""
 import logging
 import asyncio
-import json
-from time import perf_counter
+import time
 
 import voluptuous as vol
 from homeassistant.auth.permissions.const import POLICY_READ
@@ -37,7 +36,7 @@ async def get_trips(hass, connection, msg):
     clock = globals().get("perf_counter")
     logger = globals().get("_LOGGER")
     if clock is None:
-        clock = __import__("time").perf_counter
+        clock = time.perf_counter if "time" in globals() else __import__("time").perf_counter
     if logger is None:
         logger = logging.getLogger(__name__) if "logging" in globals() else type(
             "_Logger", (), {"warning": lambda self, *args: None}
@@ -93,10 +92,8 @@ async def get_trips(hass, connection, msg):
             result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone)
         else:
             if len(archive) == 3:
-                gps, mileage, engines = archive
+                gps, mileage, _engines = archive
                 archive = (gps, mileage)
-            else:
-                engines = []
             result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone, archive)
         processing_ms = round((clock() - processing_started) * 1000)
         if "segments" in result or "source_counts" in result:

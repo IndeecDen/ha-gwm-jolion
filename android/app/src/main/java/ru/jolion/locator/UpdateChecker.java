@@ -15,6 +15,7 @@ import java.util.Locale;
 final class UpdateChecker {
     static final String RELEASES_URL = "https://api.github.com/repos/IndeecDen/ha-gwm-jolion/releases";
     static final String PACKAGE = "ru.jolion.locator";
+    private static final long MAX_APK_BYTES = 100L*1024L*1024L;
     interface Progress { void update(int percent); }
     static final class Release {
         final String version, notes, apkUrl, checksumUrl, apkName;
@@ -105,20 +106,32 @@ final class UpdateChecker {
         PackageInfo candidate=pm.getPackageArchiveInfo(file.getPath(), PackageManager.GET_SIGNATURES);
         PackageInfo installed=pm.getPackageInfo(PACKAGE, PackageManager.GET_SIGNATURES);
         if(candidate==null || installed==null || !PACKAGE.equals(candidate.packageName) || candidate.signatures==null || installed.signatures==null || candidate.signatures.length==0 || installed.signatures.length==0)return false;
-        return MessageDigest.isEqual(candidate.signatures[0].toByteArray(), installed.signatures[0].toByteArray());
+        return candidate.versionCode>installed.versionCode && MessageDigest.isEqual(candidate.signatures[0].toByteArray(), installed.signatures[0].toByteArray());
     }
     static String get(String url) throws Exception { return read(url, "application/vnd.github+json"); }
     private static String read(String url,String accept) throws Exception {
-        HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection(); c.setConnectTimeout(15000);c.setReadTimeout(30000);c.setRequestProperty("Accept",accept);c.setRequestProperty("User-Agent","Jolion-Locator-Updater");
-        if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
-        try(InputStream in=c.getInputStream()){ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);return out.toString("UTF-8");} finally {c.disconnect();}
+        URL endpoint=new URL(url); if(!"https".equalsIgnoreCase(endpoint.getProtocol()))throw new SecurityException("HTTPS required");
+        HttpURLConnection c=(HttpURLConnection)endpoint.openConnection(); c.setConnectTimeout(15000);c.setReadTimeout(30000);c.setInstanceFollowRedirects(true);c.setRequestProperty("Accept",accept);c.setRequestProperty("User-Agent","Jolion-Locator-Updater");
+        try {
+            if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
+            if(!"https".equalsIgnoreCase(c.getURL().getProtocol()))throw new SecurityException("HTTPS redirect required");
+            try(InputStream in=c.getInputStream()){ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1){if(out.size()+n>2*1024*1024)throw new IOException("Response too large");out.write(b,0,n);}return out.toString("UTF-8");}
+        } finally {c.disconnect();}
     }
     static File download(Context context, Release release, Progress progress) throws Exception {
         File dir=new File(context.getCacheDir(),"updates"); if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create update cache");
         String safeName=release.apkName == null ? "Jolion-Locator-"+release.version+".apk" : release.apkName.replaceAll("[^A-Za-z0-9._ -]", "_");
-        File file=new File(dir,safeName); HttpURLConnection c=(HttpURLConnection)new URL(release.apkUrl).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(60000);c.setRequestProperty("User-Agent","Jolion-Locator-Updater");
-        if(c.getResponseCode()!=200)throw new IOException("APK HTTP "+c.getResponseCode()); long total=c.getContentLengthLong()>0?c.getContentLengthLong():release.size, done=0;byte[] b=new byte[8192];int n;
-        try(InputStream in=c.getInputStream();OutputStream out=new BufferedOutputStream(new FileOutputStream(file))){while((n=in.read(b))!=-1){out.write(b,0,n);done+=n;if(progress!=null&&total>0)progress.update((int)Math.min(100,done*100/total));}} finally {c.disconnect();}
+        URL endpoint=new URL(release.apkUrl);if(!"https".equalsIgnoreCase(endpoint.getProtocol()))throw new SecurityException("APK HTTPS required");
+        File file=new File(dir,safeName); HttpURLConnection c=(HttpURLConnection)endpoint.openConnection();c.setConnectTimeout(15000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","Jolion-Locator-Updater");
+        long done=0;
+        try {
+            if(c.getResponseCode()!=200)throw new IOException("APK HTTP "+c.getResponseCode());
+            if(!"https".equalsIgnoreCase(c.getURL().getProtocol()))throw new SecurityException("APK HTTPS redirect required");
+            long total=c.getContentLengthLong()>0?c.getContentLengthLong():release.size;if(total>MAX_APK_BYTES)throw new IOException("APK too large");byte[] b=new byte[8192];int n;
+            try(InputStream in=c.getInputStream();OutputStream out=new BufferedOutputStream(new FileOutputStream(file))){while((n=in.read(b))!=-1){done+=n;if(done>MAX_APK_BYTES)throw new IOException("APK too large");out.write(b,0,n);if(progress!=null&&total>0)progress.update((int)Math.min(100,done*100/total));}}
+        } catch(Exception error) { file.delete(); throw error; }
+        finally {c.disconnect();}
+        if(release.size>0 && file.length()!=release.size){file.delete();throw new SecurityException("APK size mismatch");}
         if(release.checksumUrl == null){file.delete();throw new SecurityException("Release has no SHA-256 checksum");}
         String expected=checksumFromText(get(release.checksumUrl), file.getName());
         if(expected == null){file.delete();throw new SecurityException("APK checksum not found");}
