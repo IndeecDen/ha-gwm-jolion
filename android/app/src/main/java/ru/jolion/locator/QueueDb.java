@@ -16,7 +16,7 @@ final class QueueDb extends SQLiteOpenHelper {
         synchronized(Config.class) {
             String old=Config.prefs(context).getString("route_from", "");
             if(!old.isEmpty()) {
-                ContentValues v=new ContentValues();v.put("base",Config.destination(context));v.put("token",Config.key(context));v.put("relay_token",Config.prefs(context).getString("disk_oauth",""));
+                ContentValues v=new ContentValues();v.put("base",Config.destination(context));v.put("token",Config.key(context));v.put("relay_token",Config.diskOauth(context));
                 db.update("points",v,"base=? AND vehicle=?",new String[]{old,Config.prefs(context).getString("vehicle","jolion")});
                 Config.prefs(context).edit().remove("route_from").commit();
             }
@@ -49,7 +49,7 @@ final class QueueDb extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX IF NOT EXISTS queue_destination ON points(base,vehicle,seq)");
     }
     void append(JSONObject point) throws Exception {
-        append(point,Config.prefs(context).getString("url", ""),Config.prefs(context).getString("vehicle", "jolion"),Config.key(context));
+         append(point,Config.prefs(context).getString("url", ""),Config.prefs(context).getString("vehicle", "jolion"),Config.key(context));
     }
     void append(JSONObject point, String base, String vehicle, String token) throws Exception {
         append(point,base,vehicle,token,"");
@@ -79,11 +79,16 @@ final class QueueDb extends SQLiteOpenHelper {
             String relayToken=c.getString(3);
             String group="base=? AND vehicle=?"+(relay?" AND token=? AND relay_token=?":"");
             java.util.ArrayList<String> args=new java.util.ArrayList<>();
-            for(int i=0;i<3;i++){args.add(base);args.add(vehicle);if(relay){args.add(token);args.add(relayToken);}}
-            String sql="SELECT body FROM points WHERE seq=(SELECT MAX(seq) FROM points WHERE "+group+") UNION ALL SELECT body FROM (SELECT body FROM points WHERE "+group+" AND seq<(SELECT MAX(seq) FROM points WHERE "+group+") ORDER BY seq LIMIT 199)";
-            try(Cursor rows=getReadableDatabase().rawQuery(sql,args.toArray(new String[0]))) {
-                while(rows.moveToNext())points.put(new JSONObject(rows.getString(0)));
-            }
+             for(int i=0;i<3;i++){args.add(base);args.add(vehicle);if(relay){args.add(token);args.add(relayToken);}}
+             String sql="SELECT body FROM points WHERE seq=(SELECT MAX(seq) FROM points WHERE "+group+") UNION ALL SELECT body FROM (SELECT body FROM points WHERE "+group+" AND seq<(SELECT MAX(seq) FROM points WHERE "+group+") ORDER BY seq LIMIT 199)";
+             try(Cursor rows=getReadableDatabase().rawQuery(sql,args.toArray(new String[0]))) {
+                 int bytes=32;
+                 while(rows.moveToNext()) {
+                     String body=rows.getString(0);
+                     if (bytes + body.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 60000 && points.length() > 0) break;
+                     points.put(new JSONObject(body)); bytes += body.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                 }
+             }
             return new Batch(base,vehicle,token,relayToken,points);
         }
     }

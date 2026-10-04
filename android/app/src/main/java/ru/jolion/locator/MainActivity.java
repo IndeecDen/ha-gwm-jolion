@@ -21,12 +21,17 @@ public class MainActivity extends Activity {
             SharedPreferences p = Config.prefs(MainActivity.this);
             status.setText((p.getBoolean("enabled", false) ? "Запись включена" : "Запись остановлена") + "\n" + p.getString("gps_status", "GPS ещё не получен")
                 + "\n" + p.getString("quality", "Точность GPS ещё неизвестна") + "\nТочек в очереди: " + p.getLong("queued", 0) + "\nПоследний GPS: " + date(p.getLong("last_fix", 0))
-                + "\nОтправлено: " + date(p.getLong("last_sync", 0)) + "\n" + p.getString("status", "Введите настройки и нажмите «Начать запись»")
+                + "\nСостояние GPS: " + p.getString("gps_state", "COLD_START") + "\n" + metrics(p) + "\nОтправлено: " + date(p.getLong("last_sync", 0)) + "\n" + p.getString("status", "Введите настройки и нажмите «Начать запись»")
                 + "\n" + p.getString("storage_error", "") + (getFilesDir().getUsableSpace() < 100*1024*1024 ? "\nМало места: осталось менее 100 МБ!" : ""));
             timer.postDelayed(this, 2000);
         }
     };
     private String date(long ms) { return ms == 0 ? "—" : DateFormat.getDateTimeInstance().format(new Date(ms)); }
+    private String metrics(SharedPreferences p) {
+        return "GPS: получено " + p.getLong("metric_received", 0) + ", сохранено " + p.getLong("metric_saved", 0)
+            + ", отфильтровано " + (p.getLong("metric_rejected_transition", 0) + p.getLong("metric_rejected_provider", 0) + p.getLong("metric_rejected_stale", 0))
+            + "; отправлено " + p.getLong("metric_uploaded", 0) + ", повторов " + p.getLong("metric_retries", 0);
+    }
     public void onCreate(Bundle state) {
         super.onCreate(state);
         LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setPadding(32, 20, 32, 24);
@@ -40,7 +45,7 @@ public class MainActivity extends Activity {
         url = field(directBox, "Адрес Home Assistant: https://ha.example.ru", p.getString("url", ""));
         LinearLayout diskBox=new LinearLayout(this);diskBox.setOrientation(LinearLayout.VERTICAL);layout.addView(diskBox);
         diskFolder=field(diskBox,"Папка на Диске (заранее создайте и опубликуйте)",p.getString("disk_folder","/JolionLocator"));
-        diskOauth=field(diskBox,"OAuth-токен Яндекс.Диска (только в приложении)",p.getString("disk_oauth",""));
+        diskOauth=field(diskBox,"OAuth-токен Яндекс.Диска (только в приложении)",Config.diskOauth(this));
         diskOauth.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
         TextView diskHelp=new TextView(this);diskHelp.setText("Файлы шифруются ключом Locator. В HA выберите Яндекс.Диск и укажите публичную ссылку этой папки. Доступ через белый список зависит от оператора. При смене способа накопленная очередь этого автомобиля переводится на выбранный способ.");diskBox.addView(diskHelp);
         interval=field(layout,"Интервал отправки, секунд ("+Config.MIN_INTERVAL_SECONDS+"–"+Config.MAX_INTERVAL_SECONDS+")",String.valueOf(Config.intervalSeconds(this)));
@@ -94,7 +99,7 @@ public class MainActivity extends Activity {
         if (queuedCount() > 0 && !id.equals(p.getString("vehicle", "jolion"))) {
             Toast.makeText(this, "Сначала отправьте очередь с прежним ID", Toast.LENGTH_LONG).show(); return;
         }
-        if (!p.edit().putString("vehicle", id).putString("key", token).commit()) {
+        if (!p.edit().putString("vehicle", id).commit() || !Config.putSecrets(this, token, Config.diskOauth(this))) {
             Toast.makeText(this, "Не удалось сохранить ключ", Toast.LENGTH_LONG).show(); return;
         }
         try {
@@ -137,7 +142,7 @@ public class MainActivity extends Activity {
             if(queuedCount()>0 && (!id.equals(p.getString("vehicle","jolion")) || (!changedMode && !newBase.equals(oldBase)))) {
                 Toast.makeText(this,"С очередью можно сменить способ передачи, но нельзя менять ID или адрес внутри того же способа",Toast.LENGTH_LONG).show();return;
             }
-            if(!p.edit().putString("url",base).putString("vehicle",id).putString("key",token).putString("transport",disk?"yandex_disk":"https").putString("disk_folder",folder).putString("disk_oauth",oauth).putString("interval",Integer.toString(seconds)).putString("route_from",changedMode?oldBase:"").commit()) {
+            if(!p.edit().putString("url",base).putString("vehicle",id).putString("transport",disk?"yandex_disk":"https").putString("disk_folder",folder).putString("interval",Integer.toString(seconds)).putString("route_from",changedMode?oldBase:"").commit() || !Config.putSecrets(this, token, oauth)) {
                 Toast.makeText(this,"Не удалось сохранить настройки",Toast.LENGTH_LONG).show();return;
             }
             if(changedMode)try(QueueDb db=new QueueDb(this)){db.reroute(oldBase,newBase,id,token,oauth);}

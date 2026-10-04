@@ -23,11 +23,14 @@ public class TrackingService extends Service implements LocationListener {
     private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
     private final ExecutorService writer = Executors.newSingleThreadExecutor();
     private ScheduledFuture<?> pending;
+    private boolean uploadRunning = false;
     private long retryMs = 5000;
     private volatile boolean closed = false;
     private final UploadWakeup wakeup = new UploadWakeup();
     private long lastFixElapsed = 0;
     private volatile Location lastAcceptedFix;
+    private enum GpsState { COLD_START, GPS_ACTIVE, GPS_LOST, STATIONARY }
+    private volatile GpsState gpsState = GpsState.COLD_START;
     // Once the GPS receiver has produced a precise fix, the coarse network
     // positions are no longer needed: they only bridge the cold start, when the
     // satellite receiver has nothing to report yet.
@@ -37,6 +40,10 @@ public class TrackingService extends Service implements LocationListener {
     private static final double MIN_MOVEMENT_M = 3.0;
     private static final double MAX_REALISTIC_SPEED_KMH = 250.0;
     private static final long GAP_RESET_MS = 120_000L;
+    private static final long MOVING_INTERVAL_MS = 1500L;
+    private static final long SLOW_INTERVAL_MS = 4000L;
+    private static final long PARKED_INTERVAL_MS = 20000L;
+    private static final float MOVING_SPEED_MPS = 2.0f;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     public void onCreate() {
@@ -52,7 +59,7 @@ public class TrackingService extends Service implements LocationListener {
             status("Нет разрешения GPS. Откройте приложение."); stopSelf(); return;
         }
         try {
-            locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, this);
+            locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, MOVING_INTERVAL_MS, 0, this);
             // The network provider reports a coarse position in seconds. It bridges
             // the GPS cold start so the track begins right away, and is dropped as
             // soon as the satellite receiver locks (see onLocationChanged).
@@ -87,7 +94,10 @@ public class TrackingService extends Service implements LocationListener {
         public void run() {
             if (closed) return;
             String gps = lastFixElapsed == 0 ? "Ожидание GPS" : "GPS: " + ((SystemClock.elapsedRealtime()-lastFixElapsed)/1000) + " с назад";
-            Config.prefs(TrackingService.this).edit().putString("gps_status", gps).apply();
+            if (lastFixElapsed > 0 && SystemClock.elapsedRealtime()-lastFixElapsed > GAP_RESET_MS && gpsState == GpsState.GPS_ACTIVE) {
+                gpsState = GpsState.GPS_LOST; gpsLocked = true; publishState();
+            }
+            Config.prefs(TrackingService.this).edit().putString("gps_status", gps).putString("gps_state", gpsState.name()).apply();
             ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(1, notification(gps));
             ui.postDelayed(this, 10000);
         }
@@ -103,16 +113,19 @@ public class TrackingService extends Service implements LocationListener {
         Location fix = new Location(incoming);
         boolean gps = LocationManager.GPS_PROVIDER.equals(fix.getProvider());
         long ageNs = SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos();
-        if (fix.isFromMockProvider() || !fix.hasAccuracy() || ageNs < 0 || ageNs > 15000000000L) return;
-        if (!acceptProvider(fix.getProvider(), fix.getAccuracy(), gpsLocked)) return;
+        count("received");
+        if (fix.isFromMockProvider() || !fix.hasAccuracy() || ageNs < 0 || ageNs > 15000000000L) { count("rejected_stale"); return; }
+        if (!acceptProvider(fix.getProvider(), fix.getAccuracy(), gpsLocked)) { count("rejected_provider"); return; }
         if (!Double.isFinite(fix.getLatitude()) || !Double.isFinite(fix.getLongitude()) || Math.abs(fix.getLatitude()) > 90 || Math.abs(fix.getLongitude()) > 180 || !Float.isFinite(fix.getAccuracy()) || fix.getAccuracy() < 0) return;
         if (fix.getTime() < 1577836800000L || fix.getTime() > System.currentTimeMillis()+300000L) { status("Неверное время GPS или системных часов. Проверьте дату ГУ."); return; }
         if (fix.hasSpeed() && (!Float.isFinite(fix.getSpeed()) || fix.getSpeed() < 0 || fix.getSpeed()*3.6 > 400)) return;
         if (lastFixElapsed > 0 && SystemClock.elapsedRealtime()-lastFixElapsed < 900) return;
-        if (!transitionAllowed(lastAcceptedFix, fix)) return;
+        if (!transitionAllowed(lastAcceptedFix, fix)) { count("rejected_transition"); return; }
         lastFixElapsed = SystemClock.elapsedRealtime();
-        if (gps) gpsLocked = true;
-        final String base=Config.destination(this),relayToken=Config.prefs(this).getString("disk_oauth",""),vehicle=Config.prefs(this).getString("vehicle", "jolion"),token=Config.key(this);
+        if (gps) { gpsLocked = true; gpsState = isMoving(fix) ? GpsState.GPS_ACTIVE : GpsState.STATIONARY; }
+        else if (gpsState == GpsState.COLD_START || gpsState == GpsState.GPS_LOST) gpsState = GpsState.COLD_START;
+        applyLocationMode(fix); publishState();
+        final String base=Config.destination(this),relayToken=Config.diskOauth(this),vehicle=Config.prefs(this).getString("vehicle", "jolion"),token=Config.key(this);
         writer.execute(() -> {
             try {
                 JSONObject p = new JSONObject();
@@ -126,14 +139,15 @@ public class TrackingService extends Service implements LocationListener {
                 synchronized(Config.class) {
                     String selected=Config.destination(this);
                     boolean switched=vehicle.equals(Config.prefs(this).getString("vehicle","jolion")) && selected.startsWith("yadisk:")!=base.startsWith("yadisk:");
-                    db.append(p,switched?selected:base,vehicle,switched?Config.key(this):token,switched?Config.prefs(this).getString("disk_oauth",""):relayToken);
+                    db.append(p,switched?selected:base,vehicle,switched?Config.key(this):token,switched?Config.diskOauth(this):relayToken);
                 }
                 // Advance the filter only after the point is durable. If the
                 // queue cannot be written, the next fix must still be compared
                 // with the last point that actually reached SQLite.
                 synchronized (TrackingService.this) { lastAcceptedFix = fix; }
+                count("saved");
                 Config.prefs(this).edit().putString("quality", "Точность GPS: ±"+Math.round(fix.getAccuracy())+" м · погрешность скорости: "+(p.isNull("speed_accuracy_kmh")?"неизвестна":"±"+Math.round(p.getDouble("speed_accuracy_kmh"))+" км/ч")).apply();
-                Config.prefs(this).edit().putLong("last_fix", fix.getTime()).putLong("queued", db.count()).putString("storage_error", "").apply();
+                Config.prefs(this).edit().putLong("last_fix", fix.getTime()).putString("storage_error", "").apply();
                 // A service may have started with an empty queue. Start the upload
                 // as soon as the first fix is durably stored instead of waiting for
                 // the next connectivity callback (which may never happen).
@@ -143,12 +157,27 @@ public class TrackingService extends Service implements LocationListener {
     }
     private synchronized void schedule(long delay) {
         if (closed) { return; }
-        if (pending != null) { pending.cancel(false); }
+        if (uploadRunning || (pending != null && !pending.isDone())) return;
         pending = worker.schedule(this::upload, delay, TimeUnit.MILLISECONDS);
     }
     private synchronized void networkAvailable() {
         wakeup.networkAvailable();
+        if (pending != null && !pending.isDone()) { pending.cancel(false); pending = null; }
         schedule(0);
+    }
+    private boolean isMoving(Location fix) { return fix.hasSpeed() && Float.isFinite(fix.getSpeed()) && fix.getSpeed() >= MOVING_SPEED_MPS; }
+    private synchronized void applyLocationMode(Location fix) {
+        if (locations == null || !LocationManager.GPS_PROVIDER.equals(fix.getProvider())) return;
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
+        long interval = isMoving(fix) ? MOVING_INTERVAL_MS : (fix.hasSpeed() && fix.getSpeed() > 0.5f ? SLOW_INTERVAL_MS : PARKED_INTERVAL_MS);
+        try { locations.removeUpdates(this); locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, interval, 0, this); locations.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 30000, 0, this); } catch (SecurityException ignored) { }
+    }
+    private void publishState() { Config.prefs(this).edit().putString("gps_state", gpsState.name()).apply(); }
+    private void count(String name) {
+        synchronized (Config.class) {
+            String key = "metric_" + name; SharedPreferences p = Config.prefs(this);
+            p.edit().putLong(key, p.getLong(key, 0) + 1).apply();
+        }
     }
     private void retryIfValidated(Network network) {
         NetworkCapabilities caps = connectivity.getNetworkCapabilities(network);
@@ -157,7 +186,7 @@ public class TrackingService extends Service implements LocationListener {
     }
     private void upload() {
         final long started;
-        synchronized (this) { if (closed) return; started = wakeup.begin(); }
+        synchronized (this) { if (closed || uploadRunning) return; uploadRunning = true; pending = null; started = wakeup.begin(); }
         HttpsURLConnection connection = null;
         long next = 5000;
         try {
@@ -171,13 +200,14 @@ public class TrackingService extends Service implements LocationListener {
             String base = batch.base;
             String vehicle = batch.vehicle;
             if(base.startsWith("yadisk:")) {
-                String oauth=base.equals(Config.destination(this)) ? Config.prefs(this).getString("disk_oauth","") : batch.relayToken;
+                String oauth=base.equals(Config.destination(this)) ? Config.diskOauth(this) : batch.relayToken;
                 new DiskTransport().send(batch,oauth);
                 JSONArray ids=new JSONArray();for(int i=0;i<points.length();i++)ids.put(points.getJSONObject(i).getString("id"));
                 db.acknowledge(ids,points);
                 long remaining=db.count();
                 Config.prefs(this).edit().putLong("queued",remaining).putLong("last_sync",System.currentTimeMillis()).apply();
                 status("Передано на Яндекс.Диск; получение Home Assistant проверяется в HA");retryMs=5000;
+                count("uploaded");
                 // The driver picks the interval; a large backlog still drains fast.
                 next=remaining>200?1000:Config.intervalSeconds(this)*1000L;return;
             }
@@ -209,16 +239,18 @@ public class TrackingService extends Service implements LocationListener {
             JSONArray ack = reply.getJSONArray("ack");
             if (ack.length() == 0) throw new IOException("No acknowledgement");
             db.acknowledge(ack, points);
+            count("uploaded");
             long count = db.count();
             Config.prefs(this).edit().putLong("queued", count).putLong("last_sync", System.currentTimeMillis()).apply();
             status("Связь с Home Assistant установлена"); retryMs = 5000;
             next = count > 0 ? 250 : Config.intervalSeconds(this)*1000L;
         } catch (Exception e) {
+            count("retries");
             status("Нет подтверждения сервера. Данные остаются в очереди.");
             retryMs = Math.min(retryMs*2, 300000); next = retryMs;
         } finally {
             if (connection != null) connection.disconnect();
-            synchronized (this) { schedule(wakeup.nextDelay(started, next)); }
+            synchronized (this) { uploadRunning = false; schedule(wakeup.nextDelay(started, next)); }
         }
     }
     public void onProviderDisabled(String provider) { status("GPS выключен"); }
@@ -236,6 +268,10 @@ public class TrackingService extends Service implements LocationListener {
             if (worker.isTerminated() && writer.isTerminated()) db.close();
         }, "locator-close").start();
         super.onDestroy();
+    }
+    public void onTaskRemoved(Intent rootIntent) {
+        if (!closed && Config.prefs(this).getBoolean("enabled", false)) schedule(1000);
+        super.onTaskRemoved(rootIntent);
     }
     /**
      * Whether a position from {@code provider} is worth recording.

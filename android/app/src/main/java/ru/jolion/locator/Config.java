@@ -47,13 +47,19 @@ final class Config {
         return "yandex_disk".equals(prefs(c).getString("transport","https")) ? "yadisk:"+prefs(c).getString("disk_folder","/JolionLocator") : prefs(c).getString("url","");
     }
     static String key(Context c) {
-        String key = prefs(c).getString("key", "");
+        SecretStore secrets = new SecretStore(c);
+        String key = secrets.get("key", "");
         if (key.isEmpty()) {
             byte[] bytes = new byte[24]; new SecureRandom().nextBytes(bytes);
             StringBuilder out = new StringBuilder();
             for (byte b : bytes) out.append(String.format("%02x", b & 255));
-            key = out.toString(); prefs(c).edit().putString("key", key).commit();
+            key = out.toString(); secrets.put("key", key);
         }
         return key;
+    }
+    static String diskOauth(Context c) { return new SecretStore(c).get("disk_oauth", ""); }
+    static boolean putSecrets(Context c, String key, String oauth) {
+        SecretStore secrets = new SecretStore(c);
+        return secrets.put("key", key) && secrets.put("disk_oauth", oauth == null ? "" : oauth);
     }
 }
