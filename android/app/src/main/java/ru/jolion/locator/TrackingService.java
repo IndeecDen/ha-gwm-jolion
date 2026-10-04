@@ -27,12 +27,16 @@ public class TrackingService extends Service implements LocationListener {
     private volatile boolean closed = false;
     private final UploadWakeup wakeup = new UploadWakeup();
     private long lastFixElapsed = 0;
+    private volatile Location lastAcceptedFix;
     // Once the GPS receiver has produced a precise fix, the coarse network
     // positions are no longer needed: they only bridge the cold start, when the
     // satellite receiver has nothing to report yet.
     private boolean gpsLocked = false;
     private static final float GPS_MAX_ACCURACY_M = 100f;
     private static final float NETWORK_COLD_START_ACCURACY_M = 1500f;
+    private static final double MIN_MOVEMENT_M = 3.0;
+    private static final double MAX_REALISTIC_SPEED_KMH = 250.0;
+    private static final long GAP_RESET_MS = 120_000L;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     public void onCreate() {
@@ -105,6 +109,7 @@ public class TrackingService extends Service implements LocationListener {
         if (fix.getTime() < 1577836800000L || fix.getTime() > System.currentTimeMillis()+300000L) { status("Неверное время GPS или системных часов. Проверьте дату ГУ."); return; }
         if (fix.hasSpeed() && (!Float.isFinite(fix.getSpeed()) || fix.getSpeed() < 0 || fix.getSpeed()*3.6 > 400)) return;
         if (lastFixElapsed > 0 && SystemClock.elapsedRealtime()-lastFixElapsed < 900) return;
+        if (!transitionAllowed(lastAcceptedFix, fix)) return;
         lastFixElapsed = SystemClock.elapsedRealtime();
         if (gps) gpsLocked = true;
         final String base=Config.destination(this),relayToken=Config.prefs(this).getString("disk_oauth",""),vehicle=Config.prefs(this).getString("vehicle", "jolion"),token=Config.key(this);
@@ -123,6 +128,10 @@ public class TrackingService extends Service implements LocationListener {
                     boolean switched=vehicle.equals(Config.prefs(this).getString("vehicle","jolion")) && selected.startsWith("yadisk:")!=base.startsWith("yadisk:");
                     db.append(p,switched?selected:base,vehicle,switched?Config.key(this):token,switched?Config.prefs(this).getString("disk_oauth",""):relayToken);
                 }
+                // Advance the filter only after the point is durable. If the
+                // queue cannot be written, the next fix must still be compared
+                // with the last point that actually reached SQLite.
+                synchronized (TrackingService.this) { lastAcceptedFix = fix; }
                 Config.prefs(this).edit().putString("quality", "Точность GPS: ±"+Math.round(fix.getAccuracy())+" м · погрешность скорости: "+(p.isNull("speed_accuracy_kmh")?"неизвестна":"±"+Math.round(p.getDouble("speed_accuracy_kmh"))+" км/ч")).apply();
                 Config.prefs(this).edit().putLong("last_fix", fix.getTime()).putLong("queued", db.count()).putString("storage_error", "").apply();
                 // A service may have started with an empty queue. Start the upload
@@ -240,6 +249,25 @@ public class TrackingService extends Service implements LocationListener {
         boolean gps = LocationManager.GPS_PROVIDER.equals(provider);
         if (accuracy > (gps ? GPS_MAX_ACCURACY_M : NETWORK_COLD_START_ACCURACY_M)) return false;
         return gps || !gpsLocked;
+    }
+
+    /** Reject duplicate GPS callbacks and physically impossible jumps before they reach SQLite. */
+    static boolean transitionAllowed(Location previous, Location current) {
+        if (previous == null) return true;
+        if (current == null || current.getTime() <= previous.getTime()) return false;
+        // A provider switch is deliberately accepted: network is only a cold-start
+        // hint and must not prevent the first real satellite fix.
+        if (!LocationManager.GPS_PROVIDER.equals(previous.getProvider())
+                || !LocationManager.GPS_PROVIDER.equals(current.getProvider())) return true;
+        long deltaMs = current.getTime() - previous.getTime();
+        if (deltaMs > GAP_RESET_MS) return true;
+        float[] result = new float[1];
+        Location.distanceBetween(previous.getLatitude(), previous.getLongitude(),
+                current.getLatitude(), current.getLongitude(), result);
+        double distance = result[0];
+        if (distance < MIN_MOVEMENT_M) return false;
+        double speedKmh = distance / deltaMs * 3.6e3;
+        return speedKmh <= MAX_REALISTIC_SPEED_KMH;
     }
 }
 

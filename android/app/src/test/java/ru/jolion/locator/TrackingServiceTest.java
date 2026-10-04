@@ -2,6 +2,7 @@ package ru.jolion.locator;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import android.location.Location;
 import org.robolectric.RobolectricTestRunner;
 import static org.junit.Assert.*;
 
@@ -32,5 +33,33 @@ public class TrackingServiceTest {
 
     @Test public void networkIsRejectedBeyondTheCoarseCap() {
         assertFalse(TrackingService.acceptProvider("network", 1501f, false));
+    }
+
+    private Location gps(long time, double lat, double lon) {
+        Location location = new Location("gps");
+        location.setTime(time);
+        location.setLatitude(lat);
+        location.setLongitude(lon);
+        location.setAccuracy(10f);
+        return location;
+    }
+
+    @Test public void duplicateAndTinyJitterAreDropped() {
+        Location first = gps(1_700_000_000_000L, 55.75, 37.62);
+        assertFalse(TrackingService.transitionAllowed(first, gps(first.getTime(), 55.75, 37.62)));
+        assertFalse(TrackingService.transitionAllowed(first, gps(first.getTime()+1000, 55.750005, 37.62)));
+    }
+
+    @Test public void impossibleJumpIsDroppedButLongGapResetsTheFilter() {
+        Location first = gps(1_700_000_000_000L, 55.75, 37.62);
+        Location jump = gps(first.getTime()+1000, 55.80, 37.62);
+        assertFalse(TrackingService.transitionAllowed(first, jump));
+        Location afterGap = gps(first.getTime()+120_001, 55.80, 37.62);
+        assertTrue(TrackingService.transitionAllowed(first, afterGap));
+    }
+
+    @Test public void normalMovementIsAccepted() {
+        Location first = gps(1_700_000_000_000L, 55.75, 37.62);
+        assertTrue(TrackingService.transitionAllowed(first, gps(first.getTime()+2000, 55.7501, 37.62)));
     }
 }
