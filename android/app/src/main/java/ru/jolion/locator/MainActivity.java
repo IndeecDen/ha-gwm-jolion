@@ -2,11 +2,14 @@ package ru.jolion.locator;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.ProgressDialog;
 import android.content.*;
 import android.content.pm.PackageManager;
 import android.os.*;
 import android.text.InputType;
 import android.widget.*;
+import android.net.Uri;
+import java.io.File;
 import java.net.URI;
 import java.text.DateFormat;
 import java.util.Date;
@@ -76,6 +79,7 @@ public class MainActivity extends Activity {
         }); layout.addView(background);
         TextView bootHelp = new TextView(this); bootHelp.setText("Для автозапуска сначала сохраните настройки и начните запись. Кнопка «Остановить запись» отключает запись до следующего ручного запуска. Если прошивка ГУ управляет списком автозапуска, разрешите в нём Jolion Locator."); layout.addView(bootHelp);
         Button qr = new Button(this); qr.setText("Показать QR подключения"); qr.setOnClickListener(v -> showPairing()); layout.addView(qr);
+        Button updates = new Button(this); updates.setText("Проверить обновления"); updates.setOnClickListener(v -> checkUpdates()); layout.addView(updates);
         Button start = new Button(this); start.setText("Сохранить и начать запись"); start.setOnClickListener(v -> start()); layout.addView(start);
         Button stop = new Button(this); stop.setText("Остановить запись"); stop.setOnClickListener(v -> {
             Config.prefs(this).edit().putBoolean("enabled", false).commit(); Config.mirrorBootState(this, false, p.getBoolean("autostart", true)); stopService(new Intent(this, TrackingService.class));
@@ -125,6 +129,36 @@ public class MainActivity extends Activity {
             try { startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, packageUri)); }
             catch (RuntimeException unavailable) { Toast.makeText(this,"Эта прошивка не открывает настройки Android. Разрешите автозапуск Jolion Locator в меню ГУ.",Toast.LENGTH_LONG).show(); }
         }
+    }
+    private void checkUpdates() {
+        Toast.makeText(this, "Проверка обновлений…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                UpdateChecker.Release release = UpdateChecker.findLatest(UpdateChecker.get(UpdateChecker.RELEASES_URL), true);
+                if (release == null || UpdateChecker.compareVersions(release.version, UpdateChecker.installedVersion(this)) <= 0) {
+                    runOnUiThread(() -> Toast.makeText(this, "Установлена последняя версия", Toast.LENGTH_LONG).show()); return;
+                }
+                runOnUiThread(() -> confirmUpdate(release));
+            } catch (Exception error) {
+                runOnUiThread(() -> Toast.makeText(this, "Не удалось проверить обновления: " + error.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        }, "update-check").start();
+    }
+    private void confirmUpdate(UpdateChecker.Release release) {
+        new android.app.AlertDialog.Builder(this).setTitle("Доступно обновление " + release.version)
+            .setMessage((release.size > 0 ? "Размер: " + (release.size / 1024) + " КБ\n\n" : "") + release.notes)
+            .setNegativeButton("Позже", null).setPositiveButton("Скачать", (dialog, which) -> downloadUpdate(release)).show();
+    }
+    private void downloadUpdate(UpdateChecker.Release release) {
+        ProgressDialog progress = new ProgressDialog(this); progress.setMessage("Скачивание APK…"); progress.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL); progress.setMax(100); progress.setCancelable(false); progress.show();
+        new Thread(() -> {
+            try {
+                File apk = UpdateChecker.download(this, release, value -> runOnUiThread(() -> progress.setProgress(value)));
+                runOnUiThread(() -> { progress.dismiss(); Intent install = new Intent(Intent.ACTION_VIEW, Uri.parse("content://" + getPackageName() + ".update-provider/" + apk.getName())); install.setDataAndType(Uri.parse("content://" + getPackageName() + ".update-provider/" + apk.getName()), "application/vnd.android.package-archive"); install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(install); });
+            } catch (Exception error) {
+                runOnUiThread(() -> { progress.dismiss(); Toast.makeText(this, "Обновление отклонено: " + error.getMessage(), Toast.LENGTH_LONG).show(); });
+            }
+        }, "update-download").start();
     }
     private void start() {
         String base = url.getText().toString().trim().replaceAll("/+$", "");
