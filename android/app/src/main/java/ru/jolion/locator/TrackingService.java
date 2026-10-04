@@ -17,6 +17,7 @@ import javax.net.ssl.HttpsURLConnection;
 
 public class TrackingService extends Service implements LocationListener {
     private QueueDb db;
+    private volatile boolean dbReady = false;
     private LocationManager locations;
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networkCallback;
@@ -50,20 +51,31 @@ public class TrackingService extends Service implements LocationListener {
     private static final double STATIONARY_RADIUS_M = 20.0;
     private static final int RECOVERY_FIXES_REQUIRED = 2;
     private final Handler ui = new Handler(Looper.getMainLooper());
+    private long serviceCreatedAt;
+    private long gpsRequestedAt;
+    private boolean firstFixRecorded;
+    private GnssStatus.Callback gnssCallback;
 
     public void onCreate() {
         super.onCreate();
+        serviceCreatedAt = SystemClock.elapsedRealtime();
+        Config.prefs(this).edit().putLong("service_created_at", System.currentTimeMillis()).putString("startup_stage", "FOREGROUND_STARTING").apply();
         NotificationManager nm = (NotificationManager)getSystemService(NOTIFICATION_SERVICE);
         nm.createNotificationChannel(new NotificationChannel("tracking", "Запись поездки", NotificationManager.IMPORTANCE_LOW));
         startForeground(1, notification("Запись включена. Ожидание GPS"));
-        db = new QueueDb(this);
-        try { db.getWritableDatabase(); } catch(RuntimeException error) { status("Не удалось открыть очередь GPS"); stopSelf(); return; }
+        Config.prefs(this).edit().putLong("foreground_started_at", System.currentTimeMillis()).putString("startup_stage", "FOREGROUND_STARTED").apply();
         locations = (LocationManager)getSystemService(LOCATION_SERVICE);
         connectivity = (ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             status("Нет разрешения GPS. Откройте приложение."); stopSelf(); return;
         }
+        writer.execute(() -> {
+            try { db = new QueueDb(this); db.getWritableDatabase(); dbReady = true; Config.prefs(this).edit().putLong("db_ready_at", System.currentTimeMillis()).putString("startup_stage", "DB_READY").apply(); schedule(0); }
+            catch (RuntimeException error) { status("Не удалось открыть очередь GPS"); Config.prefs(this).edit().putString("startup_stage", "DB_ERROR").apply(); }
+        });
         try {
+            gpsRequestedAt = SystemClock.elapsedRealtime();
+            Config.prefs(this).edit().putLong("gps_requested_at", System.currentTimeMillis()).putString("startup_stage", "GPS_REQUESTED").apply();
             locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, MOVING_INTERVAL_MS, 0, this);
             // The network provider reports a coarse position in seconds. It bridges
             // the GPS cold start so the track begins right away, and is dropped as
@@ -76,7 +88,18 @@ public class TrackingService extends Service implements LocationListener {
                 Location last = locations.getLastKnownLocation(provider);
                 if (last != null) onLocationChanged(last);
             }
+            if (Build.VERSION.SDK_INT >= 24) {
+                gnssCallback = new GnssStatus.Callback() {
+                    public void onSatelliteStatusChanged(GnssStatus status) {
+                        int visible = status.getSatelliteCount(), used = 0, gps = 0, glonass = 0, galileo = 0, beidou = 0;
+                        for (int i=0;i<visible;i++) if (status.usedInFix(i)) { used++; int type=status.getConstellationType(i); if(type==GnssStatus.CONSTELLATION_GPS)gps++; else if(type==GnssStatus.CONSTELLATION_GLONASS)glonass++; else if(type==GnssStatus.CONSTELLATION_GALILEO)galileo++; else if(type==GnssStatus.CONSTELLATION_BEIDOU)beidou++; }
+                        Config.prefs(TrackingService.this).edit().putLong("gnss_visible", visible).putLong("gnss_used", used).putLong("gnss_gps", gps).putLong("gnss_glonass", glonass).putLong("gnss_galileo", galileo).putLong("gnss_beidou", beidou).apply();
+                    }
+                };
+                locations.registerGnssStatusCallback(gnssCallback);
+            }
         } catch (RuntimeException e) { status("GPS недоступен. Проверьте разрешения и источник координат ГУ."); }
+        scheduleWatchdog();
         networkCallback = new ConnectivityManager.NetworkCallback() {
             public void onAvailable(Network n) { retryIfValidated(n); }
             public void onCapabilitiesChanged(Network n, NetworkCapabilities caps) {
@@ -103,6 +126,7 @@ public class TrackingService extends Service implements LocationListener {
                     && (gpsState == GpsState.GPS_ACTIVE || gpsState == GpsState.STATIONARY)) {
                 gpsState = GpsState.GPS_LOST; gpsLocked = true; publishState();
             }
+            scheduleWatchdog();
             Config.prefs(TrackingService.this).edit().putString("gps_status", gps).putString("gps_state", gpsState.name()).apply();
             ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(1, notification(gps));
             ui.postDelayed(this, 10000);
@@ -120,6 +144,11 @@ public class TrackingService extends Service implements LocationListener {
         boolean gps = LocationManager.GPS_PROVIDER.equals(fix.getProvider());
         long ageNs = SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos();
         count("received");
+        if (!firstFixRecorded && LocationManager.GPS_PROVIDER.equals(fix.getProvider())) {
+            firstFixRecorded = true;
+            long now = SystemClock.elapsedRealtime();
+            Config.prefs(this).edit().putLong("first_fix_at", System.currentTimeMillis()).putLong("cold_start_ms", gpsRequestedAt == 0 ? 0 : now-gpsRequestedAt).putString("startup_stage", "FIRST_FIX").apply();
+        }
         if (fix.isFromMockProvider() || !fix.hasAccuracy() || ageNs < 0 || ageNs > 15000000000L) { count("rejected_stale"); return; }
         boolean networkRecovery = !gps && gpsLocked && gpsState == GpsState.GPS_LOST;
         if (!acceptProvider(fix.getProvider(), fix.getAccuracy(), gpsLocked, networkRecovery)) { count("rejected_provider"); return; }
@@ -159,9 +188,12 @@ public class TrackingService extends Service implements LocationListener {
         }
         else if (gpsState == GpsState.COLD_START || gpsState == GpsState.GPS_LOST) gpsState = GpsState.COLD_START;
         applyLocationMode(fix); publishState();
-        final String base=Config.destination(this),relayToken=Config.diskOauth(this),vehicle=Config.prefs(this).getString("vehicle", "jolion"),token=Config.key(this);
+        final String base=Config.destination(this),vehicle=Config.prefs(this).getString("vehicle", "jolion");
         writer.execute(() -> {
             try {
+                // Keystore access stays off the callback/main path so the first
+                // GNSS fix can be handled without waiting for crypto storage.
+                String relayToken=Config.diskOauth(this), token=Config.key(this);
                 JSONObject p = new JSONObject();
                 p.put("id", UUID.randomUUID().toString()); p.put("timestamp_ms", fix.getTime());
                 p.put("latitude", fix.getLatitude()); p.put("longitude", fix.getLongitude());
@@ -229,6 +261,7 @@ public class TrackingService extends Service implements LocationListener {
         HttpsURLConnection connection = null;
         long next = 5000;
         try {
+            if (!dbReady || db == null) { next = 5000; return; }
             QueueDb.Batch batch=db.uploadBatch();
             Config.prefs(this).edit().putLong("queued", db.count()).apply();
             if (batch == null) return;
@@ -299,14 +332,22 @@ public class TrackingService extends Service implements LocationListener {
         synchronized (this) { closed = true; if (pending != null) pending.cancel(false); }
         ui.removeCallbacks(health);
         if (locations != null) locations.removeUpdates(this);
+        if (Build.VERSION.SDK_INT >= 24 && locations != null && gnssCallback != null) locations.unregisterGnssStatusCallback(gnssCallback);
         if (networkCallback != null) connectivity.unregisterNetworkCallback(networkCallback);
         worker.shutdown(); writer.shutdown();
         new Thread(() -> {
             try { worker.awaitTermination(60, TimeUnit.SECONDS); writer.awaitTermination(60, TimeUnit.SECONDS); }
             catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-            if (worker.isTerminated() && writer.isTerminated()) db.close();
+            if (worker.isTerminated() && writer.isTerminated() && db != null) db.close();
         }, "locator-close").start();
         super.onDestroy();
+    }
+    private void scheduleWatchdog() {
+        AlarmManager alarms = (AlarmManager)getSystemService(ALARM_SERVICE);
+        Intent intent = new Intent(this, BootReceiver.class).setAction(BootReceiver.ACTION_WATCHDOG);
+        PendingIntent pending = PendingIntent.getBroadcast(this, 77, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        long at = System.currentTimeMillis() + 60000L;
+        if (Build.VERSION.SDK_INT >= 23) alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending); else alarms.setExact(AlarmManager.RTC_WAKEUP, at, pending);
     }
     public void onTaskRemoved(Intent rootIntent) {
         if (!closed && Config.prefs(this).getBoolean("enabled", false)) schedule(1000);

@@ -12,8 +12,8 @@
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
         <service android:name=".TrackingService" android:foregroundServiceType="location" android:exported="false" />
-        <receiver android:name=".BootReceiver" android:exported="true">
-            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
+        <receiver android:name=".BootReceiver" android:exported="true" android:directBootAware="true">
+            <intent-filter><action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" /><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.USER_UNLOCKED" /><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /><action android:name="ru.jolion.locator.WATCHDOG" /></intent-filter>
         </receiver>
     </application>
 </manifest>

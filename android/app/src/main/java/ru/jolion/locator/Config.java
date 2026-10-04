@@ -43,6 +43,21 @@ final class Config {
     }
 
     static SharedPreferences prefs(Context c) { return c.getSharedPreferences("locator", Context.MODE_PRIVATE); }
+    static SharedPreferences bootPrefs(Context c) {
+        return c.createDeviceProtectedStorageContext().getSharedPreferences("locator_boot", Context.MODE_PRIVATE);
+    }
+    static boolean autostartEnabled(Context c) {
+        SharedPreferences normal = prefs(c);
+        if (normal.getBoolean("enabled", false) && normal.getBoolean("autostart", true)) return true;
+        return bootPrefs(c).getBoolean("enabled", false) && bootPrefs(c).getBoolean("autostart", true);
+    }
+    static boolean bootAutostartEnabled(Context c) {
+        SharedPreferences boot = bootPrefs(c);
+        return boot.getBoolean("enabled", false) && boot.getBoolean("autostart", true);
+    }
+    static void mirrorBootState(Context c, boolean enabled, boolean autostart) {
+        bootPrefs(c).edit().putBoolean("enabled", enabled).putBoolean("autostart", autostart).commit();
+    }
     static String destination(Context c) {
         return "yandex_disk".equals(prefs(c).getString("transport","https")) ? "yadisk:"+prefs(c).getString("disk_folder","/JolionLocator") : prefs(c).getString("url","");
     }

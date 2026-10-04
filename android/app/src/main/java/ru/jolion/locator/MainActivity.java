@@ -21,7 +21,7 @@ public class MainActivity extends Activity {
             SharedPreferences p = Config.prefs(MainActivity.this);
             status.setText((p.getBoolean("enabled", false) ? "Запись включена" : "Запись остановлена") + "\n" + p.getString("gps_status", "GPS ещё не получен")
                 + "\n" + p.getString("quality", "Точность GPS ещё неизвестна") + "\nТочек в очереди: " + p.getLong("queued", 0) + "\nПоследний GPS: " + date(p.getLong("last_fix", 0))
-                + "\nСостояние GPS: " + p.getString("gps_state", "COLD_START") + "\n" + metrics(p) + "\nОтправлено: " + date(p.getLong("last_sync", 0)) + "\n" + p.getString("status", "Введите настройки и нажмите «Начать запись»")
+                + "\nСостояние GPS: " + p.getString("gps_state", "COLD_START") + "\n" + metrics(p) + "\nGNSS: " + p.getLong("gnss_used", 0) + "/" + p.getLong("gnss_visible", 0) + " спутников (GPS " + p.getLong("gnss_gps", 0) + ", GLONASS " + p.getLong("gnss_glonass", 0) + ", Galileo " + p.getLong("gnss_galileo", 0) + ")" + "\nЗапуск: " + p.getString("startup_stage", "—") + startupTiming(p) + "\nОтправлено: " + date(p.getLong("last_sync", 0)) + "\n" + p.getString("status", "Введите настройки и нажмите «Начать запись»")
                 + "\n" + p.getString("storage_error", "") + (getFilesDir().getUsableSpace() < 100*1024*1024 ? "\nМало места: осталось менее 100 МБ!" : ""));
             timer.postDelayed(this, 2000);
         }
@@ -31,6 +31,10 @@ public class MainActivity extends Activity {
         return "GPS: получено " + p.getLong("metric_received", 0) + ", сохранено " + p.getLong("metric_saved", 0)
             + ", отфильтровано " + (p.getLong("metric_rejected_transition", 0) + p.getLong("metric_rejected_provider", 0) + p.getLong("metric_rejected_stale", 0))
             + "; отправлено " + p.getLong("metric_uploaded", 0) + ", повторов " + p.getLong("metric_retries", 0);
+    }
+    private String startupTiming(SharedPreferences p) {
+        long cold = p.getLong("cold_start_ms", 0);
+        return cold > 0 ? " · первый GPS за " + (cold / 1000.0) + " с" : "";
     }
     public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -61,7 +65,7 @@ public class MainActivity extends Activity {
         show.setOnCheckedChangeListener((b, checked) -> key.setInputType(InputType.TYPE_CLASS_TEXT | (checked ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_TEXT_VARIATION_PASSWORD)));
         layout.addView(show);
         CheckBox boot = new CheckBox(this); boot.setText("Автозапуск записи после включения ГУ"); boot.setChecked(p.getBoolean("autostart", true));
-        boot.setOnCheckedChangeListener((b, checked) -> Config.prefs(this).edit().putBoolean("autostart", checked).commit()); layout.addView(boot);
+        boot.setOnCheckedChangeListener((b, checked) -> { Config.prefs(this).edit().putBoolean("autostart", checked).commit(); Config.mirrorBootState(this, p.getBoolean("enabled", false), checked); }); layout.addView(boot);
         Button background = new Button(this); background.setText("Разрешить фоновую работу / автозапуск"); background.setOnClickListener(v -> {
             new android.app.AlertDialog.Builder(this)
                 .setTitle("Фоновая работа")
@@ -74,7 +78,7 @@ public class MainActivity extends Activity {
         Button qr = new Button(this); qr.setText("Показать QR подключения"); qr.setOnClickListener(v -> showPairing()); layout.addView(qr);
         Button start = new Button(this); start.setText("Сохранить и начать запись"); start.setOnClickListener(v -> start()); layout.addView(start);
         Button stop = new Button(this); stop.setText("Остановить запись"); stop.setOnClickListener(v -> {
-            Config.prefs(this).edit().putBoolean("enabled", false).commit(); stopService(new Intent(this, TrackingService.class));
+            Config.prefs(this).edit().putBoolean("enabled", false).commit(); Config.mirrorBootState(this, false, p.getBoolean("autostart", true)); stopService(new Intent(this, TrackingService.class));
         }); layout.addView(stop);
         status = new TextView(this); status.setTextSize(18); status.setTextIsSelectable(true); layout.addView(status);
         TextView info = new TextView(this); info.setText("Android: " + Build.VERSION.RELEASE + " · API " + Build.VERSION.SDK_INT + "\nGPS запрашивается раз в секунду. Пока очередь пуста, отправка идёт каждые " + Config.intervalSeconds(this) + " секунд — одинаково для HTTPS и для Яндекс.Диска; как только очередь накапливается, точки уходят быстрее. Очередь хранится до подтверждения выбранного получателя — HA или Яндекс.Диска. Не очищайте данные приложения до синхронизации. Автозапуск и пробуждение нужно проверить на вашей прошивке."); layout.addView(info);
@@ -150,7 +154,7 @@ public class MainActivity extends Activity {
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 1); return;
         }
-        p.edit().putBoolean("enabled", true).commit();
+        p.edit().putBoolean("enabled", true).commit(); Config.mirrorBootState(this, true, p.getBoolean("autostart", true));
         startForegroundService(new Intent(this, TrackingService.class));
     }
     public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
