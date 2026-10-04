@@ -39,7 +39,6 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
   assert.equal(await page.evaluate(()=>cameraStream.getTracks()[0].readyState),'ended');
   await page.locator('#close').click();
   await open();await page.locator('#key').fill('short');await page.locator('#save').click();assert.equal(await page.evaluate(()=>calls.length),0);
-  fs.mkdirSync('dist',{recursive:true});await page.screenshot({path:'dist/pairing-preview.png'});
   assert.deepStrictEqual(errors,[]);console.log('QR photo, camera frame decoding, manual entry, invalid key, camera cleanup: PASS');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

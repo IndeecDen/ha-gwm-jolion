@@ -57,7 +57,6 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
   await page.evaluate(async()=>{hass.states['device_tracker.car'].attributes.golion_locator_enabled=false;points=points.map(p=>({...p,source:'cloud',speed_estimated:true,accuracy_m:null,speed_accuracy_kmh:null}));card.hass={...hass};await card._load();});
   assert.match(await page.locator('.km').textContent(),/≈ 1,2/,'облачный режим помечает пробег как оценку');
   assert(await page.locator('ha-card').evaluate(e=>e.getBoundingClientRect().height)<=height);
-  fs.mkdirSync('dist',{recursive:true});await page.screenshot({path:'dist/unified-trips-mobile.png'});
    assert.deepStrictEqual(errors,[]);
   console.log('Unified cloud/app UI, cleaned track, own-map and HA-map drawing, periods, old card alias and compact layout: PASS');
  }finally{await browser.close();}
