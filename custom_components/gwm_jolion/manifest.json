@@ -8,7 +8,6 @@
     "@IndeecDen"
   ],
   "config_flow": true,
-  "homeassistant": "2025.7.0",
   "dependencies": [
     "frontend",
     "http",
