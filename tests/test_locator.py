@@ -86,6 +86,23 @@ def test_relay_interval_is_clamped_to_the_range_the_app_offers():
 def app(t=NOW,accuracy=5,**changes):
     return dict(dict(id=f"app-{t}-000000",timestamp_ms=t,latitude=55.75,longitude=37.62,accuracy_m=accuracy,speed_kmh=40,bearing=None,altitude_m=None,source="app",time_known=True,accuracy_known=True),**changes)
 
+
+def test_restart_after_commit_before_reply_accepts_retry_without_duplicates(tmp_path):
+    async def run():
+        _, first = make_history(tmp_path)
+        await first.initialize()
+        points = [app(NOW-5000), app(NOW)]
+        # Simulate a committed write whose HTTP response never reaches the app.
+        first.app_archive.ingest(points, now_ms=NOW+1000)
+        _, restarted = make_history(tmp_path)
+        await restarted.initialize()
+        assert restarted.last_received_ms == NOW+1000
+        assert await restarted.ingest(points) == [p["id"] for p in points]
+        with restarted.app_archive.connect() as db:
+            assert db.execute("SELECT COUNT(*) FROM points").fetchone()[0] == 2
+        assert restarted.last_received_ms == NOW+1000
+    asyncio.run(run())
+
 def cloud(t=NOW,**changes):
     return {**cloud_point(t/1000,{"latitude":55.76,"longitude":37.63}),**changes}
 

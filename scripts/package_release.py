@@ -19,13 +19,16 @@ APK = ROOT / "android" / "app" / "build" / "outputs" / "apk" / "release" / "app-
 if not APK.is_file():
     raise SystemExit(f"Build the signed Android release APK first: {APK}")
 
+# Packaging must not silently ship an APK predating the Android changes.
+android_inputs = [ROOT / "android" / "build.gradle", ROOT / "android" / "app" / "build.gradle"]
+android_inputs.extend(p for p in (ROOT / "android" / "app" / "src" / "main").rglob("*") if p.is_file())
+if any(p.stat().st_mtime_ns > APK.stat().st_mtime_ns for p in android_inputs):
+    raise SystemExit("Android sources are newer than the APK. Run assembleRelease before packaging.")
+
 OUT = ROOT / "dist"
 OUT.mkdir(exist_ok=True)
 safe_version = re.sub(r"[^0-9A-Za-z._-]", "_", VERSION)
-apk_out = OUT / f"Jolion Locator {safe_version}.apk"
-for stale in OUT.glob("Jolion Locator *.apk"):
-    if stale != apk_out:
-        stale.unlink()
+apk_out = OUT / f"Jolion.Locator.{safe_version}.apk"
 apk_out.write_bytes(APK.read_bytes())
 
 ha_out = OUT / f"ha-gwm-jolion-{VERSION}.zip"
@@ -38,7 +41,7 @@ bundle_out = OUT / f"ha-gwm-jolion-{VERSION}-bundle.zip"
 with zipfile.ZipFile(bundle_out, "w", zipfile.ZIP_DEFLATED) as archive:
     archive.write(apk_out, apk_out.name)
     archive.write(ha_out, ha_out.name)
-    for name in ("README.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md", "LICENSE", "docs/golion-locator.md", "docs/golion-locator-yandex.md", "docs/build-release.md"):
+    for name in ("README.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md", "LICENSE", "docs/golion-locator.md", "docs/golion-locator-yandex.md", "docs/diagnostics.md"):
         archive.write(ROOT / name, name)
 
 outputs = (apk_out, ha_out, bundle_out)

@@ -17,6 +17,7 @@ public class BootReceiverTest {
             @Override public ComponentName startForegroundService(Intent intent){starts++;return intent.getComponent();}
         };
         ru.jolion.locator.Config.prefs(context).edit().clear().commit();
+        ru.jolion.locator.Config.bootPrefs(context).edit().clear().commit();
     }
     @Test public void startsEnabledRecordingOnBootAndUpdate(){
         ru.jolion.locator.Config.prefs(context).edit().putBoolean("enabled",true).commit();
@@ -31,5 +32,20 @@ public class BootReceiverTest {
         receiver.onReceive(context,new Intent(Intent.ACTION_BOOT_COMPLETED));
         ru.jolion.locator.Config.prefs(context).edit().putBoolean("autostart",true).commit();
         receiver.onReceive(context,new Intent("unknown"));assertEquals(0,starts);
+    }
+    @Test public void staleBootMirrorCannotOverrideExplicitStop(){
+        ru.jolion.locator.Config.mirrorBootState(context,true,true);
+        ru.jolion.locator.Config.prefs(context).edit().putBoolean("enabled",false).commit();
+        new BootReceiver().onReceive(context,new Intent(Intent.ACTION_BOOT_COMPLETED));
+        assertEquals(0,starts);
+        ru.jolion.locator.Config.prefs(context).edit().putBoolean("enabled",true).putBoolean("autostart",false).commit();
+        new BootReceiver().onReceive(context,new Intent(Intent.ACTION_USER_UNLOCKED));
+        assertEquals(0,starts);
+    }
+    @Test public void lockedBootRecordsEventWithoutStartingCredentialProtectedService(){
+        ru.jolion.locator.Config.mirrorBootState(context,true,true);
+        new BootReceiver().onReceive(context,new Intent(Intent.ACTION_LOCKED_BOOT_COMPLETED));
+        assertEquals(0,starts);
+        assertEquals(Intent.ACTION_LOCKED_BOOT_COMPLETED,ru.jolion.locator.Config.bootPrefs(context).getString("last_boot_action",""));
     }
 }

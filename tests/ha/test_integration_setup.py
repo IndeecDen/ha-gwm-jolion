@@ -14,6 +14,7 @@ Run: .venv-ha\\Scripts\\python.exe -m pytest -q tests/ha
 from unittest.mock import AsyncMock, patch
 from pathlib import Path
 import sys
+import os
 
 import pytest
 
@@ -44,14 +45,13 @@ def _environment_can_set_the_entry_up() -> bool:
     return isinstance(hass_frontend.where(), Path) and hasattr(config_entries, "OptionsFlowWithReload")
 
 
-# Windows asyncio needs an AF_INET socket pair, which the harness socket guard
-# rejects; tests/ha/conftest.py lifts the guard around fixture setup so the event
-# loop can be built. What is left is the environment above, so it is probed rather
-# than assumed from the platform.
+# Windows uses tools/run_ha_tests.py for its local asyncio socketpair.
 pytestmark = pytest.mark.skipif(
     not _environment_can_set_the_entry_up(),
     reason="this virtualenv cannot set a Home Assistant config entry up (frontend assets or Home Assistant version)",
 )
+if os.environ.get("GWM_HA_STRICT") == "1" and not _environment_can_set_the_entry_up():
+    raise RuntimeError("HA/frontend environment is incompatible; install tests/ha/requirements.txt")
 
 pytest_plugins = "pytest_homeassistant_custom_component"
 
@@ -89,12 +89,6 @@ CLOUD_PAYLOAD = {
 
 @pytest.fixture(autouse=True)
 def _auto_enable_custom_integrations(enable_custom_integrations):
-    yield
-
-
-@pytest.fixture(autouse=True)
-def _allow_local_sockets(socket_enabled):
-    """The asyncio loop is built from a socket pair; pytest-socket must allow it."""
     yield
 
 
@@ -136,6 +130,14 @@ async def test_entry_reaches_loaded_and_creates_the_device_tracker(hass):
     ]
 
 
+async def test_cloud_only_setup_creates_available_tracker(hass):
+    entry = await _setup(hass, {"golion_locator_enabled": False})
+    assert entry.state is ConfigEntryState.LOADED
+    tracker = hass.states.get("device_tracker.test_car_mestopolozhenie")
+    assert tracker is not None and tracker.state not in ("unknown", "unavailable")
+    assert tracker.attributes["latitude"] == CLOUD_PAYLOAD["location"]["latitude"]
+
+
 async def test_tracker_reports_the_last_known_fix_when_the_cloud_is_unreachable(hass):
     """A dead cloud must not blank the position: automations still need a point."""
     entry = await _setup(hass)
@@ -146,12 +148,87 @@ async def test_tracker_reports_the_last_known_fix_when_the_cloud_is_unreachable(
 
     client = hass.data[DOMAIN][entry.entry_id].client
     client.async_get_location.side_effect = TimeoutError("cloud unreachable")
-
+    await history.gps.async_refresh()
     await hass.async_block_till_done()
     state = hass.states.get("device_tracker.test_car_mestopolozhenie")
     assert state is not None, "the tracker vanished instead of keeping its fix"
     assert state.state not in ("unknown", "unavailable")
     assert state.attributes.get("latitude") is not None
+
+    client.async_get_location.side_effect = None
+    client.async_get_location.return_value = {"latitude": 55.76, "longitude": 37.63}
+    await history.gps.async_refresh()
+    assert hass.data[DOMAIN][entry.entry_id].gps_update_health["consecutive_failures"] == 0
+
+
+async def test_unload_and_reload_recreates_entities_without_duplicates(hass):
+    entry = await _setup(hass)
+    before = {s.entity_id for s in hass.states.async_all("device_tracker")}
+    old = hass.data[DOMAIN][entry.entry_id]
+    with patch("custom_components.gwm_jolion.GwmJolionApiClient", _fake_client):
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert hass.data[DOMAIN][entry.entry_id] is not old
+    assert {s.entity_id for s in hass.states.async_all("device_tracker")} == before
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.entry_id not in hass.data[DOMAIN]
+
+
+async def test_health_entities_stay_readable_during_cloud_failure(hass):
+    entry = await _setup(hass)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator.client.async_update.side_effect = TimeoutError("offline")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    cloud = hass.states.get("sensor.test_car_sviaz_s_oblakom_gwm")
+    assert cloud.state == "offline"
+    assert cloud.attributes["cloud_last_update"] is not None
+    source = hass.states.get("sensor.test_car_istochnik_koordinat")
+    assert source.state == "cloud"
+    assert source.attributes["location_freshness"] == "unknown"
+    coordinator.client.async_update.side_effect = None
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(cloud.entity_id).state == "online"
+
+
+async def test_diagnostics_redact_credentials_identifiers_and_coordinates(hass):
+    import json
+    from custom_components.gwm_jolion.diagnostics import async_get_config_entry_diagnostics
+    entry = await _setup(hass)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator.data["vehicle"] = {"vin": "PRIVATE-VIN", "latitude": 55.123456, "accessToken": "PRIVATE-TOKEN"}
+    payload = await async_get_config_entry_diagnostics(hass, entry)
+    text = json.dumps(payload)
+    assert "PRIVATE-VIN" not in text and "PRIVATE-TOKEN" not in text and "55.123456" not in text
+    assert "secret" not in text and "u" * 64 not in text
+    assert payload["health"]["cloud_status"] == "online"
+
+
+async def test_locator_survives_reload_while_cloud_is_offline(hass):
+    import time
+    entry = await _setup(hass)
+    history = hass.data[DOMAIN][entry.entry_id].trip_history
+    point = {"id": "restart-fix-0001", "timestamp_ms": int(time.time()*1000),
+             "latitude": 55.75, "longitude": 37.62, "accuracy_m": 5}
+    await history.ingest([point])
+    received = history.last_received_ms
+    def offline(*args, **kwargs):
+        client = _fake_client()
+        client.async_update.side_effect = TimeoutError("offline during restart")
+        return client
+    with patch("custom_components.gwm_jolion.GwmJolionApiClient", offline):
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    restored = hass.data[DOMAIN][entry.entry_id].trip_history
+    assert restored.last_received_ms == received
+    assert restored.latest["id"] == point["id"]
+    tracker = hass.states.get("device_tracker.test_car_mestopolozhenie")
+    assert tracker.attributes["latitude"] == point["latitude"]
+    assert tracker.attributes["location_source"] == "app"
 
 
 async def test_accuracy_is_a_number_even_when_the_cloud_reports_none(hass):
@@ -166,6 +243,8 @@ async def test_accuracy_is_a_number_even_when_the_cloud_reports_none(hass):
 
     # A cloud position carries no measured accuracy.
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    import time
+    await coordinator.trip_history.append(time.time(), {"latitude": 55.75, "longitude": 37.62, "gps_accuracy": None})
     coordinator.trip_history.publish()
     await hass.async_block_till_done()
 

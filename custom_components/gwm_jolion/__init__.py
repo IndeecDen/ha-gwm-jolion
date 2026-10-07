@@ -37,7 +37,7 @@ from .locator import (
 )
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from .entity_surface import MIGRATION_REMOVE_ENTITY_SUFFIXES, OBSOLETE_OPTION_KEYS
 from .protocol_capture import (
     CAPTURE_DIRECTORY,
@@ -166,6 +166,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.async_refresh()
         if coordinator.last_update_success and coordinator.data:
             await vehicle_store.async_save({"vin":coordinator.data.get("vin"), "vehicle_name":coordinator.data.get("vehicle_name"), "state":{}})
+            # Seed the tracker before entities are created; otherwise it stays
+            # unavailable until the first independent GPS poll after setup.
+            if coordinator.data.get("location"):
+                await coordinator.trip_history.append(datetime.now(timezone.utc).timestamp(), coordinator.data["location"])
         elif not coordinator.data:
             coordinator.data = saved_vehicle or {"vehicle_name": "Haval Jolion", "state": {}}
         entry.async_on_unload(async_track_time_interval(hass, coordinator.trip_history.tick, timedelta(seconds=relay_interval(options))))

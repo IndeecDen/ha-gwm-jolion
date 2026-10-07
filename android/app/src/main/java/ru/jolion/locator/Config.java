@@ -48,8 +48,7 @@ final class Config {
     }
     static boolean autostartEnabled(Context c) {
         SharedPreferences normal = prefs(c);
-        if (normal.getBoolean("enabled", false) && normal.getBoolean("autostart", true)) return true;
-        return bootPrefs(c).getBoolean("enabled", false) && bootPrefs(c).getBoolean("autostart", true);
+        return normal.getBoolean("enabled", false) && normal.getBoolean("autostart", true);
     }
     static boolean bootAutostartEnabled(Context c) {
         SharedPreferences boot = bootPrefs(c);
@@ -61,14 +60,16 @@ final class Config {
     static String destination(Context c) {
         return "yandex_disk".equals(prefs(c).getString("transport","https")) ? "yadisk:"+prefs(c).getString("disk_folder","/JolionLocator") : prefs(c).getString("url","");
     }
-    static String key(Context c) {
+    static synchronized String key(Context c) {
         SecretStore secrets = new SecretStore(c);
         String key = secrets.get("key", "");
-        if (key.isEmpty()) {
+        // A temporarily unavailable Keystore is not a new installation. Never
+        // overwrite an existing encrypted key with a freshly generated identity.
+        if (key.isEmpty() && prefs(c).getString("key", "").isEmpty()) {
             byte[] bytes = new byte[24]; new SecureRandom().nextBytes(bytes);
             StringBuilder out = new StringBuilder();
             for (byte b : bytes) out.append(String.format("%02x", b & 255));
-            key = out.toString(); secrets.put("key", key);
+            key = out.toString(); if (!secrets.put("key", key)) return "";
         }
         return key;
     }

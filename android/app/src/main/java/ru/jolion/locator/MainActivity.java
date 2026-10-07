@@ -18,15 +18,29 @@ public class MainActivity extends Activity {
     private EditText url, vehicle, key, diskFolder, diskOauth, interval;
     private Spinner transport;
     private TextView status;
+    private TextView recordingSummary, gpsSummary, deliverySummary, attention;
+    private Button startButton, stopButton;
+    private final ScrollView[] pages = new ScrollView[3];
+    private final Button[] tabs = new Button[3];
+    private int selectedPage;
     private File pendingUpdate;
+    private Thread updateThread;
+    private boolean updateBusy;
+    private android.app.Dialog updateDialog;
+    private final java.util.concurrent.ExecutorService settingsWorker=java.util.concurrent.Executors.newSingleThreadExecutor();
+    private boolean settingsBusy;
+    private boolean secretsReady;
+    private int startGeneration;
     private final Handler timer = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         public void run() {
             SharedPreferences p = Config.prefs(MainActivity.this);
+            renderDashboard(p);
             status.setText((p.getBoolean("enabled", false) ? "Запись включена" : "Запись остановлена") + "\n" + p.getString("gps_status", "GPS ещё не получен")
                 + "\n" + p.getString("quality", "Точность GPS ещё неизвестна") + "\nТочек в очереди: " + p.getLong("queued", 0) + "\nПоследний GPS: " + date(p.getLong("last_fix", 0))
-                + "\nСостояние GPS: " + p.getString("gps_state", "COLD_START") + "\n" + metrics(p) + "\nGNSS: " + p.getLong("gnss_used", 0) + "/" + p.getLong("gnss_visible", 0) + " спутников (GPS " + p.getLong("gnss_gps", 0) + ", GLONASS " + p.getLong("gnss_glonass", 0) + ", Galileo " + p.getLong("gnss_galileo", 0) + ")" + "\nЗапуск: " + p.getString("startup_stage", "—") + startupTiming(p) + "\nОтправлено: " + date(p.getLong("last_sync", 0)) + "\n" + p.getString("status", "Введите настройки и нажмите «Начать запись»")
-                + "\n" + p.getString("storage_error", "") + (getFilesDir().getUsableSpace() < 100*1024*1024 ? "\nМало места: осталось менее 100 МБ!" : ""));
+                + "\nСостояние GPS: " + p.getString("gps_state", "COLD_START") + "\n" + metrics(p) + "\n" + gnssSummary(p) + "\nЗапуск: " + p.getString("startup_stage", "—") + startupTiming(p) + "\nОтправлено: " + date(p.getLong("last_sync", 0)) + "\n" + p.getString("status", "Введите настройки и нажмите «Начать запись»")
+                + (secretsReady ? "" : "\nЧтение ключей…") + (settingsBusy ? "\nСохранение настроек…" : "")
+                + "\n" + p.getString("secret_error", "") + "\n" + p.getString("storage_error", "") + (getFilesDir().getUsableSpace() < 100*1024*1024 ? "\nМало места: осталось менее 100 МБ!" : ""));
             timer.postDelayed(this, 2000);
         }
     };
@@ -40,11 +54,42 @@ public class MainActivity extends Activity {
         long cold = p.getLong("cold_start_ms", 0);
         return cold > 0 ? " · первый GPS за " + (cold / 1000.0) + " с" : "";
     }
+    static String gnssSummary(SharedPreferences p) {
+        long updated=p.getLong("gnss_status_at",0);
+        if (updated==0) return "GNSS: сведения о спутниках ещё не получены";
+        long age=Math.max(0,(System.currentTimeMillis()-updated)/1000);
+        return "GNSS: " + p.getLong("gnss_used",0) + "/" + p.getLong("gnss_visible",0)
+                + " спутников (GPS " + p.getLong("gnss_gps",0) + ", GLONASS " + p.getLong("gnss_glonass",0)
+                + ", Galileo " + p.getLong("gnss_galileo",0) + ")" + (age>30 ? " · данные " + age + " с назад" : "");
+    }
     public void onCreate(Bundle state) {
         super.onCreate(state);
-        LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setPadding(32, 20, 32, 24);
-        ScrollView scroll = new ScrollView(this); scroll.addView(layout); setContentView(scroll);
-        TextView title = new TextView(this); title.setText("Jolion Locator"); title.setTextSize(28); layout.addView(title);
+        LinearLayout root = column(); root.setPadding(dp(16),dp(8),dp(16),dp(8));
+        setContentView(root);
+        TextView title = new TextView(this); title.setText("Jolion Locator"); title.setTextSize(24); root.addView(title);
+        LinearLayout navigation=new LinearLayout(this);root.addView(navigation);
+        android.widget.FrameLayout body=new android.widget.FrameLayout(this);
+        root.addView(body,new LinearLayout.LayoutParams(-1,0,1));
+        String[] names={"Состояние","Настройки","Диагностика"};
+        LinearLayout[] contents=new LinearLayout[3];
+        for(int i=0;i<3;i++) {
+            final int page=i;
+            tabs[i]=button(names[i]);tabs[i].setOnClickListener(v->selectPage(page));
+            navigation.addView(tabs[i],new LinearLayout.LayoutParams(0,-2,1));
+            pages[i]=new ScrollView(this);pages[i].setFillViewport(true);
+            contents[i]=column();contents[i].setPadding(0,dp(12),0,dp(12));pages[i].addView(contents[i]);
+            body.addView(pages[i],new android.widget.FrameLayout.LayoutParams(-1,-1));
+        }
+        LinearLayout dashboard=contents[0], layout=contents[1], details=contents[2];
+        recordingSummary=new TextView(this);recordingSummary.setTextSize(26);dashboard.addView(recordingSummary);
+        attention=new TextView(this);attention.setTextSize(18);attention.setTextColor(0xff9b3500);dashboard.addView(attention);
+        LinearLayout cards=new LinearLayout(this);
+        boolean wide=getResources().getConfiguration().screenWidthDp>=700;
+        cards.setOrientation(wide?LinearLayout.HORIZONTAL:LinearLayout.VERTICAL);dashboard.addView(cards);
+        gpsSummary=summaryCard(cards,"GPS и спутники",wide);
+        deliverySummary=summaryCard(cards,"Передача точек",wide);
+        TextView hint=new TextView(this);hint.setText("Запись продолжится после закрытия экрана. Подключение и автозапуск — в настройках.");hint.setTextSize(16);dashboard.addView(hint);
+        LinearLayout controls=new LinearLayout(this);root.addView(controls);
         SharedPreferences p = Config.prefs(this);
         transport=new Spinner(this);
         transport.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"Напрямую HTTPS → Home Assistant","Через опубликованную папку Яндекс.Диска"}));
@@ -53,7 +98,8 @@ public class MainActivity extends Activity {
         url = field(directBox, "Адрес Home Assistant: https://ha.example.ru", p.getString("url", ""));
         LinearLayout diskBox=new LinearLayout(this);diskBox.setOrientation(LinearLayout.VERTICAL);layout.addView(diskBox);
         diskFolder=field(diskBox,"Папка на Диске (заранее создайте и опубликуйте)",p.getString("disk_folder","/JolionLocator"));
-        diskOauth=field(diskBox,"OAuth-токен Яндекс.Диска (только в приложении)",Config.diskOauth(this));
+        diskOauth=field(diskBox,"OAuth-токен Яндекс.Диска (только в приложении)","");
+        diskOauth.setEnabled(false);
         diskOauth.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
         TextView diskHelp=new TextView(this);diskHelp.setText("Файлы шифруются ключом Locator. В HA выберите Яндекс.Диск и укажите публичную ссылку этой папки. Доступ через белый список зависит от оператора. При смене способа накопленная очередь этого автомобиля переводится на выбранный способ.");diskBox.addView(diskHelp);
         interval=field(layout,"Интервал отправки, секунд ("+Config.MIN_INTERVAL_SECONDS+"–"+Config.MAX_INTERVAL_SECONDS+")",String.valueOf(Config.intervalSeconds(this)));
@@ -63,7 +109,12 @@ public class MainActivity extends Activity {
             public void onNothingSelected(AdapterView<?> parent){}
         });
         vehicle = field(layout, "ID автомобиля (тот же в интеграции)", p.getString("vehicle", "jolion"));
-        key = field(layout, "Ключ автомобиля (перенесите в интеграцию HA)", Config.key(this));
+        key = field(layout, "Ключ автомобиля (перенесите в интеграцию HA)", "");
+        key.setEnabled(false);
+        settingsWorker.execute(() -> {
+            String savedKey=Config.key(getApplicationContext()), savedOauth=Config.diskOauth(getApplicationContext());
+            updateUi(() -> { key.setText(savedKey); diskOauth.setText(savedOauth); key.setEnabled(true); diskOauth.setEnabled(true); secretsReady=true; renderDashboard(Config.prefs(this)); });
+        });
         key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         CheckBox show = new CheckBox(this); show.setText("Показать ключ");
         show.setOnCheckedChangeListener((b, checked) -> key.setInputType(InputType.TYPE_CLASS_TEXT | (checked ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_TEXT_VARIATION_PASSWORD)));
@@ -80,14 +131,25 @@ public class MainActivity extends Activity {
         }); layout.addView(background);
         TextView bootHelp = new TextView(this); bootHelp.setText("Для автозапуска сначала сохраните настройки и начните запись. Кнопка «Остановить запись» отключает запись до следующего ручного запуска. Если прошивка ГУ управляет списком автозапуска, разрешите в нём Jolion Locator."); layout.addView(bootHelp);
         Button qr = new Button(this); qr.setText("Показать QR подключения"); qr.setOnClickListener(v -> showPairing()); layout.addView(qr);
-        Button updates = new Button(this); updates.setText("Проверить обновления"); updates.setOnClickListener(v -> checkUpdates()); layout.addView(updates);
-        Button start = new Button(this); start.setText("Сохранить и начать запись"); start.setOnClickListener(v -> start()); layout.addView(start);
+        Button updates = button("Проверить обновления"); updates.setOnClickListener(v -> checkUpdates()); details.addView(updates);
+        Button diagnostics = new Button(this); diagnostics.setText("Сохранить диагностику"); diagnostics.setOnClickListener(v -> {
+            Intent create=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/json").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,"Jolion-Locator-diagnostics.json");
+            try { startActivityForResult(create,2); }
+            catch(RuntimeException error){Toast.makeText(this,"Выбор файла недоступен на этой прошивке",Toast.LENGTH_LONG).show();}
+        }); details.addView(diagnostics);
+        Button start = button("Сохранить и начать запись"); startButton=start; start.setOnClickListener(v -> start()); controls.addView(start,new LinearLayout.LayoutParams(0,-2,1));
         Button stop = new Button(this); stop.setText("Остановить запись"); stop.setOnClickListener(v -> {
+            startGeneration++;
             Config.prefs(this).edit().putBoolean("enabled", false).commit(); Config.mirrorBootState(this, false, p.getBoolean("autostart", true)); stopService(new Intent(this, TrackingService.class));
-        }); layout.addView(stop);
-        status = new TextView(this); status.setTextSize(18); status.setTextIsSelectable(true); layout.addView(status);
-        TextView info = new TextView(this); info.setText("Android: " + Build.VERSION.RELEASE + " · API " + Build.VERSION.SDK_INT + "\nGPS запрашивается раз в секунду. Пока очередь пуста, отправка идёт каждые " + Config.intervalSeconds(this) + " секунд — одинаково для HTTPS и для Яндекс.Диска; как только очередь накапливается, точки уходят быстрее. Очередь хранится до подтверждения выбранного получателя — HA или Яндекс.Диска. Не очищайте данные приложения до синхронизации. Автозапуск и пробуждение нужно проверить на вашей прошивке."); layout.addView(info);
+            renderDashboard(p);
+        }); stopButton=stop; controls.addView(stop,new LinearLayout.LayoutParams(0,-2,1));
+        status = new TextView(this); status.setTextSize(18); status.setTextIsSelectable(true); details.addView(status);
+        TextView info = new TextView(this); info.setText("Android: " + Build.VERSION.RELEASE + " · API " + Build.VERSION.SDK_INT + "\nGPS запрашивается каждые 1,5 секунды. Очередь хранится до подтверждения выбранного получателя — HA или Яндекс.Диска. Получение точек с Диска проверяется в Home Assistant."); details.addView(info);
         TextView sync=new TextView(this);sync.setText("Для Яндекс.Диска этот интервал стоит выставить не больше, чем интервал опроса папки в настройках интеграции, иначе точки дольше лежат на Диске.");layout.addView(sync);
+        interval.setInputType(InputType.TYPE_CLASS_NUMBER);
+        comfortableControls(root);
+        selectPage(state==null?0:state.getInt("locator_page",0));
+        renderDashboard(p);
         if (p.getBoolean("enabled", false) && p.getBoolean("autostart", true) && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             startForegroundService(new Intent(this, TrackingService.class));
         }
@@ -100,20 +162,92 @@ public class MainActivity extends Activity {
         try (QueueDb db = new QueueDb(this)) { return db.count(); }
     }
     private void showPairing() {
+        if (!secretsReady || settingsBusy) { Toast.makeText(this,"Дождитесь чтения или сохранения настроек",Toast.LENGTH_SHORT).show(); return; }
         String id = vehicle.getText().toString().trim(), token = key.getText().toString().trim();
         if (!id.matches("[a-z0-9_-]{1,40}") || !token.matches("[A-Za-z0-9_-]{32,128}")) {
             Toast.makeText(this, "Проверьте ID и ключ", Toast.LENGTH_LONG).show(); return;
         }
-        SharedPreferences p = Config.prefs(this);
-        if (queuedCount() > 0 && !id.equals(p.getString("vehicle", "jolion"))) {
-            Toast.makeText(this, "Сначала отправьте очередь с прежним ID", Toast.LENGTH_LONG).show(); return;
+        settingsBusy=true;
+        settingsWorker.execute(() -> {
+            try {
+                synchronized(Config.class) {
+                    SharedPreferences p=Config.prefs(this);
+                    if (queuedCount()>0 && !id.equals(p.getString("vehicle","jolion")))throw new IllegalStateException("Сначала отправьте очередь с прежним ID");
+                    if (!p.edit().putString("vehicle",id).commit() || !Config.putSecrets(this,token,Config.diskOauth(this)))throw new IllegalStateException("Не удалось сохранить ключ");
+                }
+                android.graphics.Bitmap bitmap=PairingQr.bitmap(id,token,600);
+                updateUi(() -> { settingsBusy=false; showPairingDialog(id,token,bitmap); });
+            } catch(Exception error) { updateUi(() -> { settingsBusy=false; Toast.makeText(this,"Не удалось подготовить QR. Проверьте очередь и настройки.",Toast.LENGTH_LONG).show(); }); }
+        });
+    }
+    private int dp(int value) { return Math.round(value*getResources().getDisplayMetrics().density); }
+    private LinearLayout column() { LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);return box; }
+    private Button button(String text) { Button b=new Button(this);b.setText(text);b.setAllCaps(false);b.setTextSize(18);b.setMinHeight(dp(56));return b; }
+    private TextView summaryCard(LinearLayout parent,String title,boolean wide) {
+        LinearLayout box=column();box.setPadding(dp(16),dp(12),dp(16),dp(16));
+        android.graphics.drawable.GradientDrawable background=new android.graphics.drawable.GradientDrawable();
+        background.setColor(0xffeef2f5);background.setCornerRadius(dp(12));box.setBackground(background);
+        LinearLayout.LayoutParams size=wide?new LinearLayout.LayoutParams(0,-2,1):new LinearLayout.LayoutParams(-1,-2);
+        size.setMargins(dp(4),dp(8),dp(4),dp(12));parent.addView(box,size);
+        TextView label=new TextView(this);label.setText(title);label.setTextSize(16);label.setTextColor(0xff415365);box.addView(label);
+        TextView value=new TextView(this);value.setTextSize(20);value.setTextColor(0xff142536);value.setPadding(0,dp(8),0,0);box.addView(value);return value;
+    }
+    private void comfortableControls(android.view.View view) {
+        if(view instanceof Button) { ((Button)view).setAllCaps(false);((Button)view).setTextSize(18);view.setMinimumHeight(dp(56)); }
+        if(view instanceof EditText || view instanceof Spinner) view.setMinimumHeight(dp(56));
+        if(view instanceof android.view.ViewGroup) for(int i=0;i<((android.view.ViewGroup)view).getChildCount();i++) comfortableControls(((android.view.ViewGroup)view).getChildAt(i));
+    }
+    private void selectPage(int page) {
+        selectedPage=Math.max(0,Math.min(2,page));
+        for(int i=0;i<3;i++) { pages[i].setVisibility(i==selectedPage?android.view.View.VISIBLE:android.view.View.GONE);tabs[i].setEnabled(i!=selectedPage); }
+        if(selectedPage!=1) {
+            android.view.View focus=getCurrentFocus();
+            if(focus!=null) { ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(focus.getWindowToken(),0);focus.clearFocus(); }
         }
-        if (!p.edit().putString("vehicle", id).commit() || !Config.putSecrets(this, token, Config.diskOauth(this))) {
-            Toast.makeText(this, "Не удалось сохранить ключ", Toast.LENGTH_LONG).show(); return;
-        }
+    }
+    @Override public void onBackPressed() { if(selectedPage!=0)selectPage(0);else super.onBackPressed(); }
+    @Override protected void onSaveInstanceState(Bundle state) { state.putInt("locator_page",selectedPage);super.onSaveInstanceState(state); }
+    static String gpsHeadline(SharedPreferences p,long now) {
+        if(!p.getBoolean("enabled",false))return "Запись остановлена";
+        if(p.contains("gps_provider_enabled")&&!p.getBoolean("gps_provider_enabled",true))return "GPS выключен в Android";
+        long callback=p.getLong("last_gps_callback_at",0);
+        if(callback==0)return "Ожидание координат GPS";
+        if(now-callback>120000)return "Давно нет координат GPS";
+        String state=p.getString("gps_state","");
+        if("GPS_ACTIVE".equals(state))return "GPS · движение";
+        if("STATIONARY".equals(state))return "GPS · остановка";
+        if("GPS_RECOVERING".equals(state))return "Проверка GPS после потери сигнала";
+        return "Ожидание пригодной GPS-точки";
+    }
+    static String age(long timestamp,long now) {
+        if(timestamp<=0)return "ещё не было";
+        long seconds=Math.max(0,(now-timestamp)/1000);
+        if(seconds<60)return seconds+" с назад";
+        if(seconds<3600)return seconds/60+" мин назад";
+        return seconds/3600+" ч назад";
+    }
+    private void renderDashboard(SharedPreferences p) {
+        long now=System.currentTimeMillis();boolean enabled=p.getBoolean("enabled",false);
+        recordingSummary.setText(enabled?"Запись включена":"Запись остановлена");
+        recordingSummary.setTextColor(enabled?0xff176642:0xff536170);
+        gpsSummary.setText(gpsHeadline(p,now)+"\n\n"+gnssSummary(p)+"\nПоследняя сохранённая точка: "+age(p.getLong("last_fix",0),now)+"\n"+p.getString("quality","Точность ещё неизвестна"));
+        boolean disk="yandex_disk".equals(p.getString("transport","https"));long queued=p.getLong("queued",0);
+        deliverySummary.setText((disk?"Яндекс.Диск":"Home Assistant · HTTPS")+"\n\nВ очереди: "+queued+" точек\nПоследняя передача: "+age(p.getLong("last_sync",0),now)+"\n"+(disk?"Доставка из Диска в HA проверяется в HA.":"Точки удаляются после подтверждения HA.")
+                +"\n"+p.getString("status","Передач ещё не было"));
+        String message=p.getString("storage_error","");
+        if(message.isEmpty())message=p.getString("secret_error","");
+        if(message.isEmpty()&&getFilesDir().getUsableSpace()<100*1024*1024)message="Мало свободного места: менее 100 МБ";
+        if(message.isEmpty()&&checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)message="Нет разрешения на местоположение. При запуске записи появится запрос.";
+        if(message.isEmpty()&&settingsBusy)message="Сохранение настроек…";
+        if(message.isEmpty()&&!secretsReady)message="Чтение настроек подключения…";
+        attention.setText(message);attention.setVisibility(message.isEmpty()?android.view.View.GONE:android.view.View.VISIBLE);
+        startButton.setEnabled(secretsReady&&!settingsBusy);startButton.setText(enabled?"Сохранить настройки":"Сохранить и начать запись");
+        stopButton.setEnabled(enabled||settingsBusy);
+    }
+    private void showPairingDialog(String id,String token,android.graphics.Bitmap bitmap) {
         try {
             LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setPadding(24, 12, 24, 12);
-            ImageView image = new ImageView(this); image.setImageBitmap(PairingQr.bitmap(id, token, 600)); image.setAdjustViewBounds(true);
+            ImageView image = new ImageView(this); image.setImageBitmap(bitmap); image.setAdjustViewBounds(true);
             int size = Math.min(getResources().getDisplayMetrics().widthPixels - 100, (int)(280 * getResources().getDisplayMetrics().density));
             body.addView(image, new LinearLayout.LayoutParams(size, size));
             TextView text = new TextView(this); text.setText("ID: " + id + "\nКлюч: " + token + "\nВ настройках GWM Jolion включите Locator и нажмите «Ввести с QR» под ключом. Затем укажите адрес HA и начните запись."); text.setTextIsSelectable(true); body.addView(text);
@@ -132,35 +266,51 @@ public class MainActivity extends Activity {
         }
     }
     private void checkUpdates() {
+        if (updateBusy || isFinishing() || isDestroyed()) return;
+        updateBusy = true;
         Toast.makeText(this, "Проверка обновлений…", Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
+        updateThread = new Thread(() -> {
             try {
                 String installed = UpdateChecker.installedVersion(this);
                 UpdateChecker.Release release = UpdateChecker.findLatest(UpdateChecker.get(UpdateChecker.RELEASES_URL), installed.contains("-"));
                 if (release == null || UpdateChecker.compareVersions(release.version, installed) <= 0) {
-                    runOnUiThread(() -> Toast.makeText(this, "Установлена последняя версия", Toast.LENGTH_LONG).show()); return;
+                    updateUi(() -> { updateBusy=false; Toast.makeText(this, "Установлена последняя версия", Toast.LENGTH_LONG).show(); }); return;
                 }
-                runOnUiThread(() -> confirmUpdate(release));
+                updateUi(() -> confirmUpdate(release));
             } catch (Exception error) {
-                runOnUiThread(() -> Toast.makeText(this, "Не удалось проверить обновления: " + error.getMessage(), Toast.LENGTH_LONG).show());
+                updateUi(() -> { updateBusy=false; Toast.makeText(this, "Не удалось проверить обновления: " + error.getMessage(), Toast.LENGTH_LONG).show(); });
             }
-        }, "update-check").start();
+        }, "update-check");
+        updateThread.start();
+    }
+    private void updateUi(Runnable action) {
+        runOnUiThread(() -> { if (!isFinishing() && !isDestroyed()) action.run(); });
     }
     private void confirmUpdate(UpdateChecker.Release release) {
-        new android.app.AlertDialog.Builder(this).setTitle("Доступно обновление " + release.version)
+        if (isFinishing() || isDestroyed()) return;
+        updateBusy=false;
+        if (updateDialog != null) updateDialog.dismiss();
+        updateDialog = new android.app.AlertDialog.Builder(this).setTitle("Доступно обновление " + release.version)
             .setMessage((release.size > 0 ? "Размер: " + (release.size / 1024) + " КБ\n\n" : "") + release.notes)
             .setNegativeButton("Позже", null).setPositiveButton("Скачать", (dialog, which) -> downloadUpdate(release)).show();
     }
     private void downloadUpdate(UpdateChecker.Release release) {
+        if (updateBusy || isFinishing() || isDestroyed()) return;
+        updateBusy=true;
         ProgressDialog progress = new ProgressDialog(this); progress.setMessage("Скачивание APK…"); progress.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL); progress.setMax(100); progress.setCancelable(false); progress.show();
-        new Thread(() -> {
+        updateDialog=progress;
+        updateThread = new Thread(() -> {
             try {
-                File apk = UpdateChecker.download(this, release, value -> runOnUiThread(() -> progress.setProgress(value)));
-                runOnUiThread(() -> { progress.dismiss(); installUpdate(apk); });
+                File apk = UpdateChecker.download(getApplicationContext(), release, value -> updateUi(() -> progress.setProgress(value)));
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) { apk.delete(); return; }
+                    updateBusy=false; progress.dismiss(); installUpdate(apk);
+                });
             } catch (Exception error) {
-                runOnUiThread(() -> { progress.dismiss(); Toast.makeText(this, "Обновление отклонено: " + error.getMessage(), Toast.LENGTH_LONG).show(); });
+                updateUi(() -> { updateBusy=false; progress.dismiss(); Toast.makeText(this, "Обновление отклонено: " + error.getMessage(), Toast.LENGTH_LONG).show(); });
             }
-        }, "update-download").start();
+        }, "update-download");
+        updateThread.start();
     }
     private void installUpdate(File apk) {
         if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
@@ -183,6 +333,7 @@ public class MainActivity extends Activity {
         catch (RuntimeException unavailable) { Toast.makeText(this, "Системный установщик APK недоступен", Toast.LENGTH_LONG).show(); }
     }
     private void start() {
+        if (!secretsReady || settingsBusy) { Toast.makeText(this,"Дождитесь чтения или сохранения настроек",Toast.LENGTH_SHORT).show(); return; }
         String base = url.getText().toString().trim().replaceAll("/+$", "");
         String id = vehicle.getText().toString().trim(); String token = key.getText().toString().trim();
         boolean disk=transport.getSelectedItemPosition()==1;
@@ -195,23 +346,34 @@ public class MainActivity extends Activity {
             if(disk && (!DiskTransport.validFolder(folder)||!oauth.matches("[!-~]{10,2048}")))throw new Exception();
             if (!id.matches("[a-z0-9_-]{1,40}") || !token.matches("[A-Za-z0-9_-]{32,128}")) throw new Exception();
         } catch (Exception e) { Toast.makeText(this, "Проверьте HTTPS или папку /JolionLocator и OAuth; ID a-z/0-9/_/-; ключ 32–128 символов", Toast.LENGTH_LONG).show(); return; }
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 1); return;
+        }
+        settingsBusy=true;
+        final int generation=++startGeneration;
+        settingsWorker.execute(() -> {
+        try {
         SharedPreferences p = Config.prefs(this);
         synchronized(Config.class) {
             String oldBase=Config.destination(this),newBase=disk?"yadisk:"+folder:base;
             boolean changedMode=oldBase.startsWith("yadisk:")!=disk;
             if(queuedCount()>0 && (!id.equals(p.getString("vehicle","jolion")) || (!changedMode && !newBase.equals(oldBase)))) {
-                Toast.makeText(this,"С очередью можно сменить способ передачи, но нельзя менять ID или адрес внутри того же способа",Toast.LENGTH_LONG).show();return;
+                throw new IllegalStateException("С очередью нельзя менять ID или адрес внутри одного способа передачи");
             }
             if(!p.edit().putString("url",base).putString("vehicle",id).putString("transport",disk?"yandex_disk":"https").putString("disk_folder",folder).putString("interval",Integer.toString(seconds)).putString("route_from",changedMode?oldBase:"").commit() || !Config.putSecrets(this, token, oauth)) {
-                Toast.makeText(this,"Не удалось сохранить настройки",Toast.LENGTH_LONG).show();return;
+                throw new IllegalStateException("Не удалось сохранить настройки");
             }
             if(changedMode)try(QueueDb db=new QueueDb(this)){db.reroute(oldBase,newBase,id,token,oauth);}
         }
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 1); return;
-        }
-        p.edit().putBoolean("enabled", true).commit(); Config.mirrorBootState(this, true, p.getBoolean("autostart", true));
-        startForegroundService(new Intent(this, TrackingService.class));
+        updateUi(() -> {
+            settingsBusy=false;
+            if(generation!=startGeneration)return;
+            p.edit().putBoolean("enabled", true).apply(); Config.mirrorBootState(this, true, p.getBoolean("autostart", true));
+            startForegroundService(new Intent(this, TrackingService.class));
+            renderDashboard(p);
+        });
+        } catch(Exception error) { updateUi(() -> { settingsBusy=false; Toast.makeText(this,"Не удалось сохранить настройки. Проверьте очередь, ключ и свободное место.",Toast.LENGTH_LONG).show(); }); }
+        });
     }
     public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(request, permissions, results);
@@ -226,4 +388,23 @@ public class MainActivity extends Activity {
         if (pendingUpdate != null && (Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls())) installUpdate(pendingUpdate);
     }
     public void onPause() { timer.removeCallbacks(refresh); super.onPause(); }
+    @Override protected void onActivityResult(int request,int result,Intent data) {
+        super.onActivityResult(request,result,data);
+        if(request!=2 || result!=RESULT_OK || data==null || data.getData()==null)return;
+        Uri destination=data.getData();
+        settingsWorker.execute(() -> {
+            try(java.io.OutputStream out=getContentResolver().openOutputStream(destination,"wt")) {
+                if(out==null)throw new java.io.IOException("No output stream");
+                out.write(Diagnostics.snapshot(getApplicationContext()).toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                updateUi(() -> Toast.makeText(this,"Диагностика сохранена",Toast.LENGTH_LONG).show());
+            } catch(Exception error) { updateUi(() -> Toast.makeText(this,"Не удалось сохранить диагностику",Toast.LENGTH_LONG).show()); }
+        });
+    }
+    public void onDestroy() {
+        settingsWorker.shutdown();
+        if (updateThread != null) updateThread.interrupt();
+        if (updateDialog != null) updateDialog.dismiss();
+        timer.removeCallbacks(refresh);
+        super.onDestroy();
+    }
 }

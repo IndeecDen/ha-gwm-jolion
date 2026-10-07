@@ -41,7 +41,8 @@ from .const import (
     TERMINAL,
 )
 from .command_safety import classify_t5_result_code, is_auth_error_code
-from .helpers import build_state, normalize_phone, redact_vehicle, vehicle_basics_snapshot
+from .helpers import build_state, normalize_phone, redact_vehicle
+from .vehicle_basics import vehicle_basics_snapshot
 from .vehicle_data import calculate_fuel_percent, describe_structure, normalize_vehicle_metadata
 
 _LOGGER = logging.getLogger(__name__)

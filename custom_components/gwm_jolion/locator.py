@@ -90,6 +90,7 @@ class HybridHistory(TripHistory):
         self.enabled = bool(entry.options.get(ENABLED))
         self.app_archive = Archive(hass.config.path(".storage", f"gwm_jolion_{entry.entry_id}_locator.sqlite"))
         self.app_latest = None
+        self.last_received_ms = None
         self.cloud_latest = None
         self.gps = None
         self.last_prune = 0
@@ -141,6 +142,7 @@ class HybridHistory(TripHistory):
     async def initialize(self):
         await self.hass.async_add_executor_job(self.app_archive.initialize)
         self.app_latest = await self.hass.async_add_executor_job(self._app_latest)
+        self.last_received_ms = await self.hass.async_add_executor_job(self.app_archive.latest_received_ms)
         self.cloud_latest = await self.hass.async_add_executor_job(self._cloud_latest)
         if self.entry.options.get('golion_locator_transport')=='yandex_disk':
             from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -185,6 +187,7 @@ class HybridHistory(TripHistory):
     async def ingest(self, points):
         async with self.lock:
             ack = await self.hass.async_add_executor_job(self.app_archive.ingest, points)
+            self.last_received_ms = await self.hass.async_add_executor_job(self.app_archive.latest_received_ms)
             self.app_latest = await self.hass.async_add_executor_job(self._app_latest)
             await self.hass.async_add_executor_job(self._mirror_app_fixes, points)
             self._cache_revision += 1

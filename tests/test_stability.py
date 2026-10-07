@@ -172,3 +172,20 @@ def test_refresh_failure_is_recorded_and_next_attempt_recovers():
         with pytest.raises(UpdateFailed): await update(obj)
         assert obj.update_health["last_error"]["type"] == "TimeoutError"
     asyncio.run(run())
+
+
+def test_command_timeout_is_not_replayed_and_next_read_recovers():
+    async def run():
+        calls = []
+        async def reply(url, headers):
+            calls.append(url)
+            if url.endswith("command"):
+                raise TimeoutError("response lost after command accepted")
+            return 200, {"code": "000000", "data": {}}
+        obj = client(reply)
+        with pytest.raises((TimeoutError, ApiError)):
+            await obj._request("POST", "command")
+        assert len(calls) == 1
+        assert (await obj._request("GET", "status"))["code"] == "000000"
+        assert len(calls) == 2
+    asyncio.run(run())

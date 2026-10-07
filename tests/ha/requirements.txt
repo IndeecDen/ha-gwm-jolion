@@ -1,0 +1,3 @@
+# Python 3.14. Linux is the authoritative full HA runtime.
+pytest-homeassistant-custom-component==0.13.368
+home-assistant-frontend==20260930.0

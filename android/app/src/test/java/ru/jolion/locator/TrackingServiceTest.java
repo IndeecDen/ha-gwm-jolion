@@ -16,10 +16,31 @@ import static org.junit.Assert.*;
 @org.robolectric.annotation.Config(sdk = 27)
 public class TrackingServiceTest {
 
+    @Test public void networkProviderChangesMustNotReportGpsDisabledOrEnabled() {
+        org.robolectric.android.controller.ServiceController<TrackingService> controller =
+                org.robolectric.Robolectric.buildService(TrackingService.class);
+        TrackingService service = controller.get();
+        Config.prefs(service).edit().putString("gps_status", "Ожидание GPS").commit();
+        service.onProviderDisabled("network");
+        assertEquals("Ожидание GPS", Config.prefs(service).getString("gps_status", ""));
+        service.onProviderDisabled("gps");
+        assertEquals("Спутниковый источник Android выключен", Config.prefs(service).getString("gps_status", ""));
+        service.onProviderEnabled("network");
+        assertEquals("Спутниковый источник Android выключен", Config.prefs(service).getString("gps_status", ""));
+        service.onProviderEnabled("gps");
+        assertEquals("GPS включен, ожидание координат", Config.prefs(service).getString("gps_status", ""));
+    }
+
     @Test public void gpsIsAcceptedUpToItsPrecisionCap() {
         assertTrue(TrackingService.acceptProvider("gps", 100f, false));
         assertTrue(TrackingService.acceptProvider("gps", 100f, true));
         assertFalse("GPS свыше 100 м — мусор", TrackingService.acceptProvider("gps", 101f, false));
+    }
+
+    @Test public void preciseSlowDepartureBelowThreeMetresIsNotDropped() {
+        Location previous=new Location("gps");previous.setTime(1000);previous.setLatitude(55);previous.setLongitude(37);previous.setAccuracy(5);
+        Location current=new Location("gps");current.setTime(2500);current.setLatitude(55.00001);current.setLongitude(37);current.setAccuracy(5);current.setSpeed(.8f);
+        assertTrue(TrackingService.transitionAllowed(previous,current));
     }
 
     @Test public void networkBridgesTheColdStartUntilGpsLocks() {

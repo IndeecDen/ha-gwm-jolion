@@ -71,7 +71,8 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         protocol_capture_enabled: bool = False,
         protocol_capture_path: str | None = None,
     ) -> None:
-        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=poll_interval))
+        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=poll_interval),
+                         config_entry=hass.config_entries.async_get_entry(entry_id))
         self.client = client
         self.entry_id = entry_id
         self.enable_remote_controls = enable_remote_controls

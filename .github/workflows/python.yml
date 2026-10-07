@@ -49,29 +49,19 @@ jobs:
         run: pytest -q tests
 
   ha-setup:
-    # The unit tests load single modules by path, so nothing ever ran
-    # async_setup_entry. This job loads the real config entry, which is the only
-    # way to catch a missing import or a broken platform before the user's
-    # instance does. Windows is included: tests/ha/conftest.py lifts the harness
-    # socket guard around fixture setup, which is what lets asyncio build its
-    # AF_INET self-pipe there.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    # HA is a Linux runtime. Missing dependencies/skipped tests fail this job.
+    runs-on: ubuntu-latest
+    env:
+      GWM_HA_STRICT: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
       - name: Install the Home Assistant test harness
         shell: bash
         run: |
-          python -m pip install --disable-pip-version-check \
-            --extra-index-url https://pypi.home-assistant.io/simple \
-            --trusted-host pypi.home-assistant.io \
-            pytest-homeassistant-custom-component hass-frontend
+          python -m pip install --disable-pip-version-check -r tests/ha/requirements.txt
       - name: Load the config entry for real
         run: pytest -q tests/ha -o asyncio_mode=auto
 

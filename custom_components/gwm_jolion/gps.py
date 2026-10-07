@@ -21,7 +21,8 @@ class GwmGpsCoordinator(DataUpdateCoordinator):
     def __init__(self, parent, interval: int):
         self.poll_interval = max(MIN_GPS_INTERVAL, min(3600, interval))
         super().__init__(parent.hass, _LOGGER, name="gwm_jolion_gps",
-                         update_interval=timedelta(seconds=self.poll_interval))
+                         update_interval=timedelta(seconds=self.poll_interval),
+                         config_entry=parent.config_entry)
         self.parent = parent
         self.entry_id = parent.entry_id
         history = getattr(parent, "trip_history", None)

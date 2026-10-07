@@ -50,3 +50,21 @@ def test_the_checker_reports_the_path_and_the_name(tmp_path):
     assert result.returncode == 1, result.stdout
     assert "broken.py:2" in result.stdout
     assert "helper" in result.stdout
+
+
+def test_checker_catches_removed_reexport(tmp_path):
+    (tmp_path / 'helpers.py').write_text('def other(): pass\n', encoding='utf-8')
+    (tmp_path / 'api.py').write_text('from .helpers import snapshot\ndef fetch(): return snapshot()\n', encoding='utf-8')
+    result = subprocess.run([sys.executable, str(CHECKER), str(tmp_path)], capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "cannot import 'snapshot'" in result.stdout
+
+
+def test_checker_accepts_reexports_and_rejects_syntax_errors(tmp_path):
+    (tmp_path / 'helpers.py').write_text('from .data import snapshot\n', encoding='utf-8')
+    (tmp_path / 'data.py').write_text('def snapshot(): return {}\n', encoding='utf-8')
+    (tmp_path / 'api.py').write_text('from .helpers import snapshot\ndef fetch(): return snapshot()\n', encoding='utf-8')
+    command = [sys.executable, str(CHECKER), str(tmp_path)]
+    assert subprocess.run(command, capture_output=True).returncode == 0
+    (tmp_path / 'broken.py').write_text('def broken(:\n', encoding='utf-8')
+    assert subprocess.run(command, capture_output=True).returncode == 1

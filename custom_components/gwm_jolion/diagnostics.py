@@ -13,6 +13,7 @@ from .const import DOMAIN, VERSION
 from .coordinator import GwmJolionCoordinator
 from .protocol import signal_report
 from .protocol_capture import read_jsonl_for_diagnostics
+from .health import snapshot
 
 _REDACTED = "**REDACTED**"
 _SENSITIVE_NORMALIZED_KEYS = {
@@ -63,7 +64,8 @@ def _base_diagnostics_payload(
     relay = getattr(getattr(coordinator, "trip_history", None), "relay", None)
 
     return {
-        "integration": {"domain": DOMAIN, "version": VERSION, "entry_title": entry.title},
+        "integration": {"domain": DOMAIN, "version": VERSION},
+        "health": snapshot(coordinator),
         "config": _redact({"data": dict(entry.data), "options": dict(entry.options)}),
         "vehicle": _redact(data.get("vehicle") or {}),
         "state": _redact(public_state),
@@ -92,8 +94,8 @@ def _base_diagnostics_payload(
         "protocol": signal_report(coordinator.seen_signal_codes),
         "locator_relay": None if relay is None else {
             "status": relay.status,
-            "vehicle_id": relay.vehicle,
-            "folder": relay.folder,
+            "vehicle_id": _REDACTED,
+            "folder": _REDACTED,
             "offset": relay.offset,
             # Never the token itself: only whether one is configured.
             "has_write_token": bool(relay.token),
@@ -134,7 +136,7 @@ async def _async_diagnostics_payload(
             coordinator.protocol_capture_path,
         )
         payload["protocol_capture"]["session_export"] = _redact(capture_export)
-    return payload
+    return _redact(payload)
 
 
 async def async_get_config_entry_diagnostics(

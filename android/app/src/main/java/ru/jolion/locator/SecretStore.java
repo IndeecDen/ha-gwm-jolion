@@ -21,6 +21,7 @@ final class SecretStore {
     SecretStore(Context context) { this.context = context.getApplicationContext(); }
 
     String get(String name, String fallback) {
+        synchronized (Config.class) {
         String value = Config.prefs(context).getString(name, "");
         if (value.isEmpty()) return fallback;
         if (!value.startsWith(PREFIX)) {
@@ -35,15 +36,20 @@ final class SecretStore {
             cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, iv));
             return new String(cipher.doFinal(packed, iv.length, packed.length - iv.length), StandardCharsets.UTF_8);
         } catch (Exception ignored) {
+            Config.prefs(context).edit().putString("secret_error", "Не удалось прочитать ключ из Android Keystore. Повторите после разблокировки ГУ.").apply();
             return fallback;
+        }
         }
     }
 
     boolean put(String name, String value) {
+        synchronized (Config.class) {
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            byte[] iv = new byte[12]; new java.security.SecureRandom().nextBytes(iv);
-            cipher.init(Cipher.ENCRYPT_MODE, key(), new GCMParameterSpec(128, iv));
+            // AndroidKeyStore disallows caller-provided encryption IVs by
+            // default. Let the provider generate a fresh random nonce.
+            cipher.init(Cipher.ENCRYPT_MODE, key());
+            byte[] iv = cipher.getIV();
             byte[] encrypted = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
             byte[] packed = new byte[iv.length + encrypted.length];
             System.arraycopy(iv, 0, packed, 0, iv.length);
@@ -51,6 +57,7 @@ final class SecretStore {
             return Config.prefs(context).edit().putString(name, PREFIX + Base64.encodeToString(packed, Base64.NO_WRAP)).commit();
         } catch (Exception ignored) {
             return Config.prefs(context).edit().putString(name, value).commit();
+        }
         }
     }
 

@@ -1,10 +1,12 @@
 name: Version release
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      previous_code:
+        description: versionCode of the last published APK
+        required: true
+        type: number
 
 permissions:
   contents: write
@@ -14,50 +16,74 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Resolve manifest version
-        id: version
-        shell: bash
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test Python in isolated environments
         run: |
-          VERSION="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          manifest = json.loads(Path('custom_components/gwm_jolion/manifest.json').read_text(encoding='utf-8'))
-          print(manifest['version'])
-          PY
-          )"
-          MESSAGE="$(git log -1 --pretty=%s)"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "$MESSAGE" == "$VERSION"* ]]; then
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create GitHub release and tag
-        if: steps.version.outputs.publish == 'true'
+          python -m venv .venv
+          .venv/bin/pip install pytest PyYAML aiohttp voluptuous tzdata cryptography awesomeversion pyflakes
+          .venv/bin/python tools/check_names.py
+          .venv/bin/python tools/check_version.py
+          .venv/bin/python -m pytest -q tests
+          python -m venv .venv-ha
+          .venv-ha/bin/pip install -r tests/ha/requirements.txt
+          GWM_HA_STRICT=1 .venv-ha/bin/python -m pytest -q tests/ha -o asyncio_mode=auto
+      - name: Test browser UI
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run test:browser
+      - name: Install SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SIGNING_PROPERTIES: ${{ secrets.ANDROID_SIGNING_PROPERTIES }}
+        run: |
+          test -n "$KEYSTORE_BASE64" && test -n "$SIGNING_PROPERTIES"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/release-signing.jks
+          printf '%s\n' "$SIGNING_PROPERTIES" > android/signing.properties
+      - name: Test and build signed APK
+        working-directory: android
+        run: bash gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease
+      - name: Package and verify release
+        env:
+          PREVIOUS_CODE: ${{ inputs.previous_code }}
+        run: |
+          python scripts/package_release.py
+          VERSION=$(python -c "import json; print(json.load(open('custom_components/gwm_jolion/manifest.json'))['version'])")
+          python scripts/check_release.py --tag "$VERSION" --previous-code "$PREVIOUS_CODE"
+      - name: Publish APK, integration archives and checksums
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            echo "Release $VERSION already exists"
-            exit 0
-          fi
+          VERSION=$(python -c "import json; print(json.load(open('custom_components/gwm_jolion/manifest.json'))['version'])")
           python - "$VERSION" <<'PY'
           import sys
           from pathlib import Path
-
           version = sys.argv[1]
           changelog = Path('CHANGELOG.md').read_text(encoding='utf-8')
           heading = f'## {version}\n'
           if heading not in changelog:
               raise SystemExit(f'Missing changelog section for {version}')
-          notes = changelog.split(heading, 1)[1].split('\n## ', 1)[0].strip()
-          Path('release-notes.md').write_text(notes + '\n', encoding='utf-8')
+          Path('release-notes.md').write_text(changelog.split(heading, 1)[1].split('\n## ', 1)[0].strip() + '\n', encoding='utf-8')
           PY
-          gh release create "$VERSION" --latest \
-            --target "$GITHUB_SHA" \
-            --title "$VERSION" \
-            --notes-file release-notes.md
+          FLAGS=(--latest)
+          if [[ "$VERSION" == *-* ]]; then FLAGS=(--prerelease --latest=false); fi
+          gh release create "$VERSION" "dist/Jolion.Locator.$VERSION.apk" \
+            "dist/ha-gwm-jolion-$VERSION.zip" "dist/ha-gwm-jolion-$VERSION-bundle.zip" \
+            dist/SHA256SUMS.txt --target "$GITHUB_SHA" --title "$VERSION" \
+            --notes-file release-notes.md "${FLAGS[@]}"
+      - name: Remove runner signing files
+        if: always()
+        run: rm -f android/release-signing.jks android/signing.properties

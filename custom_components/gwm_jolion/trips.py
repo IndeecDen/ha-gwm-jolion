@@ -66,7 +66,7 @@ def gps_jump(km, seconds):
     return seconds > 0 and km > seconds / 3600 * MAX_GPS_SPEED_KMH + 0.1
 
 
-def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS):
+def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS, measured_speeds=None):
     """Keep confirmed stops; never infer parking across missing observations."""
     spots = []
     anchor = previous = None
@@ -128,9 +128,13 @@ def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS):
         # reading that has not moved proves the car stood still, so a drifting
         # receiver cannot chop the parking up. With no reading at all the strict
         # jitter radius stays, and a receiver jump is still never called parking.
-        limit = DEPARTURE_RADIUS_KM if (standing and anchor_odometer is not None) else PARKING_RADIUS_KM
+        # A coarse cloud odometer can lag hundreds of metres behind GNSS.
+        # In a Locator history it must not extend parking into the departure.
+        limit = DEPARTURE_RADIUS_KM if (standing and anchor_odometer is not None and measured_speeds is None) else PARKING_RADIUS_KM
         displaced = distance((anchor[0], latitude, longitude, None), row) > limit
-        if displaced or odo_moved:
+        measured = (measured_speeds or {}).get(int(row[0]*1000))
+        moving = measured is not None and measured >= MIN_MOVING_SPEED_KMH
+        if displaced or odo_moved or moving:
             finish(previous[0])
             anchor = row
             anchor_odometer = row[3]
@@ -185,7 +189,7 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
     low, high = period(start, end, zone)
     # Read preceding observations to keep a stop's observed start across midnight.
     parking_rows = [row for row in rows if low - PARKING_BASELINE_SECONDS <= row[0] < high]
-    stationary_runs = parking_spots(parking_rows, MIN_STATIONARY_SECONDS)
+    stationary_runs = parking_spots(parking_rows, MIN_STATIONARY_SECONDS, measured_speeds)
     # Join before measuring the length. A hole in the observations cuts a parking
     # into pieces, and filtering the pieces first threw away exactly the fragments
     # that would have grown into a real stop, so a car parked for hours ended up

@@ -38,5 +38,13 @@ public class UpdateCheckerTest {
         String hash="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         assertEquals(hash, UpdateChecker.checksumFromText(hash+"  Jolion Locator 0.2.0.apk\n", "Jolion Locator 0.2.0.apk"));
         assertNull(UpdateChecker.checksumFromText(hash+"  release.apk\n", "cached.apk"));
+        assertNull(UpdateChecker.checksumFromText(hash+"  wrong-release.apk\n", "release.apk"));
+        assertEquals(hash,UpdateChecker.checksumFromText(hash+" *release.apk\n","release.apk"));
+    }
+    @Test public void buildMetadataDoesNotAffectSemverOrder() {
+        assertEquals(0,UpdateChecker.compareVersions("1.0.0-beta.2+build-7","1.0.0-beta.2+build-8"));
+        assertEquals(0,UpdateChecker.compareVersions("1.0.0+build-7","1.0.0"));
+        assertTrue(UpdateChecker.compareVersions("1.0.0-beta.999999999999","1.0.0-beta.10")>0);
+        assertThrows(IllegalArgumentException.class,()->UpdateChecker.compareVersions("garbage","1.0.0"));
     }
 }

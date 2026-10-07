@@ -21,6 +21,16 @@ def stamp(value):
     return datetime.fromisoformat(value).timestamp()
 
 
+def test_locator_departure_is_not_held_by_unchanged_cloud_odometer():
+    rows = [(t, 55, 37, 1000) for t in range(0, 901, 15)]
+    rows += [(915+i*5, 55+(i+1)*0.0001, 37, 1000) for i in range(12)]
+    speeds = {int(r[0]*1000): 8 for r in rows if r[0] >= 915}
+    stops = trips.parking_spots(rows, measured_speeds=speeds)
+    assert len(stops) == 1
+    assert stops[0]['end'] == 900
+    assert stops[0]['latitude'] == 55
+
+
 def test_calendar_uses_ha_timezone_and_dst():
     low, high = trips.period("2026-03-29", "2026-03-29", "Europe/Berlin")
     assert high-low == 23*3600

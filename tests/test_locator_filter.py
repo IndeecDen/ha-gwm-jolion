@@ -23,6 +23,17 @@ def test_slow_parking_manoeuvre_is_retained_after_confirmation():
     raw=[point(i,x=i*.6,speed=2.16,accuracy=3) for i in range(30)]
     assert filter_display(raw)==raw
 
+
+def test_precise_sub_walking_departure_and_arrival_are_preserved():
+    raw=[point(i,x=0,speed=0,accuracy=3) for i in range(20)]
+    manoeuvre=[dict(point(20+i,x=(i+1)*.3,speed=1.08,accuracy=3),speed_accuracy_kmh=.1) for i in range(40)]
+    raw+=manoeuvre
+    raw += [point(60+i,x=12,speed=0,accuracy=3) for i in range(20)]
+    result=filter_display(raw)
+    assert result[20:60]==manoeuvre
+    assert result[-1]['longitude']==raw[-1]['longitude']
+    assert not any(p.get('display_break') for p in result)
+
 def test_missing_speed_can_confirm_directed_movement():
     raw=[point(i,x=i,speed=None,accuracy=4) for i in range(30)]
     assert filter_display(raw)==raw
@@ -127,6 +138,27 @@ def test_a_clean_departure_is_not_marked_as_a_break():
     filtered=filter_display(raw)
     assert not any(p.get('display_break') for p in filtered)
     assert filtered[-1]==raw[-1]
+
+
+def test_sparse_fixes_after_traffic_light_preserve_departure_without_false_gap():
+    # Older APK sampled parked GPS every 20 seconds, then resumed at 1.5 s.
+    raw=[point(i,x=i*8,speed=28.8,accuracy=4) for i in range(10)]
+    raw += [point(i,x=80,speed=0,accuracy=4) for i in (10,25,40,55)]
+    departure=[point(75+i*1.5,x=170+i*15,speed=36,accuracy=4) for i in range(12)]
+    raw += departure
+    saved=[dict(p) for p in raw]
+    filtered=filter_display(raw)
+    assert filtered[-len(departure):] == departure
+    assert not any(p.get('display_break') for p in filtered)
+    assert raw == saved
+
+
+def test_sparse_departure_without_speed_uses_confirmed_coordinates():
+    raw=[point(i,x=0,speed=0,accuracy=4) for i in (0,15,30,45)]
+    departure=[point(60+i*2,x=35+i*4,speed=None,accuracy=4) for i in range(12)]
+    filtered=filter_display(raw+departure)
+    assert filtered[-len(departure):] == departure
+    assert not any(p.get('display_break') for p in filtered)
 
 
 def test_a_jump_after_a_drive_still_resumes_as_a_known_re_emergence():

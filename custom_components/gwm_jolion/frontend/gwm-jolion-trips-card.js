@@ -3,6 +3,7 @@
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
   const SPEED_COLORS = {low:'#2e7d32',medium:'#f9a825',high:'#c62828'};
+  const TRIP_COLORS=['#2563eb','#9333ea','#0891b2','#ea580c','#db2777','#0d9488','#6366f1','#a16207'];
   const DEFAULT_SPEED_LIMITS = {green:80,red:110};
   function speedLimits(config={}){
     const limit=(value,fallback)=>{const number=Number(value);return value!==null&&value!==undefined&&value!==''&&Number.isFinite(number)?Math.max(1,Math.min(300,Math.round(number))):fallback;};
@@ -66,6 +67,7 @@
         .map-actions{position:absolute;top:8px;right:8px;z-index:1000;display:flex;gap:6px}.map-actions button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;background:var(--card-background-color,#fff);box-shadow:0 1px 5px rgba(0,0,0,.28)}.map-actions ha-icon{--mdc-icon-size:19px}
         :host(.fallback-fullscreen){position:fixed;inset:0;z-index:1000;display:block;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) ha-card,ha-card:fullscreen{width:100%;height:100%;min-height:100%;display:flex;flex-direction:column;border-radius:0;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) .map-wrap,ha-card:fullscreen .map-wrap{flex:1;height:auto;min-height:0}:host(.fallback-fullscreen) .content,ha-card:fullscreen .content{display:none}
         .leaflet-container{font-family:inherit}.leaflet-control-attribution{font-size:10px}
+        .trip-navigation{position:absolute;bottom:24px;left:10px;right:10px;z-index:1000;display:flex;align-items:center;gap:8px;flex-wrap:wrap;pointer-events:none}.trip-navigation button,.trip-navigation span{pointer-events:auto;background:var(--card-background-color,#fff);box-shadow:0 2px 9px #0003;padding:9px 12px;border-radius:12px;font-size:12px}.trip-navigation [hidden]{display:none}.trip-navigation span{max-width:100%;box-sizing:border-box}.route-hit{cursor:pointer}
         @media(max-width:350px){button{padding:7px 8px}.content{padding:10px}.map-wrap{height:260px}}
       </style><ha-card><div class="map-wrap"><div class="map" aria-label="Карта маршрута"></div><div class="map-actions"><button id="centerBtn" type="button" title="Показать автомобиль в центре карты" aria-label="Показать автомобиль в центре карты"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button><button id="fullscreenBtn" type="button" title="Развернуть карту" aria-label="Развернуть карту" aria-pressed="false"><ha-icon icon="mdi:fullscreen"></ha-icon></button></div></div><div class="content">
       <div class="speed-legend" aria-label="Цвета средней скорости" hidden><span><i class="low"></i><b class="low-range">до 80 км/ч</b></span><span><i class="medium"></i><b class="medium-range">80–110 км/ч</b></span><span><i class="high"></i><b class="high-range">110+ км/ч</b></span></div>
@@ -74,6 +76,23 @@
       <div class="dates" id="period" hidden><label>С<input type="date" id="start"></label><label>По<input type="date" id="end"></label><button id="show">Выбрать</button></div>
       <div class="error" role="status"></div><div class="map-status" role="status"></div><div class="diagnostics" role="status" hidden></div></div></ha-card>`;
       this._mapCard=this.shadowRoot.querySelector('ha-card');
+      const navigation=document.createElement('div');navigation.className='trip-navigation';
+      navigation.innerHTML='<button type="button" class="all-trips" hidden>← Весь трек</button><span class="trip-caption" role="status" hidden></span>';
+      this.shadowRoot.querySelector('.map-wrap').append(navigation);
+      navigation.querySelector('button').onclick=()=>this._selectTrip(null);
+      const exportButton=document.createElement('button');exportButton.type='button';exportButton.textContent='Скачать точки';exportButton.title='JSON текущего периода содержит точные координаты для разбора ошибок маршрута';
+      exportButton.onclick=()=>{
+        if(!this._routeContext)return;
+        const {data,start,end}=this._routeContext;
+        const url=URL.createObjectURL(new Blob([JSON.stringify({schema:1,start,end,data},null,2)],{type:'application/json'}));
+        const link=document.createElement('a');link.href=url;link.download=`jolion-track-${start}-${end}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      };navigation.append(exportButton);
+      this._exportButton=exportButton;
+      const closeButton=document.createElement('button');closeButton.type='button';closeButton.textContent='✕ Закрыть карту';closeButton.hidden=true;closeButton.className='close-map';
+      closeButton.style.cssText='min-height:48px;touch-action:manipulation';
+      closeButton.onclick=()=>this._exitFullscreen();navigation.append(closeButton);this._closeMapButton=closeButton;
+      navigation.style.bottom='calc(24px + env(safe-area-inset-bottom, 0px))';
+      this.addEventListener('keydown',event=>{if(event.key==='Escape'&&this._selectedTrip!=null){event.stopPropagation();this._selectTrip(null);}});
       this._fullscreenBtn=this.shadowRoot.querySelector('#fullscreenBtn');
       this.shadowRoot.querySelector('#centerBtn').onclick=()=>this._centerVehicle();
       this._fullscreenBtn.onclick=()=>this._toggleFullscreen();
@@ -83,7 +102,8 @@
       this.shadowRoot.querySelector('#calendar').onclick=()=>this._calendar(this.shadowRoot.querySelector('.dates').hidden);
     }
     setConfig(config) {
-      this._config={...config}; this._serial++;this._fitKey=null;
+      this._config={...config}; this._serial++;this._fitKey=null;this._selectedTrip=null;this._overview=null;
+      this._exportButton.hidden=config.show_download_points===false;
       this.setAttribute('aria-label',config.title || 'Поездки');
       this._updateSpeedLegend();
       this._layer?.clearLayers(); this._load();
@@ -98,7 +118,7 @@
       this._resize=new ResizeObserver(()=>this._map?.invalidateSize());this._resize.observe(this);
       this._load();
     }
-    disconnectedCallback(){ clearInterval(this._timer);this._resize?.disconnect();document.removeEventListener('fullscreenchange',this._onFullscreenChange);this.classList.remove('fallback-fullscreen');if(document.fullscreenElement===this._mapCard&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});this._serial++;this._map?.remove();this._map=null;this._base=null;this._layer=null;this._baseStyle=null;this._fitKey=null; }
+    disconnectedCallback(){ clearInterval(this._timer);this._resize?.disconnect();document.removeEventListener('fullscreenchange',this._onFullscreenChange);this.classList.remove('fallback-fullscreen');if(this._nativeFullscreen()&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});this._serial++;this._map?.remove();this._map=null;this._base=null;this._layer=null;this._baseStyle=null;this._fitKey=null; }
     getCardSize(){return 6;}
     _calendar(open){this.shadowRoot.querySelector('.dates').hidden=!open;this.shadowRoot.querySelector('#calendar').setAttribute('aria-expanded',String(open));if(open)this.shadowRoot.querySelector('#start').focus();}
     _highlight(){this.shadowRoot.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===this._mode));this.shadowRoot.querySelector('#calendar').classList.toggle('active',this._mode==='custom');}
@@ -112,15 +132,22 @@
     }
     async _toggleFullscreen(){
       if(this.classList.contains('fallback-fullscreen')){this._setFallbackFullscreen(false);return;}
-      if(document.fullscreenElement===this._mapCard){if(document.exitFullscreen)await document.exitFullscreen();return;}
+      if(this._nativeFullscreen()){await this._exitFullscreen();return;}
       if(this._mapCard.requestFullscreen){
         try{await this._mapCard.requestFullscreen({navigationUI:'hide'});return;}catch{}
       }
       this._setFallbackFullscreen(true);
     }
+    _nativeFullscreen(){return this.shadowRoot.fullscreenElement===this._mapCard||document.fullscreenElement===this._mapCard;}
+    async _exitFullscreen(){
+      if(this._nativeFullscreen()&&document.exitFullscreen)await document.exitFullscreen();
+      this._setFallbackFullscreen(false);
+      this._fullscreenBtn.focus({preventScroll:true});
+    }
     _setFallbackFullscreen(active){this.classList.toggle('fallback-fullscreen',active);this._syncFullscreenButton();requestAnimationFrame(()=>this._map?.invalidateSize());}
     _syncFullscreenButton(){
-      const active=this.classList.contains('fallback-fullscreen')||document.fullscreenElement===this._mapCard;
+      const active=this.classList.contains('fallback-fullscreen')||this._nativeFullscreen();
+      this._closeMapButton.hidden=!active;
       this._fullscreenBtn.setAttribute('aria-pressed',String(active));
       this._fullscreenBtn.setAttribute('aria-label',active?'Свернуть карту':'Развернуть карту');
       this._fullscreenBtn.title=active?'Свернуть карту':'Развернуть карту';
@@ -165,7 +192,7 @@
       this._highlight();
       if(!start || !end || start>end){error.textContent='Проверьте начало и конец периода.';return;}
       const queryKey=`${this._config.entity}|${this._config.odometer_entity || ''}|${start}|${end}`;
-      if(this._queryKey!==queryKey){this._layer?.clearLayers();root.querySelector('.km').textContent='—';this._queryKey=queryKey;}
+      if(this._queryKey!==queryKey){this._selectedTrip=null;this._overview=null;this._arrowRuns=[];this._arrows?.clearLayers();this._layer?.clearLayers();root.querySelector('.all-trips').hidden=true;root.querySelector('.speed-legend').hidden=true;root.querySelector('.km').textContent='—';this._queryKey=queryKey;}
       error.textContent='';root.querySelector('.summary').setAttribute('aria-busy','true');
       const perfKey=`gwm-trips:${this._config.entity}:${start}:${end}:${serial}`;
       const mark=(suffix)=>{try{performance.mark(`${perfKey}:${suffix}`);}catch{}};
@@ -180,6 +207,7 @@
             this._map=L.map(root.querySelector('.map'),{scrollWheelZoom:true,dragging:true,touchZoom:true,tap:true}).setView([20,0],2);
             this._map.attributionControl.setPrefix(false);
             this._layer=L.featureGroup().addTo(this._map);
+            this._map.on('zoomend moveend',()=>this._drawChevrons());
           }
           await this._setBasemap(L,serial);
           mark('map-ready');
@@ -205,15 +233,16 @@
         root.querySelector('.km').title=`${start} — ${end} · км${data.method==='odometer'?'':' · оценка'}`;
         const L=await mapPromise;if(!L||serial!==this._serial || !this.isConnected)return;
         this._layer.clearLayers();
-        for(const gap of data.gaps || [])L.polyline(gap,{color:'#88949f',weight:2,dashArray:'5 7',opacity:.7}).bindTooltip('Нет GPS-данных: связь между точками, не записанный маршрут').addTo(this._layer);
-        const speedSegments=Array.isArray(data.segment_speeds_kmh)?data.segment_speeds_kmh:[];
-        const speedKinds=Array.isArray(data.segment_kinds)?data.segment_kinds:[];
+        // Do not draw a line between the ends of a missing interval. That
+        // diagnostic connector looks like a teleport on the overview map.
+        // The actual route remains represented by its separate source segments.
         const parkingSpots=Array.isArray(data.parking_spots)?data.parking_spots:[];
         const routeStart=data.segments?.find(segment=>segment.length)?.[0];
         const firstRouteTime=data.segment_timestamps?.find(times=>times.length)?.[0];
         const routeStartParking=Number.isFinite(firstRouteTime)?parkingSpots.find(spot=>Number(spot.start)<=firstRouteTime&&Number(spot.observed_until ?? spot.end ?? -Infinity)>=firstRouteTime&&Math.abs(Number(spot.latitude)-routeStart[0])<0.002&&Math.abs(Number(spot.longitude)-routeStart[1])<0.002):null;
         const routeStartTime=routeStartParking?Number(routeStartParking.start):firstRouteTime;
-        if(routeStart){
+        const separateStart=!!routeStart&&!routeStartParking;
+        if(separateStart){
           const label=document.createElement('div');label.style.whiteSpace='pre-line';
           const showStartDate=Number.isFinite(routeStartTime)&&dayInZone(routeStartTime,this._hass.config.time_zone)!==start;
           label.textContent=`Начало маршрута A${Number.isFinite(routeStartTime)?`\nВремя: ${tripTime(routeStartTime,this._hass.config.time_zone,showStartDate)}`:''}`;
@@ -221,26 +250,7 @@
           const icon=L.divIcon({className:'',html:iconElement,iconSize:[28,28],iconAnchor:[14,14]});
           L.marker(routeStart,{icon,keyboard:true,title:'Начало маршрута A'}).bindTooltip(label,{direction:'top',offset:[0,-8]}).addTo(this._layer);
         }
-        const hasSpeeds=speedSegments.length===data.segments.length;
-        const hasSpeedData=hasSpeeds&&speedSegments.some(segment=>Array.isArray(segment)&&segment.some(speed=>Number(speed)>0));
-        const limits=speedLimits(this._config);
-        root.querySelector('.speed-legend').hidden=!hasSpeedData&&!parkingSpots.length;
-        for(const [segmentIndex,segment] of data.segments.entries()){
-          if(!hasSpeeds){if(segment.length>1)L.polyline(segment,{color:'#009fce',weight:4,opacity:.85}).addTo(this._layer);continue;}
-          const speeds=speedSegments[segmentIndex]||[],kinds=speedKinds[segmentIndex]||[];
-          for(let index=1;index<segment.length;index++){
-            const rawSpeed=speeds[index-1],speed=Number(rawSpeed);
-            if(kinds[index-1]==='stationary'){
-              const previous=segment[index-1],current=segment[index];
-              if(previous[0]!==current[0]||previous[1]!==current[1])L.polyline([previous,current],{color:'#88949f',weight:3,opacity:.75}).bindTooltip('Записанные GPS-точки: остановка или медленное движение').addTo(this._layer);
-              continue;
-            }
-            if(kinds[index-1]==='unknown'||rawSpeed===null||rawSpeed===undefined||!Number.isFinite(speed)||speed<=0)continue;
-            const color=speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
-            L.polyline([segment[index-1],segment[index]],{color,weight:4,opacity:.9}).bindTooltip(`Средняя скорость: ${Math.round(speed)} км/ч`).addTo(this._layer);
-          }
-        }
-        const parkingOccurrencesForPeriod=parkingOccurrences(parkingSpots,start,end,this._hass.config.time_zone,routeStart?1:0),multiDay=start!==end;
+        const parkingOccurrencesForPeriod=parkingOccurrences(parkingSpots,start,end,this._hass.config.time_zone,separateStart?1:0),multiDay=start!==end;
         for(const parking of parkingOccurrencesForPeriod){
           const latitude=Number(parking.latitude),longitude=Number(parking.longitude),parkingStart=Number(parking.start),parkingEnd=parking.end===null||parking.end===undefined?NaN:Number(parking.end);
           if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||!Number.isFinite(parkingStart))continue;
@@ -262,6 +272,10 @@
             L.marker([Number(position.latitude),Number(position.longitude)],{icon,keyboard:true,title:'Последнее известное положение автомобиля'}).bindTooltip('Последнее известное положение автомобиля').addTo(this._layer);
           }
         }
+        this._routeContext={L,data,start,end};
+        this._overviewLayers=this._layer.getLayers().slice();
+        this._buildTrips(data);
+        this._renderTrips();
         if(this._layer.getLayers().length){this._map.invalidateSize();const key=`${this._config.entity}|${start}|${end}`;if(this._fitKey!==key){this._map.fitBounds(this._layer.getBounds(),{padding:[25,25],maxZoom:16});this._fitKey=key;}}
         else {this._map.setView([20,0],2);this._fitKey=null;}
         mark('render-ready');
@@ -280,6 +294,145 @@
         }
       }catch(err){if(serial===this._serial)error.textContent=err.message || 'Не удалось загрузить историю. Проверьте выбранную сущность.';}
       finally{clearTimeout(timeout);if(serial===this._serial)root.querySelector('.summary').setAttribute('aria-busy','false');}
+    }
+    _buildTrips(data){
+      const stops=(data.parking_spots||[]).filter(p=>Number.isFinite(Number(p.start))).slice().sort((a,b)=>a.start-b.start);
+      const groups=new Map();
+      // A trip is the interval between the end of one stop and the start of the
+      // next. The stop itself is deliberately excluded: otherwise the last GPS
+      // wobble at B becomes a new blue/purple leg before the B marker.
+      const windows=Array.from({length:stops.length+1},(_,index)=>({
+        index,
+        from: index?stops[index-1]:null,
+        to: stops[index]||null,
+        start: index ? Number(stops[index-1].end ?? stops[index-1].observed_until ?? Infinity) : -Infinity,
+        end: index<stops.length ? Number(stops[index].start) : Infinity,
+      })).filter(w=>w.end>w.start);
+      for(const [s,segment] of (data.segments||[]).entries()){
+        let run=null,lastEdge=-1;
+        const times=data.segment_timestamps?.[s]||[];
+        const nextKnown=[];let known=null;
+        for(let i=segment.length-1;i>=0;i--){if(Number.isFinite(times[i]))known=times[i];nextKnown[i]=known;}
+        let previousKnown=null;
+        for(let i=1;i<segment.length;i++){
+          const t=times[i-1];
+          if(Number.isFinite(t))previousKnown=t;
+          const stamp=previousKnown??nextKnown[i];
+          const nextStamp=Number.isFinite(times[i])?times[i]:stamp;
+          const window=windows.find(w=>Number.isFinite(stamp)&&Number.isFinite(nextStamp)
+            &&nextStamp>w.start&&stamp<w.end);
+          const parked=stops.some(stop=>Number(stop.start)<=stamp
+            &&Number(stop.end??stop.observed_until??Infinity)>=nextStamp);
+          if(parked)continue;
+          // Missing time cannot safely be assigned around a stop. Preserve it
+          // as an unclassified leg rather than painting it as a trip.
+          const fallback=!window;
+          const {index,from,to}=window||{index:stops.length+1,from:null,to:null};
+          const key=fallback?`unclassified-${s}`:String(index),unclassified=fallback;
+          // Each source edge has one owner and retains its original geometry.
+          // Separate source segments remain separate runs even in the same trip.
+          const a=segment[i-1],b=segment[i];
+          if(!groups.has(key))groups.set(key,{key,index,from,to,unclassified,runs:[]});
+          const group=groups.get(key);
+          if(!run||run.key!==key||lastEdge!==i-1){run={key,points:[a],speeds:[],kinds:[]};group.runs.push(run);}
+          run.points.push(b);run.speeds.push(data.segment_speeds_kmh?.[s]?.[i-1]);run.kinds.push(data.segment_kinds?.[s]?.[i-1]);lastEdge=i;
+        }
+      }
+      this._trips=[...groups.values()];
+      if(!this._trips.some(t=>t.key===this._selectedTrip))this._selectedTrip=null;
+    }
+    _selectTrip(key){
+      if(!this._map||!this._routeContext)return;
+      if(key!=null&&this._selectedTrip==null)this._overview={center:this._map.getCenter(),zoom:this._map.getZoom()};
+      this._selectedTrip=key;this._renderTrips();
+      if(key==null){if(this._overview)this._map.setView(this._overview.center,this._overview.zoom,{animate:false});this._overview=null;}
+      else if(this._routeLayer.getLayers().length)this._map.fitBounds(this._routeLayer.getBounds(),{padding:[35,55],maxZoom:17,animate:false});
+      this._drawChevrons();
+      if(key!=null)this.shadowRoot.querySelector('.all-trips').focus({preventScroll:true});
+    }
+    _renderTrips(){
+      const {L}=this._routeContext,focused=this._selectedTrip!=null,limits=speedLimits(this._config);
+      if(this._routeLayer)this._layer.removeLayer(this._routeLayer);
+      if(this._arrows)this._map.removeLayer(this._arrows);
+      for(const layer of this._overviewLayers||[]){if(focused)this._layer.removeLayer(layer);else if(!this._layer.hasLayer(layer))this._layer.addLayer(layer);}
+      this._routeLayer=L.featureGroup().addTo(this._layer);this._arrows=L.layerGroup().addTo(this._map);this._arrowRuns=[];
+      const trips=this._trips.filter(t=>!focused||t.key===this._selectedTrip);
+      for(const trip of trips)for(const run of trip.runs){
+        // Round caps turn a run of identical parked fixes into a stray colored
+        // dot. Parking markers already represent these stationary observations.
+        if(!run.points.some(p=>p[0]!==run.points[0][0]||p[1]!==run.points[0][1]))continue;
+        const common={lineCap:'round',lineJoin:'round',smoothFactor:.6,bubblingMouseEvents:false};
+        L.polyline(run.points,{...common,color:'#fff',weight:9,opacity:.85,interactive:false}).addTo(this._routeLayer);
+        const title=trip.unclassified?'Участок с неуточнёнными границами стоянки':`Участок ${trip.index+1}`;
+        if(!focused)L.polyline(run.points,{...common,color:TRIP_COLORS[trip.index%TRIP_COLORS.length],weight:6,opacity:.95,interactive:false}).addTo(this._routeLayer);
+        else {
+          let batch=[],lastColor;
+          const flush=()=>{if(batch.length>1)L.polyline(batch,{...common,color:lastColor,weight:6,opacity:.95,interactive:false}).addTo(this._routeLayer);};
+          for(let i=1;i<run.points.length;i++){
+            const speed=run.speeds[i-1],valid=speed!=null&&Number.isFinite(Number(speed))&&Number(speed)>0&&run.kinds[i-1]!=='unknown'&&run.kinds[i-1]!=='stationary';
+            const color=!valid?'#88949f':speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
+            if(color!==lastColor){flush();batch=[run.points[i-1]];lastColor=color;}batch.push(run.points[i]);
+          }flush();
+        }
+        const hit=L.polyline(run.points,{...common,color:'#000',weight:20,opacity:0,className:'route-hit'}).bindTooltip(focused?`${title} · цвет показывает скорость`:`${title} · нажмите для просмотра скорости`).addTo(this._routeLayer);
+        hit.on('click',()=>{if(!focused)this._selectTrip(trip.key);});
+        if(focused)hit.on('mousemove',event=>{
+          const cursor=this._map.latLngToContainerPoint(event.latlng);let nearest=Infinity,edge=0;
+          for(let i=1;i<run.points.length;i++){
+            const a=this._map.latLngToContainerPoint(run.points[i-1]),b=this._map.latLngToContainerPoint(run.points[i]);
+            const dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy;
+            const fraction=length?Math.max(0,Math.min(1,((cursor.x-a.x)*dx+(cursor.y-a.y)*dy)/length)):0;
+            const distance=(cursor.x-a.x-fraction*dx)**2+(cursor.y-a.y-fraction*dy)**2;
+            if(distance<nearest){nearest=distance;edge=i-1;}
+          }
+          const speed=run.speeds[edge],known=speed!=null&&Number.isFinite(Number(speed))&&Number(speed)>=0&&run.kinds[edge]!=='unknown';
+          hit.setTooltipContent(known?`Средняя скорость: ${Math.round(Number(speed))} км/ч`:'Скорость неизвестна');
+          hit.openTooltip(event.latlng);
+        });
+        const path=hit.getElement?.();if(path&&!focused){path.setAttribute('tabindex','0');path.setAttribute('role','button');path.setAttribute('aria-label',`${title}: показать скорость`);path.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this._selectTrip(trip.key);}});}
+        this._arrowRuns.push(run.points);
+      }
+      if(focused&&trips.length){
+        const trip=trips[0],runs=trip.runs;
+        const endpoints=[[trip.from,runs[0].points[0],'Начальная стоянка'],[trip.to,runs.at(-1).points.at(-1),'Конечная стоянка']];
+        for(const [stop,fix,text] of endpoints){
+          const point=stop?[Number(stop.latitude),Number(stop.longitude)]:fix;
+          if(stop&&this._map.distance(point,fix)>3)L.polyline([point,fix],{color:'#88949f',weight:2,dashArray:'5 7',interactive:true}).bindTooltip('Связь со стоянкой: точная траектория не записана').addTo(this._routeLayer);
+          L.circleMarker(point,{radius:6,color:'#fff',weight:3,fillColor:'#334155',fillOpacity:1}).bindTooltip(stop?text:'Граница доступной GPS-записи').addTo(this._routeLayer);
+        }
+        for(let i=1;i<runs.length;i++){
+          const a=runs[i-1].points.at(-1),b=runs[i].points[0];
+          if(this._map.distance(a,b)>3)L.polyline([a,b],{color:'#88949f',weight:2,dashArray:'5 7'}).bindTooltip('Разрыв GPS-записи: точная траектория неизвестна').addTo(this._routeLayer);
+        }
+      }
+      this.shadowRoot.querySelector('.all-trips').hidden=!focused;
+      this.shadowRoot.querySelector('.trip-caption').hidden=true;
+      this.shadowRoot.querySelector('.speed-legend').hidden=!focused;
+      this._drawChevrons();
+    }
+    _drawChevrons(){
+      if(!this._map||!this._arrows||!this._routeContext)return;
+      this._arrows.clearLayers();const {L}=this._routeContext,size=this._map.getSize(),paths=[];
+      for(const run of this._arrowRuns||[]){let remaining=24;
+        for(let i=1;i<run.length;i++){
+          const a=this._map.latLngToContainerPoint(run[i-1]),b=this._map.latLngToContainerPoint(run[i]);
+          const dx=b.x-a.x,dy=b.y-a.y,length=Math.hypot(dx,dy);if(!length)continue;
+          const ux=dx/length,uy=dy/length;
+          // Pixel spacing is stable at every zoom; offscreen arrows use no layers.
+          let low=0,high=length;
+          for(const [origin,unit,max] of [[a.x,ux,size.x],[a.y,uy,size.y]]){
+            if(Math.abs(unit)<1e-9){if(origin<0||origin>max)high=-1;}
+            else {const enter=(0-origin)/unit,exit=(max-origin)/unit;low=Math.max(low,Math.min(enter,exit));high=Math.min(high,Math.max(enter,exit));}
+          }
+          const first=remaining+Math.max(0,Math.ceil((low-remaining)/38))*38;
+          for(let d=first;d<=high;d+=38){const x=a.x+ux*d,y=a.y+uy*d;
+            paths.push([[x-ux*4-uy*3,y-uy*4+ux*3],[x,y],[x-ux*4+uy*3,y-uy*4-ux*3]].map(p=>this._map.containerPointToLatLng(p)));
+            if(paths.length>=1600)break;
+          }
+          remaining=((remaining-length)%38+38)%38||38;if(paths.length>=1600)break;
+        }if(paths.length>=1600)break;
+      }
+      if(paths.length)L.polyline(paths,{color:'#fff',weight:1.8,opacity:.95,interactive:false,lineCap:'round',lineJoin:'round',smoothFactor:0}).addTo(this._arrows);
     }
     _diagnosticText(data,start,end){
       const info=data.diagnostics||{},counts=info.source_counts||data.source_counts||{},app=Number(counts.app)||0,cloud=Number(counts.cloud)||0;
@@ -306,7 +459,7 @@
       this._config=config;const limits=speedLimits(config);
       for(const [key,field] of Object.entries(this._fields || {})){
         if(this._editingSpeed&&['speed_green_max','speed_red_min'].includes(key))continue;
-        field.value=key==='speed_green_max'?limits.green:key==='speed_red_min'?limits.red:config[key] || (key==='map_style'?'positron':'');
+        field.value=key==='show_download_points'?config[key]!==false:key==='speed_green_max'?limits.green:key==='speed_red_min'?limits.red:config[key] || (key==='map_style'?'positron':'');
       }
       this._render();
     }
@@ -321,6 +474,9 @@
       const field=document.createElement('ha-selector');field.hass=this._hass;field.selector={select:{mode:'dropdown',options:Object.entries(STYLES).map(([value,label])=>({value,label}))}};field.value=this._config.map_style || 'positron';this._fields.map_style=field;
       field.addEventListener('value-changed',e=>{this._config={...this._config,map_style:e.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(label,field);
       const section=document.createElement('div');section.textContent='Диапазоны цветов скорости';section.style.cssText='font-weight:600;margin:4px 0 12px';this.append(section);
+      const downloadLabel=document.createElement('label');downloadLabel.textContent='Показывать кнопку «Скачать точки»';
+      const downloadField=document.createElement('ha-selector');downloadField.hass=this._hass;downloadField.selector={boolean:{}};downloadField.value=this._config.show_download_points!==false;this._fields.show_download_points=downloadField;
+      downloadField.addEventListener('value-changed',e=>{this._config={...this._config,show_download_points:!!e.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(downloadLabel,downloadField);
       const limits=speedLimits(this._config);
       for(const [key,title] of [['speed_green_max','Зелёный: до, км/ч'],['speed_red_min','Красный: от, км/ч']]){
         const speedLabel=document.createElement('label');speedLabel.textContent=title;

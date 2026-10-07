@@ -73,6 +73,16 @@ public class QueueDbTest {
         assertEquals(200,batch.points.length());
         assertEquals("point-1",batch.points.getJSONObject(1).getString("id"));
     }
+    @Test public void lostReplyAndProcessRestartResendSameIdsBeforeAcknowledgement() throws Exception {
+        db.append(point(1)); db.append(point(2));
+        JSONArray sent=db.batch();
+        // Receiver committed the batch, but the connection disappeared before ACK.
+        db.close();db=new QueueDb(context);
+        JSONArray retry=db.batch();
+        assertEquals(sent.toString(),retry.toString());assertEquals(2,db.count());
+        db.acknowledge(new JSONArray().put("point-1").put("point-2"),retry);
+        assertEquals(0,db.count());
+    }
     @Test public void modeSwitchJournalSurvivesRestartAndKeepsOtherVehicle() throws Exception {
         db.append(point(1),"https://ha.test","jolion","old");
         db.append(point(2),"https://ha.test","other","other-key");

@@ -12,10 +12,10 @@
 gradle --no-daemon clean testDebugUnitTest lintDebug assembleRelease
 ```
 
-Для публикации задайте signing config через переменные окружения или локальный
-неотслеживаемый файл Gradle (не храните пароли и keystore в Git), затем соберите
-`assembleRelease`. Пока release signing config не настроен, Gradle подпишет
-release-APK временным debug-ключом — такой APK не является публичным релизом.
+Для публикации настройте `android/signing.properties` (поля `storeFile`,
+`storePassword`, `keyAlias`, `keyPassword`), затем соберите `assembleRelease`.
+Без этого файла release-APK остаётся неподписанным; debug-ключ автоматически
+не подставляется. Пароли и keystore не храните в Git.
 Проверьте APK через `apksigner verify --verbose --print-certs` и установите его
 поверх предыдущей сборки на целевом ГУ перед публикацией.
 
@@ -48,11 +48,48 @@ npm run test:browser
 
 CI выполняет Python- и Android-проверки независимо.
 
+### Проверки настоящего HA
+
+Зафиксированное окружение: Python 3.14, HA 2026.10.0b0, зависимости
+`tests/ha/requirements.txt`. Это проверка совместимости с текущей beta HA;
+Минимальная версия в HACS — HA 2026.7.
+Для Linux:
+
+```sh
+python -m venv .venv-ha
+.venv-ha/bin/pip install -r tests/ha/requirements.txt
+GWM_HA_STRICT=1 .venv-ha/bin/python -m pytest -q tests/ha -o asyncio_mode=auto
+```
+
+Строгий режим завершает проверку ошибкой при пропущенных тестах. Windows:
+`uv pip install --python .venv-ha-modern/Scripts/python.exe -r tests/ha/requirements.txt`,
+затем `.venv-ha-modern\Scripts\python.exe tools/run_ha_tests.py`.
+Этот вспомогательный запуск адаптирует только POSIX-импорты CLI и создание
+локальной пары сокетов asyncio; вызовы POSIX-заглушек вызывают ошибку.
+Эталонный запуск в CI использует Linux без этих адаптеров.
+
 После успешной сборки создайте локальный комплект:
 
 ```sh
 python scripts/package_release.py
 ```
+
+Перед выпуском проверьте комплект офлайн (пример для следующей версии):
+
+```sh
+python scripts/check_release.py --tag 0.2.0 --previous-code 13
+```
+
+Проверяются тег, версии manifest/Gradle/APK, возрастание `versionCode`, пакет,
+SDK, прежний сертификат, SHA-256 и CRC архивов. Номер прошлого APK нужно брать
+из последнего опубликованного APK или распространённой тестовой сборки.
+Стабильная 0.2.0 использует код 14 для обновления тестовых APK с кодом 13.
+
+Workflow `Version release` запускается вручную. Он выполняет тесты, собирает и
+публикует APK, ZIP и `SHA256SUMS.txt`; beta получает флаг prerelease.
+Для него нужны GitHub secrets `ANDROID_KEYSTORE_BASE64` и
+`ANDROID_SIGNING_PROPERTIES` (содержимое signing.properties, `storeFile=release-signing.jks`).
+Локальные скрипты GitHub не изменяют. Подготовка workflow не означает его запуск.
 
 В `dist/` появятся APK, архив HA, общий архив и `SHA256SUMS.txt`. Скрипт проверяет совпадение версий и берёт компонент из **этого** репозитория. Архив HA можно распаковать в каталог конфигурации HA; после установки перезапустите HA и обновите браузер. Детальная настройка — в [руководстве Locator](golion-locator.md) и [инструкции для Яндекс.Диска](golion-locator-yandex.md).
 

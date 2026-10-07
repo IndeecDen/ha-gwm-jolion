@@ -153,6 +153,10 @@ class Archive:
             row = conn.execute("SELECT * FROM points ORDER BY timestamp_ms DESC, accuracy_m ASC, id DESC LIMIT 1").fetchone()
             return dict(row) if row else None
 
+    def latest_received_ms(self):
+        with self.connect() as conn:
+            return conn.execute("SELECT MAX(received_ms) FROM points").fetchone()[0]
+
     def prune(self, days=30):
         with self.connect() as conn:
             conn.execute("DELETE FROM points WHERE received_ms<?", (int((time.time()-days*86400)*1000),))

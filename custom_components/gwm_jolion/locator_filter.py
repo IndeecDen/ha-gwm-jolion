@@ -6,9 +6,8 @@ from math import hypot, cos, radians
 # their combined error cannot prove movement. Measured on a real archive, poor
 # fixes wander p50 22 m / p90 110 m while parked.
 POOR_ACCURACY_M = 10
-# Releasing a stationary hold cannot teleport. At 1 Hz a car accelerating from
-# rest covers a few metres per tick, so a first step of a hundred metres is a
-# false fix, not a departure.
+# Minimum departure tolerance. Sparse fixes must also account for elapsed time;
+# at 1 Hz a hundred-metre step is still a false fix, not a departure.
 LAUNCH_STEP_M = 25
 SPEED_TOLERANCE = 3.0
 # Re-emergence after a real signal outage may legitimately be far away, so this
@@ -51,13 +50,22 @@ def confirmed(points):
     elapsed=(points[-1]['timestamp_ms']-points[0]['timestamp_ms'])/1000
     if elapsed<2:return False
     accuracy=max(p.get('accuracy_m') or 0 for p in points)
-    measured=all(moving_speed(p) for p in points)
+    measured=all(moving_speed(p) or precise_creep(p) for p in points)
     if accuracy>(35 if measured else 25):return False
     if not measured and (len(points)<6 or elapsed<5):return False
     net=meters(points[0],points[-1])
     path=sum(meters(a,b) for a,b in zip(points,points[1:]))
     threshold=max(3,min(12,accuracy*.5)) if measured else max(10,accuracy*1.5)
     return net>=threshold and path>0 and net/path>=.8 and net/elapsed*3.6<=max(25,max(p.get('speed_kmh') or 0 for p in points)*2+10)
+
+
+def precise_creep(point):
+    """Positive measured motion below walking speed is still a manoeuvre."""
+    speed=point.get('speed_kmh')
+    error=point.get('speed_accuracy_kmh')
+    accuracy=point.get('accuracy_m')
+    return (speed is not None and error is not None and accuracy is not None
+            and 0 <= error and 0 < accuracy <= 10 and speed-2*error > 0)
 
 
 def anchored_hold(previous):
@@ -83,7 +91,12 @@ def step_limit(previous, p, elapsed, resuming=False):
     accuracy = p.get("accuracy_m")
     slack = 2.0 + (accuracy if accuracy is not None else 20.0)
     if anchored_hold(previous):
-        return max(LAUNCH_STEP_M, slack)
+        speed = p.get("speed_kmh")
+        # Confirmation still requires directed movement. Use the last observed
+        # stationary timestamp, not the beginning of a possibly hours-long stop.
+        travel = (min(UNBOUNDED_SPEED_KMH, max(0.0, speed) * SPEED_TOLERANCE) / 3.6 * elapsed
+                  if speed is not None else min(1.5 * elapsed ** 2, UNBOUNDED_SPEED_KMH / 3.6 * elapsed))
+        return max(LAUNCH_STEP_M, slack + travel)
     speed = p.get("speed_kmh")
     if speed is None:
         return slack + UNBOUNDED_SPEED_KMH / 3.6 * elapsed
@@ -120,7 +133,7 @@ def _leg(points):
         if stopped:
             anchor_accuracy=anchor.get('accuracy_m')
             if not pending and accuracy<(anchor_accuracy if anchor_accuracy is not None else 100):anchor=p
-            plausible=(speed is None or speed>=1.5 or uncertain_speed(p)) and accuracy<=35
+            plausible=(speed is None or speed>=1.5 or uncertain_speed(p) or precise_creep(p)) and accuracy<=35
             if plausible:pending.append(i)
             else:pending=[]
             pending=pending[-20:]
@@ -132,13 +145,11 @@ def _leg(points):
                 release=pending[0]
                 skipped=False
                 kept={'latitude':anchor['latitude'],'longitude':anchor['longitude'],
-                      'speed_kmh':0,'timestamp_ms':anchor['timestamp_ms'],
+                       'speed_kmh':0,'timestamp_ms':points[max(start,release-1)]['timestamp_ms'],
                       'display_filtered':True}
                 for j in pending:
                     candidate=points[j]
-                    # The hold may be hours old, but a car leaving from rest covers
-                    # a few metres per fix. Judge the step, not the elapsed time.
-                    gap=min((candidate['timestamp_ms']-kept['timestamp_ms'])/1000,5.0)
+                    gap=(candidate['timestamp_ms']-kept['timestamp_ms'])/1000
                     if meters(kept,candidate)>step_limit(kept,candidate,gap):
                         skipped=True
                         continue
@@ -155,7 +166,7 @@ def _leg(points):
             previous=out[i-1]
             elapsed=(p['timestamp_ms']-previous['timestamp_ms'])/1000
             step=meters(previous,p)
-            if (speed is not None and speed<=MOVING_FLOOR_KMH and uncertain_speed(p)
+            if (speed is not None and speed<=MOVING_FLOOR_KMH and uncertain_speed(p) and not precise_creep(p)
                     and step<=max(HOLD_MIN_M,accuracy*HOLD_ACCURACY_FACTOR)
                     and not confirmed(points[max(start,i-HOLD_WINDOW+1):i+1])):
                 # Nearly stopped on a speed reading that proves nothing: a wobble
@@ -188,7 +199,7 @@ def _leg(points):
                 continue
             reacquire=[]
             uncertain=uncertain_speed(p)
-            if (speed is not None and speed<1.5) or uncertain:
+            if (speed is not None and speed<1.5 and not precise_creep(p)) or (uncertain and not precise_creep(p)):
                 slow.append(i)
                 candidates=[points[j] for j in slow]
                 noisy=any(uncertain_speed(q) for q in candidates)
