@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import argparse
 import json
 from pathlib import Path
 import re
@@ -11,6 +12,26 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "gwm_jolion"
 VERSION = json.loads((COMPONENT / "manifest.json").read_text(encoding="utf-8"))["version"]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--integration-only", action="store_true", help="Package an HA-only release without rebuilding Android")
+args = parser.parse_args()
+OUT = ROOT / "dist"
+OUT.mkdir(exist_ok=True)
+ha_out = OUT / f"ha-gwm-jolion-{VERSION}.zip"
+
+def package_integration():
+    with zipfile.ZipFile(ha_out, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(COMPONENT.rglob("*")):
+            if path.is_file() and not any(part == "__pycache__" for part in path.parts) and path.suffix != ".pyc":
+                archive.write(path, path.relative_to(ROOT).as_posix())
+
+if args.integration_only:
+    package_integration()
+    (OUT / "SHA256SUMS.txt").write_text(f"{hashlib.sha256(ha_out.read_bytes()).hexdigest()}  {ha_out.name}\n", encoding="utf-8")
+    print(ha_out)
+    print(OUT / "SHA256SUMS.txt")
+    raise SystemExit(0)
+
 APK_VERSION = (ROOT / "android" / "app" / "build.gradle").read_text(encoding="utf-8")
 if f"versionName '{VERSION}'" not in APK_VERSION:
     raise SystemExit("HA and Android versions differ")
@@ -25,17 +46,11 @@ android_inputs.extend(p for p in (ROOT / "android" / "app" / "src" / "main").rgl
 if any(p.stat().st_mtime_ns > APK.stat().st_mtime_ns for p in android_inputs):
     raise SystemExit("Android sources are newer than the APK. Run assembleRelease before packaging.")
 
-OUT = ROOT / "dist"
-OUT.mkdir(exist_ok=True)
 safe_version = re.sub(r"[^0-9A-Za-z._-]", "_", VERSION)
 apk_out = OUT / f"Jolion.Locator.{safe_version}.apk"
 apk_out.write_bytes(APK.read_bytes())
 
-ha_out = OUT / f"ha-gwm-jolion-{VERSION}.zip"
-with zipfile.ZipFile(ha_out, "w", zipfile.ZIP_DEFLATED) as archive:
-    for path in sorted(COMPONENT.rglob("*")):
-        if path.is_file() and not any(part == "__pycache__" for part in path.parts) and path.suffix != ".pyc":
-            archive.write(path, path.relative_to(ROOT).as_posix())
+package_integration()
 
 bundle_out = OUT / f"ha-gwm-jolion-{VERSION}-bundle.zip"
 with zipfile.ZipFile(bundle_out, "w", zipfile.ZIP_DEFLATED) as archive:

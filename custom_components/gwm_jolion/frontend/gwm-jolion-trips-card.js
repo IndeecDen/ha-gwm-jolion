@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.2.0-beta.2 */
+/* GWM Jolion Trips Card v0.2.1 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -43,6 +43,24 @@
   function dayInZone(value, zone){const parts=new Intl.DateTimeFormat('en',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(value*1000)),get=type=>parts.find(part=>part.type===type).value;return `${get('year')}-${get('month')}-${get('day')}`;}
   function dateRange(start,end){const dates=[],last=new Date(`${end}T00:00:00Z`);for(let value=new Date(`${start}T00:00:00Z`);value<=last;value.setUTCDate(value.getUTCDate()+1))dates.push(value.toISOString().slice(0,10));return dates;}
   function pointLabel(index){let value=index,label='';do{label=String.fromCharCode(65+value%26)+label;value=Math.floor(value/26)-1;}while(value>=0);return label;}
+  function routeGpx(data,start,end){
+    const segments=[];
+    for(const [s,points] of (data.segments||[]).entries()){
+      let run=[];
+      const flush=()=>{if(run.length)segments.push(`    <trkseg>\n${run.join('\n')}\n    </trkseg>`);run=[];};
+      for(const [i,point] of points.entries()){
+        const [lat,lon]=point||[];
+        if(!Number.isFinite(lat)||!Number.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180){flush();continue;}
+        const stamp=data.segment_timestamps?.[s]?.[i],date=Number.isFinite(stamp)?new Date(stamp*1000):null;
+        const time=date&&Number.isFinite(date.getTime())?`<time>${date.toISOString()}</time>`:'';
+        run.push(`      <trkpt lat="${lat}" lon="${lon}">${time}</trkpt>`);
+      }
+      flush();
+    }
+    if(!segments.length)return null;
+    const escape=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[char]));
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="GWM Jolion" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk>\n    <name>${escape(`Jolion ${start} — ${end}`)}</name>\n${segments.join('\n')}\n  </trk>\n</gpx>\n`;
+  }
   function parkingOccurrences(spots,start,end,zone,firstIndex=0){let sequence=firstIndex;const spotOffsets={};return spots.flatMap(spot=>{const started=Number(spot.start),ended=spot.end===null||spot.end===undefined?NaN:Number(spot.end),startDay=dayInZone(started,zone),endDay=dayInZone(Number.isFinite(ended)?ended:Number(spot.observed_until ?? (started+Number(spot.duration || 0))),zone),spotKey=`${spot.latitude}|${spot.longitude}|${spot.start}|${spot.end}`;return dateRange(start,end).filter(day=>startDay<=day&&(!endDay||day<=endDay)).map(day=>{const index=sequence++,offset=spotOffsets[spotKey]||0;spotOffsets[spotKey]=offset+1;return {...spot,day,label:pointLabel(index),offset_index:offset,show_end:Number.isFinite(ended)&&day===endDay};});});}
   class TripsCard extends HTMLElement {
     static getConfigElement() { return document.createElement('gwm-jolion-trips-card-editor'); }
@@ -88,6 +106,14 @@
         const link=document.createElement('a');link.href=url;link.download=`jolion-track-${start}-${end}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
       };navigation.append(exportButton);
       this._exportButton=exportButton;
+      const gpxButton=document.createElement('button');gpxButton.type='button';gpxButton.className='download-gpx';gpxButton.textContent='Скачать GPX';gpxButton.title='Маршрут за весь выбранный период в формате GPX';gpxButton.hidden=true;gpxButton.disabled=true;
+      gpxButton.onclick=()=>{
+        if(!this._routeContext)return;
+        const {data,start,end}=this._routeContext,gpx=routeGpx(data,start,end);
+        if(!gpx)return;
+        const url=URL.createObjectURL(new Blob([gpx],{type:'application/gpx+xml;charset=utf-8'}));
+        const link=document.createElement('a');link.href=url;link.download=`jolion-track-${start}-${end}.gpx`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      };navigation.append(gpxButton);this._gpxButton=gpxButton;
       const closeButton=document.createElement('button');closeButton.type='button';closeButton.textContent='✕ Закрыть карту';closeButton.hidden=true;closeButton.className='close-map';
       closeButton.style.cssText='min-height:48px;touch-action:manipulation';
       closeButton.onclick=()=>this._exitFullscreen();navigation.append(closeButton);this._closeMapButton=closeButton;
@@ -104,6 +130,8 @@
     setConfig(config) {
       this._config={...config}; this._serial++;this._fitKey=null;this._selectedTrip=null;this._overview=null;
       this._exportButton.hidden=config.show_download_points===false;
+      this._gpxButton.hidden=config.show_download_gpx!==true;
+      this._routeContext=null;this._gpxButton.disabled=true;
       this.setAttribute('aria-label',config.title || 'Поездки');
       this._updateSpeedLegend();
       this._layer?.clearLayers(); this._load();
@@ -192,7 +220,7 @@
       this._highlight();
       if(!start || !end || start>end){error.textContent='Проверьте начало и конец периода.';return;}
       const queryKey=`${this._config.entity}|${this._config.odometer_entity || ''}|${start}|${end}`;
-      if(this._queryKey!==queryKey){this._selectedTrip=null;this._overview=null;this._arrowRuns=[];this._arrows?.clearLayers();this._layer?.clearLayers();root.querySelector('.all-trips').hidden=true;root.querySelector('.speed-legend').hidden=true;root.querySelector('.km').textContent='—';this._queryKey=queryKey;}
+      if(this._queryKey!==queryKey){this._routeContext=null;this._gpxButton.disabled=true;this._selectedTrip=null;this._overview=null;this._arrowRuns=[];this._arrows?.clearLayers();this._layer?.clearLayers();root.querySelector('.all-trips').hidden=true;root.querySelector('.speed-legend').hidden=true;root.querySelector('.km').textContent='—';this._queryKey=queryKey;}
       error.textContent='';root.querySelector('.summary').setAttribute('aria-busy','true');
       const perfKey=`gwm-trips:${this._config.entity}:${start}:${end}:${serial}`;
       const mark=(suffix)=>{try{performance.mark(`${perfKey}:${suffix}`);}catch{}};
@@ -273,6 +301,7 @@
           }
         }
         this._routeContext={L,data,start,end};
+        this._gpxButton.disabled=!(data.segments||[]).some(segment=>segment.some(point=>point&&Number.isFinite(point[0])&&Number.isFinite(point[1])&&Math.abs(point[0])<=90&&Math.abs(point[1])<=180));
         this._overviewLayers=this._layer.getLayers().slice();
         this._buildTrips(data);
         this._renderTrips();
@@ -459,7 +488,7 @@
       this._config=config;const limits=speedLimits(config);
       for(const [key,field] of Object.entries(this._fields || {})){
         if(this._editingSpeed&&['speed_green_max','speed_red_min'].includes(key))continue;
-        field.value=key==='show_download_points'?config[key]!==false:key==='speed_green_max'?limits.green:key==='speed_red_min'?limits.red:config[key] || (key==='map_style'?'positron':'');
+        field.value=key==='show_download_gpx'?config[key]===true:key==='show_download_points'?config[key]!==false:key==='speed_green_max'?limits.green:key==='speed_red_min'?limits.red:config[key] || (key==='map_style'?'positron':'');
       }
       this._render();
     }
@@ -477,6 +506,9 @@
       const downloadLabel=document.createElement('label');downloadLabel.textContent='Показывать кнопку «Скачать точки»';
       const downloadField=document.createElement('ha-selector');downloadField.hass=this._hass;downloadField.selector={boolean:{}};downloadField.value=this._config.show_download_points!==false;this._fields.show_download_points=downloadField;
       downloadField.addEventListener('value-changed',e=>{this._config={...this._config,show_download_points:!!e.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(downloadLabel,downloadField);
+      const gpxLabel=document.createElement('label');gpxLabel.textContent='Показывать кнопку «Скачать GPX»';
+      const gpxField=document.createElement('ha-selector');gpxField.hass=this._hass;gpxField.selector={boolean:{}};gpxField.value=this._config.show_download_gpx===true;this._fields.show_download_gpx=gpxField;
+      gpxField.addEventListener('value-changed',e=>{this._config={...this._config,show_download_gpx:!!e.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(gpxLabel,gpxField);
       const limits=speedLimits(this._config);
       for(const [key,title] of [['speed_green_max','Зелёный: до, км/ч'],['speed_red_min','Красный: от, км/ч']]){
         const speedLabel=document.createElement('label');speedLabel.textContent=title;

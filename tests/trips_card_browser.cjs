@@ -53,6 +53,44 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
   await page.evaluate(()=>editor._fields.speed_red_min.dispatchEvent(new CustomEvent('value-changed',{detail:{value:'2'}})));
   assert.equal(await page.evaluate(()=>String(editor._fields.speed_red_min.value)),'110','editing green must not force red threshold to a boundary');
 
+  assert.equal(await page.locator('.download-gpx').isVisible(),false,'GPX export is hidden by default');
+  assert.equal(await page.evaluate(()=>editor._fields.show_download_gpx.value),false);
+  await page.evaluate(async()=>{
+   window.originalSample=structuredClone(sample);
+   editor.addEventListener('config-changed',event=>{window.gpxConfig=event.detail.config;});
+   editor._fields.show_download_gpx.dispatchEvent(new CustomEvent('value-changed',{detail:{value:true}}));
+   card.setConfig({...card._config,show_download_gpx:gpxConfig.show_download_gpx});
+   sample={...sample,segments:[[[55,37],[55.001,37.001]],[[56,38],[56.001,38.001]]],segment_timestamps:[[1791046800,1791046860],[null,1791046980]],gaps:[{from:[55.001,37.001],to:[56,38]}]};
+   await card._load();card._selectTrip(card._trips[0].key);
+  });
+  assert.equal(await page.locator('.download-gpx').isVisible(),true);
+  const downloading=page.waitForEvent('download');
+  await page.locator('.download-gpx').click();
+  const gpxDownload=await downloading;
+  assert.equal(gpxDownload.suggestedFilename(),'jolion-track-2026-10-03-2026-10-03.gpx');
+  const xml=fs.readFileSync(await gpxDownload.path(),'utf8');
+  const parsed=await page.evaluate(xml=>{
+   const doc=new DOMParser().parseFromString(xml,'application/xml');
+   return {error:!!doc.querySelector('parsererror'),version:doc.documentElement.getAttribute('version'),namespace:doc.documentElement.namespaceURI,
+    segments:[...doc.querySelectorAll('trkseg')].map(segment=>[...segment.querySelectorAll('trkpt')].map(point=>[point.getAttribute('lat'),point.getAttribute('lon'),point.querySelector('time')?.textContent||null]))};
+  },xml);
+  assert.equal(parsed.error,false);assert.equal(parsed.version,'1.1');assert.equal(parsed.namespace,'http://www.topografix.com/GPX/1/1');
+  assert.deepEqual(parsed.segments,[[['55','37',new Date(1791046800000).toISOString()],['55.001','37.001',new Date(1791046860000).toISOString()]],[['56','38',null],['56.001','38.001',new Date(1791046980000).toISOString()]]],'whole period exported even when a trip is focused, with separate GPS segments and no invented timestamps');
+  await page.evaluate(async()=>{
+   window.finishGpxHistory=null;hass.callWS=()=>new Promise(resolve=>{finishGpxHistory=resolve;});
+   card._range=['2026-10-01','2026-10-02'];window.gpxLoading=card._load();
+  });
+  assert.equal(await page.locator('.download-gpx').isDisabled(),true,'cannot export previous period while new dates load');
+  await page.evaluate(async()=>{finishGpxHistory({...sample,segments:[],samples:0});await gpxLoading;});
+  assert.equal(await page.locator('.download-gpx').isDisabled(),true,'no empty GPX download for a period without coordinates');
+  await page.evaluate(async()=>{
+   sample=originalSample;hass.callWS=async()=>structuredClone(sample);card._range=['2026-10-03','2026-10-03'];
+   editor._fields.show_download_gpx.dispatchEvent(new CustomEvent('value-changed',{detail:{value:false}}));
+   editor.setConfig(gpxConfig);card.setConfig({...card._config,show_download_gpx:gpxConfig.show_download_gpx});await card._load();
+  });
+  assert.equal(await page.locator('.download-gpx').isVisible(),false,'editor can hide the GPX button again');
+  assert.equal(await page.evaluate(()=>editor._fields.show_download_gpx.value),false);
+
   const parallel=await page.evaluate(async()=>{
    let finish;window.hass.callWS=()=>new Promise(resolve=>{finish=()=>resolve(structuredClone(sample));});
    const before=performance.now();const loading=card._load();

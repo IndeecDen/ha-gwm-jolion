@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 DOMAIN = "gwm_jolion"
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 PLATFORMS = ["button", "sensor", "binary_sensor", "device_tracker", "lock", "climate", "number"]
 
 CONF_PHONE = "phone"
@@ -171,4 +171,3 @@ BINARY_SENSOR_DEFS = (
     ("trunk_open", "Багажник открыт", "door", False),
     ("climate_on", "Климат работает", "running", False),
 )
-
