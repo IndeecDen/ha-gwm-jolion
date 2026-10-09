@@ -138,6 +138,28 @@ async def test_cloud_only_setup_creates_available_tracker(hass):
     assert tracker.attributes["latitude"] == CLOUD_PAYLOAD["location"]["latitude"]
 
 
+async def test_cards_are_awaited_lovelace_resources_and_old_urls_are_updated(hass):
+    from homeassistant.components.lovelace import LOVELACE_DATA
+    from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
+    from custom_components.gwm_jolion import INTEGRATION_VERSION, _async_register_frontend
+
+    entry = await _setup(hass)
+    assert entry.state is ConfigEntryState.LOADED
+    resources = hass.data[LOVELACE_DATA].resources
+    cards = [item for item in resources.async_items() if "/gwm-jolion/" in item["url"]]
+    assert len(cards) == 5
+    assert all(item["type"] == "module" and item["url"].endswith(f"?v={INTEGRATION_VERSION}") for item in cards)
+    assert not any("trips-card.js" in url for url in hass.data[DATA_EXTRA_MODULE_URL].urls)
+    old = cards[0]
+    await resources.async_update_item(old["id"], {"url": old["url"].split("?")[0]+"?v=old"})
+    # Model a process restart without registering the static paths twice.
+    hass.data[DOMAIN]["_frontend_registered"] = False
+    with patch.object(hass.http, "async_register_static_paths", AsyncMock()), patch("custom_components.gwm_jolion.panel_custom.async_register_panel", AsyncMock()):
+        await _async_register_frontend(hass)
+    assert len(resources.async_items()) == 5
+    assert all(item["url"].endswith(f"?v={INTEGRATION_VERSION}") for item in resources.async_items())
+
+
 async def test_tracker_reports_the_last_known_fix_when_the_cloud_is_unreachable(hass):
     """A dead cloud must not blank the position: automations still need a point."""
     entry = await _setup(hass)

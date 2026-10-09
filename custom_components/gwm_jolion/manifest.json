@@ -10,6 +10,7 @@
   "config_flow": true,
   "dependencies": [
     "frontend",
+    "lovelace",
     "http",
     "websocket_api",
     "panel_custom"
@@ -18,5 +19,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/IndeecDen/ha-gwm-jolion/issues",
   "requirements": [],
-  "version": "0.2.1"
+  "version": "0.2.2"
 }

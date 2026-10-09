@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.2.1 */
+/* GWM Jolion Trips Card v0.2.2 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -81,7 +81,7 @@
         .summary{justify-content:center;margin:0 0 8px;gap:8px}.km{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}.summary ha-icon{color:var(--secondary-text-color);--mdc-icon-size:22px}.shortcuts{justify-content:center;flex-wrap:nowrap;gap:6px}#calendar{display:flex;align-items:center;justify-content:center;width:34px;height:32px;padding:0}#calendar ha-icon{--mdc-icon-size:19px}
         .speed-legend{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:0 0 10px;color:var(--secondary-text-color);font-size:11px}.speed-legend[hidden]{display:none}.speed-legend span{display:flex;align-items:center;gap:4px}.speed-legend i{width:10px;height:4px;border-radius:2px;background:#888}.speed-legend b{font-weight:400}.speed-legend .low{background:#2e7d32}.speed-legend .medium{background:#f9a825}.speed-legend .high{background:#c62828}
         .route-point{width:28px;height:28px;border-radius:50%;background:#fff;color:#263238;border:3px solid #455a64;box-shadow:0 1px 5px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;font:700 13px/1 Arial,sans-serif;box-sizing:border-box}
-        .error,.map-status{color:var(--secondary-text-color);font-size:12px;text-align:center}.error:empty,.map-status:empty{display:none}.error:not(:empty),.map-status:not(:empty){margin-top:8px}.map-wrap{position:relative;height:300px;background:#e9edef}.map{height:100%;background:#e9edef;z-index:0}
+        .error,.map-status,.loading-status{color:var(--secondary-text-color);font-size:12px;text-align:center}.error:empty,.map-status:empty,.loading-status:empty{display:none}.error:not(:empty),.map-status:not(:empty),.loading-status:not(:empty){margin-top:8px}.map-wrap{position:relative;height:300px;background:#e9edef}.map{height:100%;background:#e9edef;z-index:0}
         .map-actions{position:absolute;top:8px;right:8px;z-index:1000;display:flex;gap:6px}.map-actions button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;background:var(--card-background-color,#fff);box-shadow:0 1px 5px rgba(0,0,0,.28)}.map-actions ha-icon{--mdc-icon-size:19px}
         :host(.fallback-fullscreen){position:fixed;inset:0;z-index:1000;display:block;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) ha-card,ha-card:fullscreen{width:100%;height:100%;min-height:100%;display:flex;flex-direction:column;border-radius:0;background:var(--card-background-color,#fff)}:host(.fallback-fullscreen) .map-wrap,ha-card:fullscreen .map-wrap{flex:1;height:auto;min-height:0}:host(.fallback-fullscreen) .content,ha-card:fullscreen .content{display:none}
         .leaflet-container{font-family:inherit}.leaflet-control-attribution{font-size:10px}
@@ -92,7 +92,7 @@
       <div class="summary"><ha-icon icon="mdi:counter" aria-hidden="true"></ha-icon><span class="km" aria-label="Пробег за выбранный период">—</span></div>
       <div class="shortcuts"><button data-mode="today">Сегодня</button><button data-mode="yesterday">Вчера</button><button data-mode="week">Неделя</button><button id="calendar" title="Выбрать период" aria-label="Выбрать период" aria-expanded="false" aria-controls="period"><ha-icon icon="mdi:calendar-range"></ha-icon></button></div>
       <div class="dates" id="period" hidden><label>С<input type="date" id="start"></label><label>По<input type="date" id="end"></label><button id="show">Выбрать</button></div>
-      <div class="error" role="status"></div><div class="map-status" role="status"></div><div class="diagnostics" role="status" hidden></div></div></ha-card>`;
+      <div class="loading-status" role="status"></div><div class="error" role="status"></div><div class="map-status" role="status"></div><div class="diagnostics" role="status" hidden></div></div></ha-card>`;
       this._mapCard=this.shadowRoot.querySelector('ha-card');
       const navigation=document.createElement('div');navigation.className='trip-navigation';
       navigation.innerHTML='<button type="button" class="all-trips" hidden>← Весь трек</button><span class="trip-caption" role="status" hidden></span>';
@@ -222,6 +222,7 @@
       const queryKey=`${this._config.entity}|${this._config.odometer_entity || ''}|${start}|${end}`;
       if(this._queryKey!==queryKey){this._routeContext=null;this._gpxButton.disabled=true;this._selectedTrip=null;this._overview=null;this._arrowRuns=[];this._arrows?.clearLayers();this._layer?.clearLayers();root.querySelector('.all-trips').hidden=true;root.querySelector('.speed-legend').hidden=true;root.querySelector('.km').textContent='—';this._queryKey=queryKey;}
       error.textContent='';root.querySelector('.summary').setAttribute('aria-busy','true');
+      root.querySelector('.loading-status').textContent='Загрузка истории поездок…';
       const perfKey=`gwm-trips:${this._config.entity}:${start}:${end}:${serial}`;
       const mark=(suffix)=>{try{performance.mark(`${perfKey}:${suffix}`);}catch{}};
       mark('load-start');
@@ -242,15 +243,16 @@
           return L;
         });
         mapPromise.catch(()=>{});
-        const includeRecorder=!!this._requestRecorder;this._requestRecorder=false;
-        const requestHistory=(skipRecorder)=>this._hass.callWS({type:'gwm_jolion/trips',entity_id:this._config.entity,start,end,...(this._config.odometer_entity?{odometer_entity:this._config.odometer_entity}:{}),...(skipRecorder?{skip_recorder:true}:{})});
+        // Render one merged snapshot: local-only data can omit parking bounds
+        // and briefly turn the entire route blue on every refresh.
+        const requestHistory=()=>this._hass.callWS({type:'gwm_jolion/trips',entity_id:this._config.entity,start,end,...(this._config.odometer_entity?{odometer_entity:this._config.odometer_entity}:{})});
         const historyStarted=performance.now();
-        const data=await Promise.race([requestHistory(!includeRecorder),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Не удалось загрузить историю. Выберите период ещё раз.')),20000);})]);
+        const data=await Promise.race([requestHistory(),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Не удалось загрузить историю. Выберите период ещё раз.')),20000);})]);
         mark('history-ready');
         const historyMs=Math.round(performance.now()-historyStarted);
         if(data.server_timings){
           this._lastServerTimings=data.server_timings;
-          console.info(`[GWM поездки] Время сервера (${includeRecorder?'Recorder':'локальная история'})`,data.server_timings);
+          console.info('[GWM поездки] Время сервера (полная история)',data.server_timings);
           if(data.server_timings.history_profile)console.info('[GWM поездки] Этапы истории',data.server_timings.history_profile);
         }
         if(serial!==this._serial || !this.isConnected)return;
@@ -310,19 +312,8 @@
         mark('render-ready');
         try{performance.measure('gwm-trips:history-request',`${perfKey}:load-start`,`${perfKey}:history-ready`);performance.measure('gwm-trips:map-startup',`${perfKey}:load-start`,`${perfKey}:map-ready`);performance.measure('gwm-trips:render',`${perfKey}:history-ready`,`${perfKey}:render-ready`);performance.measure('gwm-trips:total',`${perfKey}:load-start`,`${perfKey}:render-ready`);}catch{}
         this._lastTimings={history_ms:historyMs,total_ms:Math.round(performance.now()-historyStarted),map_started_with_history:true};
-        this._recorderRequests ||= new Set();
-        if(!includeRecorder&&data.diagnostics?.recorder_configured&&!this._recorderRequests.has(queryKey)){
-          this._recorderRequests.add(queryKey);
-          const refreshSerial=serial;
-          setTimeout(()=>{
-            if(refreshSerial===this._serial&&this.isConnected&&this._queryKey===queryKey){this._requestRecorder=true;this._load();}
-            else this._recorderRequests.delete(queryKey);
-          },0);
-        }else if(includeRecorder){
-          this._recorderRequests?.delete(queryKey);
-        }
       }catch(err){if(serial===this._serial)error.textContent=err.message || 'Не удалось загрузить историю. Проверьте выбранную сущность.';}
-      finally{clearTimeout(timeout);if(serial===this._serial)root.querySelector('.summary').setAttribute('aria-busy','false');}
+      finally{clearTimeout(timeout);if(serial===this._serial){root.querySelector('.summary').setAttribute('aria-busy','false');root.querySelector('.loading-status').textContent='';}}
     }
     _buildTrips(data){
       const stops=(data.parking_spots||[]).filter(p=>Number.isFinite(Number(p.start))).slice().sort((a,b)=>a.start-b.start);

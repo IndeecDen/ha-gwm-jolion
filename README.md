@@ -4,7 +4,7 @@
 
 Состояние автомобиля, удалённое управление и история поездок **Haval Jolion с российским GWM Cloud**. Неофициальная интеграция, разработанная на Haval Jolion 2022 Premium.
 
-**Стабильная версия 0.2.1** · [Скачать релиз](https://github.com/IndeecDen/ha-gwm-jolion/releases/latest) · [Что изменилось](CHANGELOG.md#021) · [Установить Jolion Locator](docs/golion-locator.md)
+**Стабильная версия 0.2.2** · [Скачать релиз](https://github.com/IndeecDen/ha-gwm-jolion/releases/latest) · [Что изменилось](CHANGELOG.md#022) · [Установить Jolion Locator](docs/golion-locator.md)
 
 ## Возможности
 
@@ -29,7 +29,7 @@ Locator необязателен: без приложения карта исп�
 5. Введите телефон и пароль аккаунта GWM. Для команд автомобилю разрешите удалённое управление и укажите PIN безопасности.
 6. Добавьте нужные карточки на панель. Их ресурсы подключаются автоматически; при нескольких автомобилях выберите устройство в редакторе.
 
-Для ручной установки скачайте `ha-gwm-jolion-0.2.1.zip` из [релиза](https://github.com/IndeecDen/ha-gwm-jolion/releases/tag/0.2.1), распакуйте папку `custom_components/gwm_jolion` в каталог конфигурации HA и перезапустите HA.
+Для ручной установки скачайте `ha-gwm-jolion-0.2.2.zip` из [релиза](https://github.com/IndeecDen/ha-gwm-jolion/releases/tag/0.2.2), распакуйте папку `custom_components/gwm_jolion` в каталог конфигурации HA и перезапустите HA.
 
 ## Карточки
 

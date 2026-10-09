@@ -10,6 +10,7 @@ from uuid import uuid4
 import voluptuous as vol
 
 from homeassistant.components import frontend, panel_custom
+from homeassistant.components.lovelace import LOVELACE_DATA
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD
@@ -206,8 +207,32 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
             StaticPathConfig("/gwm-jolion/maplibre/leaflet-maplibre-gl.js", str(FRONTEND_DIR / "maplibre/leaflet-maplibre-gl.js"), False),
         ]
     )
-    for _, _, frontend_url in available_assets:
-        frontend.add_extra_js_url(hass, frontend_url)
+    # Dashboard resources are awaited by Lovelace before it creates cards.
+    # Extra frontend modules alone race dashboard startup on a cold reload.
+    resources = hass.data[LOVELACE_DATA].resources
+    await resources.async_get_info()
+    for path, static_url, frontend_url in available_assets:
+        if path.name not in {
+            "gwm-jolion-card.js", "gwm-jolion-card-editor.js",
+            "gwm-jolion-remote-card.js", "gwm-jolion-trips-card.js",
+            "gwm-jolion-alpha20.js",
+        }:
+            frontend.add_extra_js_url(hass, frontend_url)
+            continue
+        matches = [item for item in resources.async_items()
+                   if item.get("url", "").split("?", 1)[0] == static_url]
+        if hasattr(resources, "async_create_item"):
+            if not matches:
+                await resources.async_create_item({"res_type": "module", "url": frontend_url})
+            for item in matches:
+                if item["url"] != frontend_url or item.get("type") != "module":
+                    await resources.async_update_item(item["id"], {"res_type": "module", "url": frontend_url})
+        else:
+            # YAML collections are in-memory; never rewrite configuration.yaml.
+            if not matches:
+                resources.data.append({"type": "module", "url": frontend_url})
+            for item in matches:
+                item.update(type="module", url=frontend_url)
 
     await panel_custom.async_register_panel(
         hass, frontend_url_path="gwm-jolion-pairing",
@@ -337,4 +362,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if hass.services.has_service(DOMAIN, SERVICE_ADD_CAPTURE_MARKER):
                 hass.services.async_remove(DOMAIN, SERVICE_ADD_CAPTURE_MARKER)
     return unload_ok
-

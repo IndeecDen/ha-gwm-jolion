@@ -37,6 +37,7 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
   assert.equal(await page.locator('.speed-legend').textContent().then(text=>text.includes('A, B, C')),false,'бесполезная легенда меток удалена');
   assert.doesNotMatch(await page.locator('.diagnostics').textContent(),/Источники маршрута|Jolion Locator —|GWM —/,'счётчики источников не загромождают карточку');
   assert.equal(await page.evaluate(()=>calls[0].type),'gwm_jolion/trips');
+  assert.equal(await page.evaluate(()=>calls[0].skip_recorder),undefined,'first render requests merged history, including parking boundaries');
   assert.equal(await page.evaluate(()=>card._layer.getLayers().some(layer=>layer.getLatLng?.().lat===55)),true,'первая точка показана меткой A');
 
   await page.evaluate(()=>{
@@ -113,6 +114,20 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
    return {colors,selected:card._selectedTrip,runs:card._arrowRuns.length,legend:!card.shadowRoot.querySelector('.speed-legend').hidden};
   });
   assert.equal(new Set(overview.colors).size,2,'different parking-to-parking legs have different colors');
+  const refresh=await page.evaluate(async()=>{
+   const before=card._routeLayer;
+   let finish,requests=0,renders=0;
+   const render=card._renderTrips.bind(card);
+   card._renderTrips=()=>{renders++;return render();};
+   hass.callWS=msg=>{requests++;if(msg.skip_recorder)throw Error('partial route requested');return new Promise(resolve=>{finish=resolve;});};
+   const loading=card._load();
+   const retained=card._routeLayer===before&&card._layer.hasLayer(before);
+   finish({...structuredClone(sample),diagnostics:{...sample.diagnostics,recorder_configured:true}});await loading;
+   await new Promise(resolve=>setTimeout(resolve,30));
+   hass.callWS=async()=>structuredClone(sample);card._renderTrips=render;
+   return {retained,requests,renders};
+  });
+  assert.deepEqual(refresh,{retained:true,requests:1,renders:1},'refresh retains previous route then renders exactly one full snapshot');
   assert.equal(overview.selected,'1');assert.equal(overview.runs,1);assert(overview.legend);
   assert.equal(await page.evaluate(()=>card._routeLayer.getLayers().some(l=>l.options.color==='#c62828')),true);
   await page.evaluate(async()=>{await card._load();});
