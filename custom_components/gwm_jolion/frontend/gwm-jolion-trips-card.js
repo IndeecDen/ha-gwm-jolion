@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.2.2 */
+/* GWM Jolion Trips Card v0.2.3 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -377,10 +377,16 @@
       for(const layer of this._overviewLayers||[]){if(focused)this._layer.removeLayer(layer);else if(!this._layer.hasLayer(layer))this._layer.addLayer(layer);}
       this._routeLayer=L.featureGroup().addTo(this._layer);this._arrows=L.layerGroup().addTo(this._map);this._arrowRuns=[];
       const trips=this._trips.filter(t=>!focused||t.key===this._selectedTrip);
-      for(const trip of trips)for(const run of trip.runs){
+      const isDrawable=run=>run.points.some(p=>p[0]!==run.points[0][0]||p[1]!==run.points[0][1]);
+      for(const trip of trips){
+        // A source segment can consist entirely of repeated stationary fixes.
+        // It is intentionally not painted, so it must not become a waypoint
+        // for the dashed connector either. Otherwise a sequence of cloud/app
+        // fragments produces several short zig-zag dashes through a gap.
+        const drawableRuns=trip.runs.filter(isDrawable);
+        for(const run of drawableRuns){
         // Round caps turn a run of identical parked fixes into a stray colored
         // dot. Parking markers already represent these stationary observations.
-        if(!run.points.some(p=>p[0]!==run.points[0][0]||p[1]!==run.points[0][1]))continue;
         const common={lineCap:'round',lineJoin:'round',smoothFactor:.6,bubblingMouseEvents:false};
         L.polyline(run.points,{...common,color:'#fff',weight:9,opacity:.85,interactive:false}).addTo(this._routeLayer);
         const title=trip.unclassified?'Участок с неуточнёнными границами стоянки':`Участок ${trip.index+1}`;
@@ -411,18 +417,21 @@
         });
         const path=hit.getElement?.();if(path&&!focused){path.setAttribute('tabindex','0');path.setAttribute('role','button');path.setAttribute('aria-label',`${title}: показать скорость`);path.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this._selectTrip(trip.key);}});}
         this._arrowRuns.push(run.points);
+        }
       }
       if(focused&&trips.length){
-        const trip=trips[0],runs=trip.runs;
-        const endpoints=[[trip.from,runs[0].points[0],'Начальная стоянка'],[trip.to,runs.at(-1).points.at(-1),'Конечная стоянка']];
-        for(const [stop,fix,text] of endpoints){
-          const point=stop?[Number(stop.latitude),Number(stop.longitude)]:fix;
-          if(stop&&this._map.distance(point,fix)>3)L.polyline([point,fix],{color:'#88949f',weight:2,dashArray:'5 7',interactive:true}).bindTooltip('Связь со стоянкой: точная траектория не записана').addTo(this._routeLayer);
-          L.circleMarker(point,{radius:6,color:'#fff',weight:3,fillColor:'#334155',fillOpacity:1}).bindTooltip(stop?text:'Граница доступной GPS-записи').addTo(this._routeLayer);
-        }
-        for(let i=1;i<runs.length;i++){
-          const a=runs[i-1].points.at(-1),b=runs[i].points[0];
-          if(this._map.distance(a,b)>3)L.polyline([a,b],{color:'#88949f',weight:2,dashArray:'5 7'}).bindTooltip('Разрыв GPS-записи: точная траектория неизвестна').addTo(this._routeLayer);
+        const trip=trips[0],runs=trip.runs.filter(isDrawable);
+        if(runs.length){
+          const endpoints=[[trip.from,runs[0].points[0],'Начальная стоянка'],[trip.to,runs.at(-1).points.at(-1),'Конечная стоянка']];
+          for(const [stop,fix,text] of endpoints){
+            const point=stop?[Number(stop.latitude),Number(stop.longitude)]:fix;
+            if(stop&&this._map.distance(point,fix)>3)L.polyline([point,fix],{color:'#88949f',weight:2,dashArray:'5 7',interactive:true}).bindTooltip('Связь со стоянкой: точная траектория не записана').addTo(this._routeLayer);
+            L.circleMarker(point,{radius:6,color:'#fff',weight:3,fillColor:'#334155',fillOpacity:1}).bindTooltip(stop?text:'Граница доступной GPS-записи').addTo(this._routeLayer);
+          }
+          for(let i=1;i<runs.length;i++){
+            const a=runs[i-1].points.at(-1),b=runs[i].points[0];
+            if(this._map.distance(a,b)>3)L.polyline([a,b],{color:'#88949f',weight:2,dashArray:'5 7'}).bindTooltip('Разрыв GPS-записи: точная траектория неизвестна').addTo(this._routeLayer);
+          }
         }
       }
       this.shadowRoot.querySelector('.all-trips').hidden=!focused;

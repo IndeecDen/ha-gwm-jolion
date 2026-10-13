@@ -182,9 +182,16 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
   });
   assert.equal(trafficLight.pause.length,1,'traffic-light pause stays in the same parking-to-parking trip');
   assert.equal(trafficLight.pause[0].key,'1');
-  assert.equal(trafficLight.pause[0].points.length,5,'pause preserves every original point without splitting the run');
-  assert.deepEqual(trafficLight.gap,[{key:'1',runs:2}],'real GPS gap remains two geometries but one selectable trip');
-  const delayedDeparture=await page.evaluate(async()=>{
+   assert.equal(trafficLight.pause[0].points.length,5,'pause preserves every original point without splitting the run');
+   assert.deepEqual(trafficLight.gap,[{key:'1',runs:2}],'real GPS gap remains two geometries but one selectable trip');
+   const stationaryFragment=await page.evaluate(()=>{
+    const segments=[[[55,37],[55.001,37]],[[55.01,37.01],[55.01,37.01]],[[55.002,37.002],[55.003,37.003]]];
+    card._buildTrips({segments,segment_timestamps:[[100,110],[120,130],[140,150]],segment_speeds_kmh:[[30],[0],[30]],segment_kinds:[['moving'],['stationary'],['moving']],parking_spots:[]});
+    card._selectTrip('0');
+    return {dash:card._routeLayer.getLayers().filter(l=>l.options.dashArray==='5 7').length,runs:card._arrowRuns.length};
+   });
+   assert.deepEqual(stationaryFragment,{dash:1,runs:2},'unpainted stationary fragments do not create extra dashed connectors');
+   const delayedDeparture=await page.evaluate(async()=>{
    sample={...sample,segments:[[[55,37],[55.001,37],[55.001,37],[55.002,37],[55.003,37]]],segment_timestamps:[[100,150,200,250,300]],segment_speeds_kmh:[[30,0,40,50]],segment_kinds:[['moving','stationary','moving','moving']],parking_spots:[{start:90,end:220,latitude:55,longitude:37},{start:300,end:null,latitude:55.003,longitude:37}]};
    await card._load();
    const hits=card._routeLayer.getLayers().filter(l=>l.options.className==='route-hit');
