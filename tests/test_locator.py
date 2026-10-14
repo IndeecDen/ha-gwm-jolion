@@ -218,6 +218,40 @@ def test_stale_and_future_live_handling():
     assert choose_live(app(NOW-600000),cloud(NOW-300000),NOW)["source"]=="cloud"
     assert choose_live(app(NOW+600000),None,NOW) is None
 
+
+def test_card_source_selection_isolates_geometry_mileage_and_cache(tmp_path):
+    from datetime import datetime, UTC
+    async def run():
+        _, history = make_history(tmp_path)
+        await history.initialize()
+        base = NOW-3600000
+        day = datetime.fromtimestamp(base/1000,UTC).date().isoformat()
+        points = [app(base+i*10000,latitude=55+i*.001) for i in range(3)]
+        await history.ingest(points)
+        for i in range(3):
+            history._append(base/1000+i*10,{'latitude':56+i*.001,'longitude':38,'odometer':100+i})
+        # One mirrored app row outside cloud observation timestamps.
+        await history.ingest([app(base+5000,latitude=55.0005)])
+        only_app = await history.query(day,day,'UTC',include_cloud=False)
+        only_cloud = await history.query(day,day,'UTC',include_app=False)
+        assert only_app['source_counts']['cloud']==0 and only_app['source_counts']['app']==4
+        assert only_app['method']=='gps' and only_app['km']<1
+        assert only_cloud['source_counts']['app']==0 and only_cloud['source_counts']['cloud']==3
+        assert all(p[0]>=56 for segment in only_cloud['segments'] for p in segment)
+        assert only_cloud['km']==2
+        cached = await history.query(day,day,'UTC',include_cloud=False)
+        assert cached['source_counts']==only_app['source_counts']
+        assert cached['history_profile']['cache']=='hit'
+        archive=([(base/1000+25,54,36,None)],[])
+        isolated=await history.query(day,day,'UTC',archive,include_app=False)
+        assert all(p[0]>=56 for segment in isolated['segments'] for p in segment)
+        empty=await history.query(day,day,'UTC',include_app=False,include_cloud=False)
+        assert empty['samples']==0 and not empty['parking_spots'] and not empty['segments']
+        history.enabled=False
+        empty=await history.query(day,day,'UTC',include_cloud=False,raw=True)
+        assert empty['samples']==0
+    asyncio.run(run())
+
 def make_history(tmp_path):
     async def executor(fn,*args):return await asyncio.to_thread(fn,*args)
     hass=SimpleNamespace(data={"gwm_jolion":{}},config=SimpleNamespace(path=lambda *p:str(tmp_path.joinpath(*p))),async_add_executor_job=executor)

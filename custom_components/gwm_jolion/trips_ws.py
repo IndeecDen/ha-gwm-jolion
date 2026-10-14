@@ -29,6 +29,8 @@ def register(hass):
     vol.Required("end"): str,
     vol.Optional("odometer_entity"): str,
     vol.Optional("skip_recorder", default=False): bool,
+    vol.Optional("include_app", default=True): bool,
+    vol.Optional("include_cloud", default=True): bool,
 })
 @websocket_api.async_response
 async def get_trips(hass, connection, msg):
@@ -56,7 +58,10 @@ async def get_trips(hass, connection, msg):
         processing_ms = 0
         archive = None
         recorder_configured = "recorder" in getattr(hass.config, "components", set())
-        skip_recorder = msg.get("skip_recorder", False)
+        include_app = msg.get("include_app", True)
+        include_cloud = msg.get("include_cloud", True)
+        sources = {} if include_app and include_cloud else {"include_app": include_app, "include_cloud": include_cloud}
+        skip_recorder = msg.get("skip_recorder", False) or not include_cloud
         recorder_available = recorder_configured and not skip_recorder
         recorder_error = False
         if recorder_available:
@@ -89,12 +94,13 @@ async def get_trips(hass, connection, msg):
                 recorder_ms = round((clock() - recorder_started) * 1000)
         processing_started = clock()
         if archive is None:
-            result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone)
+            result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone, **sources)
         else:
             if len(archive) == 3:
                 gps, mileage, _engines = archive
                 archive = (gps, mileage)
-            result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone, archive)
+            result = await parent.trip_history.query(msg["start"], msg["end"], hass.config.time_zone, archive, **sources)
+        result["selected_sources"] = {"app": include_app, "cloud": include_cloud}
         processing_ms = round((clock() - processing_started) * 1000)
         if "segments" in result or "source_counts" in result:
             history = parent.trip_history

@@ -37,6 +37,37 @@ def fuse(app, cloud):
     """Replace only competing measurements, preserving uncovered intervals."""
     left = sorted(app, key=lambda p: (p["timestamp_ms"], p["id"]))
     right = sorted(cloud, key=lambda p: (p["timestamp_ms"], p["id"]))
+    # Poll timestamps do not make an unchanged cloud fix fresh. Once accurate
+    # app fixes establish a departure from that coordinate, ignore repetitions
+    # until cloud coordinates change or the app confirms a return. Keep the raw
+    # archive and real outages intact.
+    fresh = []
+    app_index = 0
+    previous_position = None
+    matched = contradicted = False
+    for point in right:
+        position = (point['latitude'], point['longitude'])
+        if position != previous_position:
+            matched = contradicted = False
+            repeated_since = point['timestamp_ms']
+            previous_position = position
+        while app_index < len(left) and left[app_index]['timestamp_ms'] <= point['timestamp_ms']:
+            candidate = left[app_index]
+            accuracy = candidate.get('accuracy_m')
+            if candidate['timestamp_ms'] >= repeated_since and candidate.get('time_known') and accuracy is not None and 0 < accuracy <= 35:
+                dy = math.radians(point['latitude'] - candidate['latitude'])
+                dx = math.radians(point['longitude'] - candidate['longitude']) * math.cos(math.radians(candidate['latitude']))
+                nearby = 6371000 * math.hypot(dx, dy) <= 120
+                if nearby:
+                    matched = True
+                    contradicted = False
+                elif matched:
+                    contradicted = True
+            app_index += 1
+        if not point.get('time_known') and contradicted:
+            continue
+        fresh.append(point)
+    right = fresh
     result = []
     for own, other in ((left, right), (right, left)):
         times = [p["timestamp_ms"] for p in other]

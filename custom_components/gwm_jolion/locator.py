@@ -212,27 +212,34 @@ class HybridHistory(TripHistory):
                 self.app_latest = await self.hass.async_add_executor_job(self._app_latest)
             self.last_prune = time.time()
 
-    def _merged(self, low_ms, high_ms, archive=None):
+    def _merged(self, low_ms, high_ms, archive=None, include_app=True, include_cloud=True):
         with self.app_archive.connect() as db:
+            mirrored = {(r[0],r[1],r[2]) for r in db.execute('SELECT timestamp_ms,latitude,longitude FROM points WHERE timestamp_ms>=? AND timestamp_ms<?',(low_ms-30000,high_ms+30000))} if not include_app else set()
             count = db.execute("SELECT COUNT(*) FROM points WHERE timestamp_ms>=? AND timestamp_ms<?", (low_ms-30000, high_ms+30000)).fetchone()[0]
             sample_step=max(1,math.ceil(count/100000)) if count>200000 else 1
             if sample_step==1:
                 rows = db.execute("SELECT * FROM points WHERE timestamp_ms>=? AND timestamp_ms<? ORDER BY timestamp_ms", (low_ms-30000, high_ms+30000)).fetchall()
             else:
                 rows = db.execute("SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY timestamp_ms) AS rn FROM points WHERE timestamp_ms>=? AND timestamp_ms<?) WHERE (rn-1)%?=0 OR rn=? ORDER BY timestamp_ms",(low_ms-30000,high_ms+30000,sample_step,count)).fetchall()
-        app = [{**dict(p), "source": "app", "time_known": True, "accuracy_known": True, "sample_step":sample_step} for p in rows] if self.enabled else []
+        app = [{**dict(p), "source": "app", "time_known": True, "accuracy_known": True, "sample_step":sample_step} for p in rows] if self.enabled and include_app else []
+        if not include_cloud:
+            return app, []
         db = self._connect()
         try:
             rows = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts>=? AND ts<? ORDER BY ts", ((low_ms-30000)/1000,(high_ms+30000)/1000)).fetchall()
         finally:
             db.close()
-        raw_cloud = [*(archive[0] if archive else []), *rows]
+        if not include_app:
+            rows = [r for r in rows if r[3] is not None or (round(r[0]*1000),r[1],r[2]) not in mirrored]
+        # Recorder tracks the fused live entity and cannot identify its GPS source.
+        # Cloud-only geometry therefore uses the local GWM observations.
+        raw_cloud = [*(archive[0] if archive and include_app else []), *rows]
         cloud = {}
         for r in raw_cloud:
             p = cloud_point(r[0], {"latitude": r[1], "longitude": r[2]})
             if p:
                 cloud[p["timestamp_ms"]] = p
-        if sample_step>1 and self.enabled:
+        if sample_step>1 and self.enabled and include_app:
             # Sampling for a long calendar period must not let low-quality cloud
             # observations replace the original app fixes omitted from rendering.
             with self.app_archive.connect() as db:
@@ -244,13 +251,13 @@ class HybridHistory(TripHistory):
         # rows, so each morning the card started a fresh marker at 00:00.
         return merged, rows
 
-    def _query(self, start, end, zone, archive=None, raw=False):
-        if not self.enabled:
-            return TripHistory._query(self,start,end,zone,archive,raw)
+    def _query(self, start, end, zone, archive=None, raw=False, include_app=True, include_cloud=True):
+        if not self.enabled and include_app and include_cloud:
+            return TripHistory._query(self,start,end,zone,archive,raw,include_app,include_cloud)
         profile={}
         phase=perf_counter()
         low, high = period(start,end,zone)
-        points, rows = self._merged(int(low*1000) - OVERNIGHT_BASELINE_MS, int(high*1000), archive)
+        points, rows = self._merged(int(low*1000) - OVERNIGHT_BASELINE_MS, int(high*1000), archive, include_app, include_cloud)
         profile["fetch_merge_ms"]=round((perf_counter()-phase)*1000)
         phase=perf_counter()
         points = [dict(p,display_break=f.get("display_break",False)) for p,f in zip(points,filter_display(points))] if raw else filter_display(points)
@@ -273,8 +280,8 @@ class HybridHistory(TripHistory):
         result["history_profile"]={**profile,"points":len(points),"cache":"miss"}
         return result
 
-    async def query(self, start, end, zone, archive=None, raw=False):
-        key=(start,end,zone,raw,self._cache_revision,archive is not None)
+    async def query(self, start, end, zone, archive=None, raw=False, include_app=True, include_cloud=True):
+        key=(start,end,zone,raw,self._cache_revision,archive is not None,include_app,include_cloud)
         now=time.monotonic()
         if archive is None:
             cached=self._query_cache.get(key)
@@ -286,7 +293,7 @@ class HybridHistory(TripHistory):
         if task is None:
             async def run_query():
                 async with self.lock:
-                    result=await self.hass.async_add_executor_job(self._query,start,end,zone,archive,raw)
+                    result=await self.hass.async_add_executor_job(self._query,start,end,zone,archive,raw,include_app,include_cloud)
                     if archive is None:
                         self._query_cache[key]=(time.monotonic(),result,len(result.get("playback",())))
                     return result

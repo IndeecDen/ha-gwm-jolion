@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.2.3 */
+/* GWM Jolion Trips Card v0.2.4 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -209,6 +209,13 @@
       const serial=++this._serial;
       const root=this.shadowRoot, error=root.querySelector('.error');
       if(!this._config.entity){error.textContent='Выберите сущность местоположения GWM Jolion в настройках карточки.';return;}
+      if(this._config.include_app===false&&this._config.include_cloud===false){
+        this._layer?.clearLayers();this._arrows?.clearLayers();this._arrowRuns=[];this._routeContext=null;
+        this._gpxButton.disabled=true;root.querySelector('.km').textContent='—';root.querySelector('.diagnostics').hidden=true;
+        root.querySelector('.all-trips').hidden=true;root.querySelector('.speed-legend').hidden=true;
+        root.querySelector('.loading-status').textContent='';root.querySelector('.summary').setAttribute('aria-busy','false');
+        error.textContent='Включите хотя бы один источник данных в настройках карточки.';return;
+      }
       const today=dateInZone(this._hass.config.time_zone);
       if(!root.querySelector('.dates').hidden && this._fitKey)return;
       if(this._mode==='custom' && this._range){root.querySelector('#start').value=this._range[0];root.querySelector('#end').value=this._range[1];}
@@ -245,7 +252,7 @@
         mapPromise.catch(()=>{});
         // Render one merged snapshot: local-only data can omit parking bounds
         // and briefly turn the entire route blue on every refresh.
-        const requestHistory=()=>this._hass.callWS({type:'gwm_jolion/trips',entity_id:this._config.entity,start,end,...(this._config.odometer_entity?{odometer_entity:this._config.odometer_entity}:{})});
+        const requestHistory=()=>this._hass.callWS({type:'gwm_jolion/trips',entity_id:this._config.entity,start,end,include_app:this._config.include_app!==false,include_cloud:this._config.include_cloud!==false,...(this._config.odometer_entity?{odometer_entity:this._config.odometer_entity}:{})});
         const historyStarted=performance.now();
         const data=await Promise.race([requestHistory(),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Не удалось загрузить историю. Выберите период ещё раз.')),20000);})]);
         mark('history-ready');
@@ -266,7 +273,7 @@
         // Do not draw a line between the ends of a missing interval. That
         // diagnostic connector looks like a teleport on the overview map.
         // The actual route remains represented by its separate source segments.
-        const parkingSpots=Array.isArray(data.parking_spots)?data.parking_spots:[];
+        const parkingSpots=(Array.isArray(data.parking_spots)?data.parking_spots:[]).slice().sort((a,b)=>a.start-b.start);
         const routeStart=data.segments?.find(segment=>segment.length)?.[0];
         const firstRouteTime=data.segment_timestamps?.find(times=>times.length)?.[0];
         const routeStartParking=Number.isFinite(firstRouteTime)?parkingSpots.find(spot=>Number(spot.start)<=firstRouteTime&&Number(spot.observed_until ?? spot.end ?? -Infinity)>=firstRouteTime&&Math.abs(Number(spot.latitude)-routeStart[0])<0.002&&Math.abs(Number(spot.longitude)-routeStart[1])<0.002):null;
@@ -281,6 +288,7 @@
           L.marker(routeStart,{icon,keyboard:true,title:'Начало маршрута A'}).bindTooltip(label,{direction:'top',offset:[0,-8]}).addTo(this._layer);
         }
         const parkingOccurrencesForPeriod=parkingOccurrences(parkingSpots,start,end,this._hass.config.time_zone,separateStart?1:0),multiDay=start!==end;
+        const parkingMarkers=[];
         for(const parking of parkingOccurrencesForPeriod){
           const latitude=Number(parking.latitude),longitude=Number(parking.longitude),parkingStart=Number(parking.start),parkingEnd=parking.end===null||parking.end===undefined?NaN:Number(parking.end);
           if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||!Number.isFinite(parkingStart))continue;
@@ -288,13 +296,22 @@
           const label=document.createElement('div');label.style.whiteSpace='pre-line';
           label.textContent=`Стоянка ${parking.label}\nНачало: ${tripTime(parkingStart,this._hass.config.time_zone,showDates)}${parking.show_end?`\nКонец: ${tripTime(parkingEnd,this._hass.config.time_zone,showDates)}`:''}`;
           for(const gap of parking.interruptions || [])label.textContent+=`\nНет данных: ${tripTime(gap[0],this._hass.config.time_zone,true)} — ${tripTime(gap[1],this._hass.config.time_zone,true)}`;
-          const iconElement=document.createElement('div');iconElement.className='route-point';iconElement.textContent=parking.label;if(parking.offset_index)iconElement.style.transform=`translateX(${parking.offset_index*20}px)`;
-          const icon=L.divIcon({className:'',html:iconElement,iconSize:[28,28],iconAnchor:[14,14]});
-          L.marker([latitude,longitude],{icon,keyboard:true,title:`Стоянка ${parking.label}`}).bindTooltip(label,{direction:'top',offset:[0,-8]}).addTo(this._layer);
+          // Repeated visits can differ by just a few metres. A shared badge
+          // preserves their order and location without one letter hiding another.
+          let marker=parkingMarkers.find(item=>this._map.distance(item.point,[latitude,longitude])<=30);
+          if(!marker){marker={point:[latitude,longitude],labels:[],descriptions:[]};parkingMarkers.push(marker);}
+          marker.labels.push(parking.label);marker.descriptions.push(label.textContent);
+        }
+        for(const marker of parkingMarkers){
+          const text=marker.labels.join(' / '),width=Math.max(28,marker.labels.length*28);
+          const iconElement=document.createElement('div');iconElement.className='route-point';iconElement.textContent=text;iconElement.style.width=`${width}px`;iconElement.style.borderRadius='14px';
+          const label=document.createElement('div');label.style.whiteSpace='pre-line';label.textContent=marker.descriptions.join('\n\n');
+          const icon=L.divIcon({className:'',html:iconElement,iconSize:[width,28],iconAnchor:[width/2,14]});
+          L.marker(marker.point,{icon,keyboard:true,title:`Стоянка ${text}`}).bindTooltip(label,{direction:'top',offset:[0,-8]}).addTo(this._layer);
         }
         if(!this._layer.getLayers().length && start<=today && today<=end){
           const validPosition=value=>value && value.latitude!==null && value.longitude!==null && value.latitude!=='' && value.longitude!=='' && Number.isFinite(Number(value.latitude)) && Number.isFinite(Number(value.longitude)) && Math.abs(Number(value.latitude))<=90 && Math.abs(Number(value.longitude))<=180 && (Number(value.latitude)!==0 || Number(value.longitude)!==0);
-          const current=this._hass.states[this._config.entity]?.attributes;
+          const current=this._config.include_app!==false&&this._config.include_cloud!==false?this._hass.states[this._config.entity]?.attributes:null;
           const position=validPosition(current)?current:validPosition(data.last_position)?data.last_position:null;
           if(position){
             const iconElement=document.createElement('ha-icon');iconElement.setAttribute('icon','mdi:car');iconElement.className='route-point';
@@ -422,15 +439,16 @@
       if(focused&&trips.length){
         const trip=trips[0],runs=trip.runs.filter(isDrawable);
         if(runs.length){
+          const gapBoundary=(point,text)=>L.circleMarker(point,{radius:4,color:'#64748b',weight:2,fillColor:'#fff',fillOpacity:1}).bindTooltip(text).addTo(this._routeLayer);
           const endpoints=[[trip.from,runs[0].points[0],'Начальная стоянка'],[trip.to,runs.at(-1).points.at(-1),'Конечная стоянка']];
           for(const [stop,fix,text] of endpoints){
             const point=stop?[Number(stop.latitude),Number(stop.longitude)]:fix;
-            if(stop&&this._map.distance(point,fix)>3)L.polyline([point,fix],{color:'#88949f',weight:2,dashArray:'5 7',interactive:true}).bindTooltip('Связь со стоянкой: точная траектория не записана').addTo(this._routeLayer);
+            if(stop&&this._map.distance(point,fix)>3)gapBoundary(fix,'Граница GPS-записи: путь до стоянки не записан');
             L.circleMarker(point,{radius:6,color:'#fff',weight:3,fillColor:'#334155',fillOpacity:1}).bindTooltip(stop?text:'Граница доступной GPS-записи').addTo(this._routeLayer);
           }
           for(let i=1;i<runs.length;i++){
             const a=runs[i-1].points.at(-1),b=runs[i].points[0];
-            if(this._map.distance(a,b)>3)L.polyline([a,b],{color:'#88949f',weight:2,dashArray:'5 7'}).bindTooltip('Разрыв GPS-записи: точная траектория неизвестна').addTo(this._routeLayer);
+            if(this._map.distance(a,b)>3){gapBoundary(a,'Конец GPS-участка: дальнейший путь не записан');gapBoundary(b,'Возобновление GPS-записи: предыдущий путь неизвестен');}
           }
         }
       }
@@ -474,8 +492,10 @@
       if(info.recorder_error)messages.push('Архив Home Assistant Recorder сейчас недоступен.');
       else if(info.recorder_skipped){}
       else if(info.recorder_available===false)messages.push('Архив Recorder недоступен или не включён.');
-      if(info.locator_enabled===false)messages.push('Сбор Jolion Locator выключен.');
-      else if(info.locator_enabled===true&&app===0)messages.push('За этот период нет точек от Jolion Locator.');
+      if(this._config.include_app!==false){
+        if(info.locator_enabled===false)messages.push('Сбор Jolion Locator выключен.');
+        else if(info.locator_enabled===true&&app===0)messages.push('За этот период нет точек от Jolion Locator.');
+      }
       if(!hasRoute){
         if(cloud===0&&app===0)messages.push('Нет GPS-координат за выбранный период.');
         else if(Number(data.samples)>0)messages.push('Есть записи, но GPS-координаты отсутствуют; проверьте доступность передачи GPS автомобиля.');
@@ -488,7 +508,7 @@
       this._config=config;const limits=speedLimits(config);
       for(const [key,field] of Object.entries(this._fields || {})){
         if(this._editingSpeed&&['speed_green_max','speed_red_min'].includes(key))continue;
-        field.value=key==='show_download_gpx'?config[key]===true:key==='show_download_points'?config[key]!==false:key==='speed_green_max'?limits.green:key==='speed_red_min'?limits.red:config[key] || (key==='map_style'?'positron':'');
+        field.value=key==='show_download_gpx'?config[key]===true:['show_download_points','include_app','include_cloud'].includes(key)?config[key]!==false:key==='speed_green_max'?limits.green:key==='speed_red_min'?limits.red:config[key] || (key==='map_style'?'positron':'');
       }
       this._render();
     }
@@ -502,7 +522,12 @@
       const label=document.createElement('label');label.textContent='Оформление карты';
       const field=document.createElement('ha-selector');field.hass=this._hass;field.selector={select:{mode:'dropdown',options:Object.entries(STYLES).map(([value,label])=>({value,label}))}};field.value=this._config.map_style || 'positron';this._fields.map_style=field;
       field.addEventListener('value-changed',e=>{this._config={...this._config,map_style:e.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(label,field);
-      const section=document.createElement('div');section.textContent='Диапазоны цветов скорости';section.style.cssText='font-weight:600;margin:4px 0 12px';this.append(section);
+      const section=document.createElement('div');section.textContent='Источники истории поездок';section.style.cssText='font-weight:600;margin:4px 0 12px';this.append(section);
+      for(const [key,title] of [['include_app','Данные приложения Locator'],['include_cloud','Данные GWM Cloud']]){
+        const label=document.createElement('label');label.textContent=title;
+        const field=document.createElement('ha-selector');field.hass=this._hass;field.selector={boolean:{}};field.value=this._config[key]!==false;this._fields[key]=field;
+        field.addEventListener('value-changed',event=>{this._config={...this._config,[key]:!!event.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(label,field);
+      }
       const downloadLabel=document.createElement('label');downloadLabel.textContent='Показывать кнопку «Скачать точки»';
       const downloadField=document.createElement('ha-selector');downloadField.hass=this._hass;downloadField.selector={boolean:{}};downloadField.value=this._config.show_download_points!==false;this._fields.show_download_points=downloadField;
       downloadField.addEventListener('value-changed',e=>{this._config={...this._config,show_download_points:!!e.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(downloadLabel,downloadField);
@@ -510,6 +535,7 @@
       const gpxField=document.createElement('ha-selector');gpxField.hass=this._hass;gpxField.selector={boolean:{}};gpxField.value=this._config.show_download_gpx===true;this._fields.show_download_gpx=gpxField;
       gpxField.addEventListener('value-changed',e=>{this._config={...this._config,show_download_gpx:!!e.detail.value};this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this._config},bubbles:true,composed:true}));});this.append(gpxLabel,gpxField);
       const limits=speedLimits(this._config);
+      const speedSection=document.createElement('div');speedSection.textContent='Диапазоны цветов скорости';speedSection.style.cssText='font-weight:600;margin:4px 0 12px';this.append(speedSection);
       for(const [key,title] of [['speed_green_max','Зелёный: до, км/ч'],['speed_red_min','Красный: от, км/ч']]){
         const speedLabel=document.createElement('label');speedLabel.textContent=title;
         const speedField=document.createElement('ha-selector');speedField.hass=this._hass;speedField.selector={number:{min:1,max:300,step:1,mode:'box',unit_of_measurement:'км/ч'}};speedField.value=key==='speed_green_max'?limits.green:limits.red;speedField.style.display='block';speedField.style.marginBottom='16px';this._fields[key]=speedField;

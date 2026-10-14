@@ -37,14 +37,36 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
   assert.equal(await page.locator('.speed-legend').textContent().then(text=>text.includes('A, B, C')),false,'бесполезная легенда меток удалена');
   assert.doesNotMatch(await page.locator('.diagnostics').textContent(),/Источники маршрута|Jolion Locator —|GWM —/,'счётчики источников не загромождают карточку');
   assert.equal(await page.evaluate(()=>calls[0].type),'gwm_jolion/trips');
-  assert.equal(await page.evaluate(()=>calls[0].skip_recorder),undefined,'first render requests merged history, including parking boundaries');
+   assert.equal(await page.evaluate(()=>calls[0].skip_recorder),undefined,'first render requests merged history, including parking boundaries');
+   assert.equal(await page.evaluate(()=>calls[0].include_app&&calls[0].include_cloud),true,'both sources are enabled by default');
   assert.equal(await page.evaluate(()=>card._layer.getLayers().some(layer=>layer.getLatLng?.().lat===55)),true,'первая точка показана меткой A');
 
   await page.evaluate(()=>{
    window.editor=document.createElement('gwm-jolion-trips-card-editor');document.body.append(editor);
    editor.setConfig({entity:'device_tracker.test',speed_green_max:80,speed_red_min:110});editor.hass=hass;
   });
-  await page.waitForFunction(()=>editor._fields?.speed_green_max&&editor._fields?.speed_red_min);
+   await page.waitForFunction(()=>editor._fields?.speed_green_max&&editor._fields?.speed_red_min);
+   const sourceSelection=await page.evaluate(async()=>{
+    const initial={...card._config};let changed;
+    editor.addEventListener('config-changed',e=>{changed=e.detail.config;});
+    const defaults=[editor._fields.include_app.value,editor._fields.include_cloud.value];
+    editor._fields.include_cloud.dispatchEvent(new CustomEvent('value-changed',{detail:{value:false}}));
+    card.setConfig({...initial,include_app:changed.include_app,include_cloud:changed.include_cloud});await card._load();
+    const appOnly=calls.at(-1);
+    editor.setConfig({...editor._config,include_app:false,include_cloud:true});
+    const restored=[editor._fields.include_app.value,editor._fields.include_cloud.value];
+    card.setConfig({...initial,include_app:false,include_cloud:true});await card._load();const cloudOnly=calls.at(-1);
+    const before=calls.length;card.setConfig({...initial,include_app:false,include_cloud:false});await card._load();
+    const disabled={requests:calls.length-before,layers:card._layer.getLayers().length,error:card.shadowRoot.querySelector('.error').textContent};
+    card.setConfig(initial);await card._load();editor.setConfig({entity:'device_tracker.test',speed_green_max:80,speed_red_min:110});
+    return {defaults,restored,appOnly,cloudOnly,disabled};
+   });
+   assert.deepEqual(sourceSelection.defaults,[true,true]);
+   assert.deepEqual(sourceSelection.restored,[false,true]);
+   assert(sourceSelection.appOnly.include_app&&!sourceSelection.appOnly.include_cloud);
+   assert(!sourceSelection.cloudOnly.include_app&&sourceSelection.cloudOnly.include_cloud);
+   assert.equal(sourceSelection.disabled.requests,0);assert.equal(sourceSelection.disabled.layers,0);
+   assert.match(sourceSelection.disabled.error,/хотя бы один источник/);
   await page.evaluate(()=>{
    const field=editor._fields.speed_green_max;field.dispatchEvent(new FocusEvent('focusin',{bubbles:true}));
    field.value='1';field.dispatchEvent(new CustomEvent('value-changed',{detail:{value:'1'}}));
@@ -190,7 +212,7 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
     card._selectTrip('0');
     return {dash:card._routeLayer.getLayers().filter(l=>l.options.dashArray==='5 7').length,runs:card._arrowRuns.length};
    });
-   assert.deepEqual(stationaryFragment,{dash:1,runs:2},'unpainted stationary fragments do not create extra dashed connectors');
+    assert.deepEqual(stationaryFragment,{dash:0,runs:2},'unknown paths remain disconnected even with intermediate stationary fragments');
    const delayedDeparture=await page.evaluate(async()=>{
    sample={...sample,segments:[[[55,37],[55.001,37],[55.001,37],[55.002,37],[55.003,37]]],segment_timestamps:[[100,150,200,250,300]],segment_speeds_kmh:[[30,0,40,50]],segment_kinds:[['moving','stationary','moving','moving']],parking_spots:[{start:90,end:220,latitude:55,longitude:37},{start:300,end:null,latitude:55.003,longitude:37}]};
    await card._load();
@@ -230,7 +252,20 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
   assert(parkingEndpoints.titles.includes('Стоянка A'));
   assert(parkingEndpoints.tooltips.includes('Начальная стоянка'));
   assert(parkingEndpoints.tooltips.includes('Конечная стоянка'));
-  assert(parkingEndpoints.tooltips.includes('Разрыв GPS-записи: точная траектория неизвестна'));
+   assert(parkingEndpoints.tooltips.includes('Конец GPS-участка: дальнейший путь не записан'));
+   assert(parkingEndpoints.tooltips.includes('Возобновление GPS-записи: предыдущий путь неизвестен'));
+   assert.equal(await page.evaluate(()=>card._routeLayer.getLayers().filter(l=>l.options.dashArray).length),0,'parking offsets and GPS gaps never draw invented paths');
+   const repeatedVisits=await page.evaluate(async()=>{
+    const t=Date.parse('2026-10-14T00:00:00+03:00')/1000;
+    sample={...sample,segments:[[[55,37],[55,37]],[[55.01,37],[55.011,37]]],segment_timestamps:[[t,t+600],[t+700,t+800]],parking_spots:[
+     {latitude:55.00001,longitude:37,start:t+2000,end:null,observed_until:t+3000},
+     {latitude:55,longitude:37,start:t-600,end:t+600,observed_until:t+600},
+     {latitude:55.011,longitude:37,start:t+800,end:t+1600,observed_until:t+1600}]};
+    card._range=['2026-10-14','2026-10-14'];await card._load();card._selectTrip(null);
+    return card._overviewLayers.map(l=>({title:l.options.title,text:l.getTooltip?.()?.getContent()?.textContent}));
+   });
+   assert.deepEqual(repeatedVisits.map(m=>m.title),['Стоянка A / C','Стоянка B'],'chronological labels for returning visits remain readable at the same location');
+   assert.match(repeatedVisits[0].text,/Стоянка A[\s\S]*Стоянка C/,'each visit keeps its own time in the shared marker');
   const downloadPromise=page.waitForEvent('download');
   await page.getByRole('button',{name:'Скачать точки',exact:true}).click();
   const download=await downloadPromise;
@@ -259,7 +294,24 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
   }
   await page.evaluate(async()=>{card._range=['2026-01-01','2026-01-01'];sample={...sample,samples:0,segments:[],gaps:[],diagnostics:{locator_enabled:true,recorder_available:true,retention_days:90}};await card._load();});
   assert.match(await page.locator('.diagnostics').textContent(),/история за этот период уже удалена/i);
-  assert.deepEqual(errors,[],'карточка не должна генерировать browser errors');
+   // Optional local exports reproduce field failures without committing private GPS data.
+   for(const file of process.argv.slice(2)){
+    const exported=JSON.parse(fs.readFileSync(file,'utf8'));
+    const replay=await page.evaluate(async exported=>{
+     sample=exported.data;card._range=[exported.start,exported.end];await card._load();card._selectTrip(null);
+     const markers=card._overviewLayers.map(l=>l.options.title).filter(Boolean),trips=[];
+     for(const trip of card._trips){
+      card._selectTrip(trip.key);
+      trips.push({key:trip.key,runs:card._arrowRuns.length,dashes:card._routeLayer.getLayers().filter(l=>l.options.dashArray).length});
+     }
+     card._selectTrip(null);
+     return {markers,trips,error:card.shadowRoot.querySelector('.error').textContent};
+    },exported);
+    assert.equal(replay.error,'');
+    assert(replay.trips.every(trip=>trip.dashes===0),'exported GPS gaps must remain disconnected');
+    console.log(path.basename(file),JSON.stringify(replay));
+   }
+   assert.deepEqual(errors,[],'карточка не должна генерировать browser errors');
   await page.close();
   console.log('Trips card current Leaflet UI, mixed Locator/GWM sources, missing-data diagnostics, expired retention and removed ABC reminder: PASS');
  }finally{await browser.close();}

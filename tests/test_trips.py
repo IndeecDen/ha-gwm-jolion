@@ -255,6 +255,26 @@ def test_archive_only_and_overlap_do_not_double_count():
     assert result["km"]==2 and not result["segments"] and result["samples"]==3
 
 
+def test_app_only_websocket_skips_recorder_and_passes_source_flags():
+    node=next(n for n in ast.parse((ROOT/'trips_ws.py').read_text()).body if isinstance(n,ast.AsyncFunctionDef))
+    node.decorator_list=[]
+    entry=SimpleNamespace(config_entry_id='car',platform='gwm_jolion')
+    scope={'DOMAIN':'gwm_jolion','POLICY_READ':'read','er':SimpleNamespace(async_get=lambda hass:SimpleNamespace(async_get=lambda entity:entry))}
+    exec(compile(ast.Module(body=[node],type_ignores=[]),'ws','exec'),scope)
+    async def run():
+        calls=[];results=[];errors=[]
+        async def query(*args,**kwargs):
+            calls.append(kwargs)
+            return {'segments':[],'source_counts':{'app':0,'cloud':0}}
+        hass=SimpleNamespace(data={'gwm_jolion':{'car':SimpleNamespace(trip_history=SimpleNamespace(query=query))}},config=SimpleNamespace(time_zone='UTC',components={'recorder'}))
+        connection=SimpleNamespace(user=SimpleNamespace(permissions=SimpleNamespace(check_entity=lambda *a:True)),send_error=lambda *a:errors.append(a),send_result=lambda *a:results.append(a))
+        await scope['get_trips'](hass,connection,{'id':1,'entity_id':'device_tracker.car','start':'2026-10-14','end':'2026-10-14','include_cloud':False})
+        assert not errors and calls==[{'include_app':True,'include_cloud':False}]
+        assert results[0][1]['diagnostics']['recorder_skipped']
+        assert results[0][1]['selected_sources']=={'app':True,'cloud':False}
+    asyncio.run(run())
+
+
 def test_recorder_coordinates_attributes_invalid_states_and_miles():
     node=next(n for n in ast.parse((ROOT/"trips_recorder.py").read_text(encoding="utf-8")).body if isinstance(n,ast.FunctionDef))
     scope={"number":trips.number}
@@ -358,7 +378,7 @@ def test_slow_recorder_falls_back_to_local_history():
         hass=SimpleNamespace(data={"gwm_jolion":{"car":SimpleNamespace(trip_history=SimpleNamespace(query=query))}},config=SimpleNamespace(time_zone="UTC",components={"recorder"}))
         connection=SimpleNamespace(user=SimpleNamespace(permissions=SimpleNamespace(check_entity=lambda *args:True)),send_error=lambda *args:errors.append(args),send_result=lambda *args:results.append(args))
         await scope["get_trips"](hass,connection,{"id":1,"entity_id":"device_tracker.car","start":"2026-09-16","end":"2026-09-16"})
-        assert results==[(1,{"km":84})] and not errors and cancelled
+        assert results==[(1,{"km":84,"selected_sources":{"app":True,"cloud":True}})] and not errors and cancelled
     asyncio.run(run())
 
 

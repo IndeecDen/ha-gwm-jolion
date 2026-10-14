@@ -437,8 +437,10 @@ class TripHistory:
         async with self.lock:
             await self.hass.async_add_executor_job(self._append, stamp, location)
 
-    def _query(self, start, end, zone, archive=None, raw=False):
+    def _query(self, start, end, zone, archive=None, raw=False, include_app=True, include_cloud=True):
         low, high = period(start, end, zone)
+        if not include_cloud:
+            return {**summarize([], start, end, zone), "retention_days": self.retention}
         db = self._connect()
         try:
             rows = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts >= ? AND ts < ? ORDER BY ts", (low - PARKING_BASELINE_SECONDS, high)).fetchall()
@@ -452,6 +454,6 @@ class TripHistory:
         result["retention_days"] = self.retention
         return result
 
-    async def query(self, start, end, zone, archive=None, raw=False):
+    async def query(self, start, end, zone, archive=None, raw=False, include_app=True, include_cloud=True):
         async with self.lock:
-            return await self.hass.async_add_executor_job(self._query, start, end, zone, archive, raw)
+            return await self.hass.async_add_executor_job(self._query, start, end, zone, archive, raw, include_app, include_cloud)
