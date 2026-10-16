@@ -213,8 +213,11 @@ def infer_gap_stop(previous, point, odometers=None):
     else:
         # A display break can be a source switch as well as a reception gap. Two
         # points from different systems have no comparable accuracy, so position
-        # alone must not bridge one; the odometer path above may.
-        if point.get("display_break") or previous.get("display_break"):
+        # alone must not bridge one. A same-source app gap is different: the
+        # application stopped reporting, then resumed at the same place, which is
+        # enough to expose the missing parking interval without inventing a road.
+        if ((point.get("display_break") or previous.get("display_break"))
+                and point.get("source") != previous.get("source")):
             return None
         radius = max(
             INFERRED_PARKING_RADIUS_M,

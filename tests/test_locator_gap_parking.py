@@ -97,6 +97,27 @@ def test_a_real_track_keeps_its_gap_and_stays_measurable():
     assert len(result["segments"]) == 2
 
 
+def test_same_app_gap_at_same_place_exposes_parking_without_odometer():
+    before = point(0, x=0, speed=0, accuracy=4, source="app")
+    before["display_break"] = True
+    after = point(3600, x=0, speed=0, accuracy=4, source="app")
+    after["display_break"] = True
+    result = analyze([before, after])
+    assert len(result["stops"]) == 1
+    stop = result["stops"][0]
+    assert stop["inferred"] is True and stop["inferred_by"] == "position"
+    assert stop["duration_s"] == 3600
+
+
+def test_source_switch_still_does_not_infer_parking_from_position():
+    before = point(0, x=0, speed=0, accuracy=4, source="app")
+    before["display_break"] = True
+    after = point(3600, x=0, speed=0, accuracy=4, source="cloud")
+    after["display_break"] = True
+    result = analyze([before, after])
+    assert not result["stops"]
+
+
 def test_inferred_stop_carries_the_flag_the_card_needs():
     before = parked_run(0, 400)
     after = parked_run(400 + 8 * 3600, 400)
