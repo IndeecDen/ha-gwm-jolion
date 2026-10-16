@@ -222,8 +222,6 @@ class HybridHistory(TripHistory):
             else:
                 rows = db.execute("SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY timestamp_ms) AS rn FROM points WHERE timestamp_ms>=? AND timestamp_ms<?) WHERE (rn-1)%?=0 OR rn=? ORDER BY timestamp_ms",(low_ms-30000,high_ms+30000,sample_step,count)).fetchall()
         app = [{**dict(p), "source": "app", "time_known": True, "accuracy_known": True, "sample_step":sample_step} for p in rows] if self.enabled and include_app else []
-        if not include_cloud:
-            return app, []
         db = self._connect()
         try:
             rows = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts>=? AND ts<? ORDER BY ts", ((low_ms-30000)/1000,(high_ms+30000)/1000)).fetchall()
@@ -233,7 +231,10 @@ class HybridHistory(TripHistory):
             rows = [r for r in rows if r[3] is not None or (round(r[0]*1000),r[1],r[2]) not in mirrored]
         # Recorder tracks the fused live entity and cannot identify its GPS source.
         # Cloud-only geometry therefore uses the local GWM observations.
-        raw_cloud = [*(archive[0] if archive and include_app else []), *rows]
+        # Recorder coordinates are a fused position and must not be presented as
+        # GWM Cloud geometry in Cloud-only mode. They can supplement a combined
+        # view, while the Recorder odometer remains usable in every mode.
+        raw_cloud = [*(archive[0] if archive and include_app else []), *rows] if include_cloud else []
         cloud = {}
         for r in raw_cloud:
             p = cloud_point(r[0], {"latitude": r[1], "longitude": r[2]})
@@ -252,6 +253,19 @@ class HybridHistory(TripHistory):
         return merged, rows
 
     def _query(self, start, end, zone, archive=None, raw=False, include_app=True, include_cloud=True):
+        if not include_app and not include_cloud:
+            result = summarize([], start, end, zone)
+            result.update(retention_days=self.retention, locator_enabled=True,
+                          source_counts={"app": 0, "cloud": 0}, playback=[])
+            return result
+        # When Locator collection is disabled, a direct app-only local query has
+        # no GPS source. Recorder data is supplied separately by the WebSocket
+        # handler as `archive`; keep that path available for odometer mileage.
+        if not self.enabled and include_app and not include_cloud and archive is None:
+            result = summarize([], start, end, zone)
+            result.update(retention_days=self.retention, locator_enabled=False,
+                          source_counts={"app": 0, "cloud": 0}, playback=[])
+            return result
         if not self.enabled and include_app and include_cloud:
             return TripHistory._query(self,start,end,zone,archive,raw,include_app,include_cloud)
         profile={}
@@ -264,6 +278,8 @@ class HybridHistory(TripHistory):
         profile["filter_ms"]=round((perf_counter()-phase)*1000)
         route = [(p["timestamp_ms"]/1000,p["latitude"],p["longitude"],None) for p in points]
         mileage = [(r[0],None,None,r[3]) for r in rows if r[3] is not None]
+        if archive:
+            mileage.extend(r for r in archive[1] if r[3] is not None)
         measured={p['timestamp_ms']:p['speed_kmh'] for p in points if p['source']=='app' and p.get('speed_kmh') is not None}
         breaks={p['timestamp_ms'] for p in points if p.get('display_break')}
         phase=perf_counter()

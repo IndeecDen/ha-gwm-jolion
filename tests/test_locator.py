@@ -235,7 +235,8 @@ def test_card_source_selection_isolates_geometry_mileage_and_cache(tmp_path):
         only_app = await history.query(day,day,'UTC',include_cloud=False)
         only_cloud = await history.query(day,day,'UTC',include_app=False)
         assert only_app['source_counts']['cloud']==0 and only_app['source_counts']['app']==4
-        assert only_app['method']=='gps' and only_app['km']<1
+        # GPS source selection must not disable the independent Recorder odometer.
+        assert only_app['method']=='odometer' and only_app['km']==2
         assert only_cloud['source_counts']['app']==0 and only_cloud['source_counts']['cloud']==3
         assert all(p[0]>=56 for segment in only_cloud['segments'] for p in segment)
         assert only_cloud['km']==2

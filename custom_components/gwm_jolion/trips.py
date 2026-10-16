@@ -438,9 +438,11 @@ class TripHistory:
             await self.hass.async_add_executor_job(self._append, stamp, location)
 
     def _query(self, start, end, zone, archive=None, raw=False, include_app=True, include_cloud=True):
+        if not include_app and not include_cloud:
+            result = summarize([], start, end, zone)
+            result["retention_days"] = self.retention
+            return result
         low, high = period(start, end, zone)
-        if not include_cloud:
-            return {**summarize([], start, end, zone), "retention_days": self.retention}
         db = self._connect()
         try:
             rows = db.execute("SELECT ts,lat,lon,odo FROM points WHERE ts >= ? AND ts < ? ORDER BY ts", (low - PARKING_BASELINE_SECONDS, high)).fetchall()
@@ -450,7 +452,14 @@ class TripHistory:
                 rows.sort(key=lambda row: row[0])
         finally:
             db.close()
-        result = with_archive(rows, archive or ([], []), start, end, zone)
+        # The source switches select GPS geometry. Recorder odometer readings are
+        # independent of that choice and remain available in every GPS mode.
+        route_rows = rows if include_cloud else [(row[0], None, None, row[3]) for row in rows]
+        gps = archive[0] if archive and include_cloud else []
+        mileage = [row for row in rows if row[3] is not None]
+        if archive:
+            mileage.extend(row for row in archive[1] if row[3] is not None)
+        result = with_archive(route_rows, (gps, mileage), start, end, zone)
         result["retention_days"] = self.retention
         return result
 

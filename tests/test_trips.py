@@ -255,11 +255,14 @@ def test_archive_only_and_overlap_do_not_double_count():
     assert result["km"]==2 and not result["segments"] and result["samples"]==3
 
 
-def test_app_only_websocket_skips_recorder_and_passes_source_flags():
+def test_app_only_websocket_keeps_recorder_and_passes_source_flags():
     node=next(n for n in ast.parse((ROOT/'trips_ws.py').read_text()).body if isinstance(n,ast.AsyncFunctionDef))
     node.decorator_list=[]
     entry=SimpleNamespace(config_entry_id='car',platform='gwm_jolion')
-    scope={'DOMAIN':'gwm_jolion','POLICY_READ':'read','er':SimpleNamespace(async_get=lambda hass:SimpleNamespace(async_get=lambda entity:entry))}
+    async def read_history(*args, **kwargs):
+        return None
+    scope={'DOMAIN':'gwm_jolion','POLICY_READ':'read','read_history':read_history,
+           'er':SimpleNamespace(async_get=lambda hass:SimpleNamespace(async_get=lambda entity:entry,async_get_entity_id=lambda *args:'sensor.car_odometer'))}
     exec(compile(ast.Module(body=[node],type_ignores=[]),'ws','exec'),scope)
     async def run():
         calls=[];results=[];errors=[]
@@ -270,7 +273,7 @@ def test_app_only_websocket_skips_recorder_and_passes_source_flags():
         connection=SimpleNamespace(user=SimpleNamespace(permissions=SimpleNamespace(check_entity=lambda *a:True)),send_error=lambda *a:errors.append(a),send_result=lambda *a:results.append(a))
         await scope['get_trips'](hass,connection,{'id':1,'entity_id':'device_tracker.car','start':'2026-10-14','end':'2026-10-14','include_cloud':False})
         assert not errors and calls==[{'include_app':True,'include_cloud':False}]
-        assert results[0][1]['diagnostics']['recorder_skipped']
+        assert not results[0][1]['diagnostics']['recorder_skipped']
         assert results[0][1]['selected_sources']=={'app':True,'cloud':False}
     asyncio.run(run())
 

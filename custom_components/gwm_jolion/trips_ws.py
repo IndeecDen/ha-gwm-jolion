@@ -61,7 +61,9 @@ async def get_trips(hass, connection, msg):
         include_app = msg.get("include_app", True)
         include_cloud = msg.get("include_cloud", True)
         sources = {} if include_app and include_cloud else {"include_app": include_app, "include_cloud": include_cloud}
-        skip_recorder = msg.get("skip_recorder", False) or not include_cloud
+        # GPS source selection is independent of Recorder mileage. Choosing only
+        # Locator must still allow the selected odometer entity to provide km.
+        skip_recorder = msg.get("skip_recorder", False)
         recorder_available = recorder_configured and not skip_recorder
         recorder_error = False
         if recorder_available:
