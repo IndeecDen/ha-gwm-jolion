@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 DOMAIN = "gwm_jolion"
-VERSION = "0.2.8"
+VERSION = "0.2.9"
 PLATFORMS = ["button", "sensor", "binary_sensor", "device_tracker", "lock", "climate", "number"]
 
 CONF_PHONE = "phone"
@@ -23,6 +23,8 @@ DEFAULT_COUNTRY = "RU"
 DEFAULT_COUNTRY_CODE = "+7"
 DEFAULT_POLL_INTERVAL = 300
 MIN_GPS_INTERVAL = 10
+# A push batch acknowledged this recently makes the cloud copy pointless to poll.
+PUSH_FRESH_MS = 120_000
 DEFAULT_GPS_INTERVAL = 10
 DEFAULT_ENABLE_REMOTE_CONTROLS = False
 DEFAULT_COMMAND_COOLDOWN = 30

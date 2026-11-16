@@ -99,3 +99,35 @@ def test_history_storage_failure_does_not_break_gps():
         assert (await method(SimpleNamespace(parent=parent, poll_interval=10)))["location"]["latitude"]==55
         assert parent.gps_update_health["history_write_failed"] is True
     asyncio.run(run())
+
+
+def test_fresh_push_batch_skips_cloud_poll():
+    scope = dict(asyncio=asyncio, timedelta=timedelta, time=time, _LOGGER=logging.getLogger(__name__),
+                 ConfigEntryAuthFailed=AuthFailed, GwmJolionApiError=ApiError, UpdateFailed=UpdateFailed,
+                 PUSH_FRESH_MS=120_000)
+    method = methods("gps.py", "GwmGpsCoordinator", ["_async_update_data"], scope)["_async_update_data"]
+    async def run():
+        calls = []
+        async def location(vin):
+            calls.append(vin)
+            return {"latitude": 55, "longitude": 37}
+        now_ms = int(time.time() * 1000)
+        history = SimpleNamespace(enabled=True, last_received_ms=now_ms,
+                                  latest={"source": "app", "latitude": 56, "longitude": 38, "timestamp_ms": now_ms},
+                                  location=lambda fallback=None: {"latitude": 56, "longitude": 38, "source": "app"},
+                                  append=lambda *args, **kwargs: None)
+        parent = SimpleNamespace(data={"vin": "car"}, client=SimpleNamespace(async_get_location=location),
+                                 trip_history=history)
+        gps = SimpleNamespace(parent=parent, poll_interval=10)
+        result = await method(gps)
+        assert calls == []
+        assert result["location"]["source"] == "app"
+        assert parent.gps_update_health["push_polls_skipped"] == 1
+        history.last_received_ms = now_ms - 600_000
+        await method(gps)
+        assert calls == ["car"]
+        history.last_received_ms = now_ms
+        history.latest = {"source": "cloud", "latitude": 55, "longitude": 37, "timestamp_ms": now_ms}
+        await method(gps)
+        assert calls == ["car", "car"]
+    asyncio.run(run())
