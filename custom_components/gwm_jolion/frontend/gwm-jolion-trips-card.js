@@ -1,8 +1,12 @@
-/* GWM Jolion Trips Card v0.2.6 */
+/* GWM Jolion Trips Card v0.2.7 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
   const SPEED_COLORS = {low:'#2e7d32',medium:'#f9a825',high:'#c62828'};
+  // The backend only promotes a stop to a parking spot after ten minutes. Every
+  // shorter standstill therefore survives inside a moving run, and a red light is
+  // indistinguishable from a bend in the road unless it is marked as such.
+  const BRIEF_STOP_SECONDS=15,BRIEF_STOP_MAX_SECONDS=600,BRIEF_STOP_NOISE_M=60;
   const TRIP_COLORS=['#2563eb','#9333ea','#0891b2','#ea580c','#db2777','#0d9488','#6366f1','#a16207'];
   const DEFAULT_SPEED_LIMITS = {green:80,red:110};
   function speedLimits(config={}){
@@ -13,19 +17,30 @@
     return {green,red};
   }
   let vectorMaps;
+  // The card's own URL already carries the integration version as its cache key.
+  // Home Assistant serves the bundled files with a long Cache-Control, so a bare
+  // library URL would either revalidate on every load or, right after an update,
+  // hand the new card an old Leaflet. Vendored files inherit the same version.
+  function assetVersion(){
+    try{
+      const tag=document.querySelector('script[src*="gwm-jolion-trips-card.js"]');
+      return tag?new URL(tag.src).searchParams.get('v')||'':'';
+    }catch{return '';}
+  }
+  function assetUrl(path){const version=assetVersion();return version?`${path}?v=${version}`:path;}
   function loadScript(src){return new Promise((resolve,reject)=>{
     const script=document.createElement('script');const timer=setTimeout(()=>{script.remove();reject(new Error('Не удалось загрузить оформление карты'));},15000);
     script.src=src;script.onload=()=>{clearTimeout(timer);resolve();};script.onerror=()=>{clearTimeout(timer);script.remove();reject(new Error('Не удалось загрузить оформление карты'));};document.head.append(script);
   });}
   function loadVector(L){return vectorMaps ||= (async()=>{
     window.GwmTripsLeaflet=L;
-    if(!window.GwmTripsMapLibre){const previous=window.maplibregl;await loadScript('/gwm-jolion/maplibre/maplibre-gl.js');window.GwmTripsMapLibre=window.maplibregl;window.maplibregl=previous;}
-    if(!L.maplibreGL)await loadScript('/gwm-jolion/maplibre/leaflet-maplibre-gl.js');
+    if(!window.GwmTripsMapLibre){const previous=window.maplibregl;await loadScript(assetUrl('/gwm-jolion/maplibre/maplibre-gl.js'));window.GwmTripsMapLibre=window.maplibregl;window.maplibregl=previous;}
+    if(!L.maplibreGL)await loadScript(assetUrl('/gwm-jolion/maplibre/leaflet-maplibre-gl.js'));
   })().catch(error=>{vectorMaps=null;throw error;});}
   const loadMap = () => leaflet ||= new Promise((resolve, reject) => {
     const script = document.createElement('script');
     const timer = setTimeout(() => { script.remove(); leaflet = null; reject(new Error('Не удалось загрузить карту')); }, 15000);
-    script.src = '/gwm-jolion/leaflet/leaflet.js';
+    script.src = assetUrl('/gwm-jolion/leaflet/leaflet.js');
     script.onload = () => { clearTimeout(timer); resolve(window.L.noConflict()); };
     script.onerror = () => { clearTimeout(timer); script.remove(); leaflet = null; reject(new Error('Не удалось загрузить карту')); };
     document.head.append(script);
@@ -62,6 +77,87 @@
     return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="GWM Jolion" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk>\n    <name>${escape(`Jolion ${start} — ${end}`)}</name>\n${segments.join('\n')}\n  </trk>\n</gpx>\n`;
   }
   function parkingOccurrences(spots,start,end,zone,firstIndex=0){let sequence=firstIndex;const spotOffsets={};return spots.flatMap(spot=>{const started=Number(spot.start),ended=spot.end===null||spot.end===undefined?NaN:Number(spot.end),startDay=dayInZone(started,zone),endDay=dayInZone(Number.isFinite(ended)?ended:Number(spot.observed_until ?? (started+Number(spot.duration || 0))),zone),spotKey=`${spot.latitude}|${spot.longitude}|${spot.start}|${spot.end}`;return dateRange(start,end).filter(day=>startDay<=day&&(!endDay||day<=endDay)).map(day=>{const index=sequence++,offset=spotOffsets[spotKey]||0;spotOffsets[spotKey]=offset+1;return {...spot,day,label:pointLabel(index),offset_index:offset,show_end:Number.isFinite(ended)&&day===endDay};});});}
+  const EARTH_M=111320;
+  // Douglas-Peucker simplification of the drawn route.
+  //
+  // The stored route is denser than the screen can show and the median interior
+  // vertex of real data is a ~179 degree reversal: the receiver jittering while
+  // the car stands still, not a corner. Drawing every vertex turns that into a
+  // sawtooth; snapping it away invents a road that was never driven. Dropping the
+  // points inside a small tolerance removes the sawtooth without inventing
+  // anything: the result is a subset of the measured points, both ends stay where
+  // the receiver put them, and no measured point ends up further than the
+  // tolerance from the drawn line.
+  //
+  // 8 m clears the jitter (the median step is ~13 m, so the sawtooth swings about
+  // 6 m and a 4 m tolerance removed nothing) and typically drops most of the
+  // points of a parked stretch. Applied to the speed bands and the plain route,
+  // not to the GPS gap connectors: those already mean "no data here", and
+  // smoothing them would draw a path nobody drove.
+  function simplifyPath(points,tolerance){
+    const limit=Number(tolerance)||8;
+    if(!Array.isArray(points)||points.length<3)return points;
+    const mLon=EARTH_M*Math.cos(points[0][0]*Math.PI/180);
+    const xy=points.map(point=>[(point[1]-points[0][1])*mLon,(point[0]-points[0][0])*EARTH_M]);
+    const keep=new Uint8Array(points.length);
+    keep[0]=1;keep[points.length-1]=1;
+    const stack=[[0,points.length-1]];
+    while(stack.length){
+      const [first,last]=stack.pop();
+      if(last<=first+1)continue;
+      const a=xy[first],b=xy[last];
+      const vx=b[0]-a[0],vy=b[1]-a[1],len2=vx*vx+vy*vy;
+      let worst=-1,worstAt=-1;
+      for(let i=first+1;i<last;i++){
+        const p=xy[i];
+        let t=len2?((p[0]-a[0])*vx+(p[1]-a[1])*vy)/len2:0;
+        t=t<0?0:(t>1?1:t);
+        const d=Math.hypot(p[0]-a[0]-t*vx,p[1]-a[1]-t*vy);
+        if(d>worst){worst=d;worstAt=i;}
+      }
+      if(worst>limit){keep[worstAt]=1;stack.push([first,worstAt],[worstAt,last]);}
+    }
+    return points.filter((_,index)=>keep[index]);
+  }
+  // Brief standstills inside a drawn run: the red lights and short waits the
+  // backend folds back into the moving run because they never become parking.
+  //
+  // Two conditions must hold, and both are measured, not guessed: the receiver
+  // reports stationary/zero speed on the edge, and the two ends of the stopped
+  // stretch are within the receiver's own noise radius. A queue that creeps keeps
+  // failing the second test, and a real detour keeps failing the first.
+  function briefStops(run){
+    if(!run||!Array.isArray(run.points)||!Array.isArray(run.kinds)||!Array.isArray(run.times))return [];
+    // A single edge counts as a standstill only when the receiver says so. An
+    // 'unknown' edge means the backend had no speed for it, which is not evidence
+    // that the car stood still.
+    const still=index=>{
+      const kind=run.kinds[index];
+      if(kind==='stationary')return true;
+      if(kind==='moving'||kind==='unknown')return false;
+      const speed=run.speeds[index];
+      return speed!=null&&Number(speed)===0;
+    };
+    const stops=[];
+    let index=0;
+    while(index<run.kinds.length){
+      if(!still(index)){index++;continue;}
+      let last=index;
+      while(last+1<run.kinds.length&&still(last+1))last++;
+      // Edges index..last stand still, so the car sat from point index to point
+      // last+1 and the dot belongs at the spot where it came to rest.
+      const start=run.points[index],end=run.points[last+1];
+      if(!start||!end){index=last+1;continue;}
+      const metres=Math.hypot((end[0]-start[0])*EARTH_M,(end[1]-start[1])*EARTH_M*Math.cos(start[0]*Math.PI/180));
+      const seconds=Number(run.times[last+1])-Number(run.times[index]);
+      // Drift means the car crawled through a queue rather than waiting at a
+      // light; a stop longer than the parking threshold is reported by the
+      // backend with its own letter, so drawing a dot would duplicate it.
+      if(metres<=BRIEF_STOP_NOISE_M&&seconds>=BRIEF_STOP_SECONDS&&seconds<=BRIEF_STOP_MAX_SECONDS)stops.push({point:start,seconds});
+      index=last+1;
+    }
+    return stops;
+  }
   class TripsCard extends HTMLElement {
     static getConfigElement() { return document.createElement('gwm-jolion-trips-card-editor'); }
     static getStubConfig(hass) {
@@ -69,8 +165,8 @@
     }
     constructor() {
       super(); this.attachShadow({mode:'open'}); this._mode='today'; this._serial=0;
-      this.shadowRoot.innerHTML = `<link rel="stylesheet" href="/gwm-jolion/leaflet/leaflet.css">
-      <link rel="stylesheet" href="/gwm-jolion/maplibre/maplibre-gl.css">
+      this.shadowRoot.innerHTML = `<link rel="stylesheet" href="${assetUrl('/gwm-jolion/leaflet/leaflet.css')}">
+      <link rel="stylesheet" href="${assetUrl('/gwm-jolion/maplibre/maplibre-gl.css')}">
       <style>
         :host{display:block}ha-card{overflow:hidden}.content{padding:10px 14px 12px}
         .shortcuts,.dates,.summary{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -80,6 +176,7 @@
         .dates{margin:10px 0 0}.dates[hidden]{display:none}label{display:flex;flex:1;min-width:110px;flex-direction:column;gap:5px;color:var(--secondary-text-color);font-size:12px}input{width:100%;color-scheme:light dark}
         .summary{justify-content:center;margin:0 0 8px;gap:8px}.km{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}.summary ha-icon{color:var(--secondary-text-color);--mdc-icon-size:22px}.shortcuts{justify-content:center;flex-wrap:nowrap;gap:6px}#calendar{display:flex;align-items:center;justify-content:center;width:34px;height:32px;padding:0}#calendar ha-icon{--mdc-icon-size:19px}
         .speed-legend{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:0 0 10px;color:var(--secondary-text-color);font-size:11px}.speed-legend[hidden]{display:none}.speed-legend span{display:flex;align-items:center;gap:4px}.speed-legend i{width:10px;height:4px;border-radius:2px;background:#888}.speed-legend b{font-weight:400}.speed-legend .low{background:#2e7d32}.speed-legend .medium{background:#f9a825}.speed-legend .high{background:#c62828}
+        .stops-legend{display:flex;justify-content:center;gap:12px;margin:-4px 0 10px;color:var(--secondary-text-color);font-size:11px}.stops-legend[hidden]{display:none}.stops-legend span{display:flex;align-items:center;gap:5px}.stops-legend i{width:7px;height:7px;border-radius:50%;background:#475569;border:1.5px solid #fff;box-shadow:0 0 0 1px #475569}.stops-legend b{font-weight:400}
         .route-point{width:28px;height:28px;border-radius:50%;background:#fff;color:#263238;border:3px solid #455a64;box-shadow:0 1px 5px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;font:700 13px/1 Arial,sans-serif;box-sizing:border-box}
         .error,.map-status,.loading-status{color:var(--secondary-text-color);font-size:12px;text-align:center}.error:empty,.map-status:empty,.loading-status:empty{display:none}.error:not(:empty),.map-status:not(:empty),.loading-status:not(:empty){margin-top:8px}.map-wrap{position:relative;height:300px;background:#e9edef}.map{height:100%;background:#e9edef;z-index:0}
         .map-actions{position:absolute;top:8px;right:8px;z-index:1000;display:flex;gap:6px}.map-actions button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;background:var(--card-background-color,#fff);box-shadow:0 1px 5px rgba(0,0,0,.28)}.map-actions ha-icon{--mdc-icon-size:19px}
@@ -89,6 +186,7 @@
         @media(max-width:350px){button{padding:7px 8px}.content{padding:10px}.map-wrap{height:260px}}
       </style><ha-card><div class="map-wrap"><div class="map" aria-label="Карта маршрута"></div><div class="map-actions"><button id="centerBtn" type="button" title="Показать автомобиль в центре карты" aria-label="Показать автомобиль в центре карты"><ha-icon icon="mdi:crosshairs-gps"></ha-icon></button><button id="fullscreenBtn" type="button" title="Развернуть карту" aria-label="Развернуть карту" aria-pressed="false"><ha-icon icon="mdi:fullscreen"></ha-icon></button></div></div><div class="content">
       <div class="speed-legend" aria-label="Цвета средней скорости" hidden><span><i class="low"></i><b class="low-range">до 80 км/ч</b></span><span><i class="medium"></i><b class="medium-range">80–110 км/ч</b></span><span><i class="high"></i><b class="high-range">110+ км/ч</b></span></div>
+      <div class="stops-legend" aria-label="Обозначения остановок" hidden><span><i class="stop"></i><b>короткая остановка</b></span></div>
       <div class="summary"><ha-icon icon="mdi:counter" aria-hidden="true"></ha-icon><span class="km" aria-label="Пробег за выбранный период">—</span></div>
       <div class="shortcuts"><button data-mode="today">Сегодня</button><button data-mode="yesterday">Вчера</button><button data-mode="week">Неделя</button><button id="calendar" title="Выбрать период" aria-label="Выбрать период" aria-expanded="false" aria-controls="period"><ha-icon icon="mdi:calendar-range"></ha-icon></button></div>
       <div class="dates" id="period" hidden><label>С<input type="date" id="start"></label><label>По<input type="date" id="end"></label><button id="show">Выбрать</button></div>
@@ -123,6 +221,7 @@
       this.shadowRoot.querySelector('#centerBtn').onclick=()=>this._centerVehicle();
       this._fullscreenBtn.onclick=()=>this._toggleFullscreen();
       this._onFullscreenChange=()=>{this._syncFullscreenButton();requestAnimationFrame(()=>this._map?.invalidateSize());};
+      this._onVisibilityChange=()=>{if(document.hidden||!this.isConnected)return;this._skippedWhileHidden=0;if(this._lastLoadAt&&Date.now()-this._lastLoadAt>30000)this._load();};
       this.shadowRoot.querySelectorAll('[data-mode]').forEach(button => button.onclick=()=>{this._mode=button.dataset.mode;this._calendar(false);this._load();});
       this.shadowRoot.querySelector('#show').onclick=()=>{const start=this.shadowRoot.querySelector('#start').value,end=this.shadowRoot.querySelector('#end').value;if(!start || !end || start>end){this.shadowRoot.querySelector('.error').textContent='Проверьте даты.';return;}this._mode='custom';this._range=[start,end];this._calendar(false);this._load();};
       this.shadowRoot.querySelector('#calendar').onclick=()=>this._calendar(this.shadowRoot.querySelector('.dates').hidden);
@@ -134,19 +233,79 @@
       this._routeContext=null;this._gpxButton.disabled=true;
       this.setAttribute('aria-label',config.title || 'Поездки');
       this._updateSpeedLegend();
-      this._layer?.clearLayers(); this._load();
+      this._layer?.clearLayers(); this._load({auto:true});
     }
     set hass(hass) {
       const first=!this._hass; this._hass=hass;
-      if(first) this._load();
+      if(first) this._load({auto:true});
     }
     connectedCallback() {
-      clearInterval(this._timer); this._timer=setInterval(()=>this._load(),60000);
+      this._scheduleRefresh();
       document.addEventListener('fullscreenchange',this._onFullscreenChange);
+      document.addEventListener('visibilitychange',this._onVisibilityChange);
       this._resize=new ResizeObserver(()=>this._map?.invalidateSize());this._resize.observe(this);
-      this._load();
+      this._load({auto:true});
     }
-    disconnectedCallback(){ clearInterval(this._timer);this._resize?.disconnect();document.removeEventListener('fullscreenchange',this._onFullscreenChange);this.classList.remove('fallback-fullscreen');if(this._nativeFullscreen()&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});this._serial++;this._map?.remove();this._map=null;this._base=null;this._layer=null;this._baseStyle=null;this._fitKey=null; }
+    // A hidden dashboard kept a 60 s recorder read alive for nothing. The timer now
+    // waits while the tab is hidden and the map refreshes on return only if what it
+    // shows is stale, so a phone left on another app costs no history reads.
+    _scheduleRefresh(){
+      clearInterval(this._timer);
+      this._timer=setInterval(()=>{if(document.hidden){this._skippedWhileHidden=(this._skippedWhileHidden||0)+1;return;}this._load();},this._refreshMs());
+    }
+    _refreshMs(){
+      try{
+        const start=this.shadowRoot.querySelector('#start').value,end=this.shadowRoot.querySelector('#end').value;
+        if(!start||!end||!this._hass)return 60000;
+        // A period that already ended only gains points from a late sync, and a
+        // week-long range costs the recorder several times a single day.
+        if(end<dateInZone(this._hass.config.time_zone))return 300000;
+        return dateRange(start,end).length>1?120000:60000;
+      }catch{return 60000;}
+    }
+    _queueChevrons(){if(this._chevronFrame)return;this._chevronFrame=requestAnimationFrame(()=>{this._chevronFrame=null;this._drawChevrons();});}
+    // A structural signature costs microseconds and catches the common case: the
+    // one-minute refresh returns the window it returned a minute ago.
+    _payloadFingerprint(data,start,end){
+      const segments=data.segments||[];
+      let fixes=0,tail=0;
+      for(const segment of segments){
+        fixes+=segment.length;
+        // Every fix participates: hashing only the last point of a segment made
+        // an interior move -- a drift off a meridian, a reroute -- look identical
+        // to the previous payload and the card skipped the redraw. One pass over
+        // the coordinates costs microseconds and gates a full rebuild.
+        for(const point of segment)tail=(tail*31+Math.round(point[0]*1e6)+Math.round(point[1]*1e6))|0;
+      }
+      // Timestamps, speeds and kinds decide stop dots and speed bands, so they
+      // belong to the signature: the same geometry with a longer standstill is a
+      // different picture.
+      const kindCode={moving:1,stationary:2,unknown:3};
+      let detail=0;
+      const series=[data.segment_timestamps,data.segment_speeds_kmh,data.segment_kinds];
+      for(const rows of series)for(const row of rows||[])for(const value of row){
+        const numeric=kindCode[value]??(Number.isFinite(Number(value))?Number(value):-1);
+        detail=(detail*31+(Number.isFinite(numeric)?Math.round(numeric):-1))|0;
+      }
+      const stops=data.parking_spots||[],last=stops.length?stops[stops.length-1]:{};
+      return `${start}|${end}|${segments.length}|${fixes}|${tail}|${detail}|${stops.length}|${last.end||''}|${data.km}|${data.samples}`;
+    }
+    // A hover answers on every mousemove, but a run can hold thousands of fixes
+    // and each projection costs a fraction of a millisecond. The projection is
+    // only valid for the current view, so it is kept per run and dropped as soon
+    // as the map moves or zooms.
+    _projected(run){
+      if(run.projected)return run.projected;
+      const projected=new Float64Array(run.points.length*2);
+      for(let index=0;index<run.points.length;index++){
+        const point=this._map.latLngToContainerPoint(run.points[index]);
+        projected[index*2]=point.x;projected[index*2+1]=point.y;
+      }
+      run.projected=projected;
+      return projected;
+    }
+    _forgetProjections(){for(const trip of this._trips||[])for(const run of trip.runs)run.projected=null;}
+    disconnectedCallback(){ clearInterval(this._timer);if(this._chevronFrame)cancelAnimationFrame(this._chevronFrame);this._chevronFrame=null;document.removeEventListener('visibilitychange',this._onVisibilityChange);this._resize?.disconnect();document.removeEventListener('fullscreenchange',this._onFullscreenChange);this.classList.remove('fallback-fullscreen');if(this._nativeFullscreen()&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});this._serial++;this._map?.remove();this._map=null;this._paths=null;this._base=null;this._layer=null;this._baseStyle=null;this._fitKey=null;this._autoKeyValue=null; }
     getCardSize(){return 6;}
     _calendar(open){this.shadowRoot.querySelector('.dates').hidden=!open;this.shadowRoot.querySelector('#calendar').setAttribute('aria-expanded',String(open));if(open)this.shadowRoot.querySelector('#start').focus();}
     _highlight(){this.shadowRoot.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===this._mode));this.shadowRoot.querySelector('#calendar').classList.toggle('active',this._mode==='custom');}
@@ -204,9 +363,29 @@
         status.textContent='OpenFreeMap недоступна. Показана OpenStreetMap.';
       }
     }
-    async _load(){
+    // The dashboard loads the card three times in a row -- setConfig, the first hass
+    // delivery and the connected callback -- and each one used to read the recorder
+    // again and render a second snapshot into the same map. Automatic triggers that
+    // ask for the very same thing within a second collapse into one request; an
+    // explicit _load() never collapses, so callers can always force a fresh read.
+    _autoKey(){
+      const start=this.shadowRoot?.querySelector('#start')?.value ?? '',end=this.shadowRoot?.querySelector('#end')?.value ?? '';
+      const limits=speedLimits(this._config);
+      return `${this._mode ?? ''}|${this._config?.entity ?? ''}|${this._config?.odometer_entity || ''}|${start}|${end}|${this._config?.include_app!==false}|${this._config?.include_cloud!==false}|${limits.green}:${limits.red}`;
+    }
+    async _load(options){
+      const auto=Boolean(options&&options.auto);
+      // Only a trigger that can actually do work may claim the dedupe slot: setConfig
+      // runs before the first hass arrives, and letting it record the slot made the
+      // hass delivery that follows collapse into a load that had done nothing.
+      if(!auto||!this.isConnected||!this._hass||!this._config){this._autoKeyValue=null;return this._loadOnce();}
+      const key=this._autoKey(),now=Date.now();
+      if(this._autoKeyValue===key&&now-(this._autoAt||0)<1000)return;
+      this._autoKeyValue=key;this._autoAt=now;
+      return this._loadOnce();
+    }
+    async _loadOnce(){
       if(!this.isConnected || !this._hass || !this._config)return;
-      const serial=++this._serial;
       const root=this.shadowRoot, error=root.querySelector('.error');
       if(!this._config.entity){error.textContent='Выберите сущность местоположения GWM Jolion в настройках карточки.';return;}
       if(this._config.include_app===false&&this._config.include_cloud===false){
@@ -228,6 +407,7 @@
       if(!start || !end || start>end){error.textContent='Проверьте начало и конец периода.';return;}
       const queryKey=`${this._config.entity}|${this._config.odometer_entity || ''}|${start}|${end}`;
       if(this._queryKey!==queryKey){this._routeContext=null;this._gpxButton.disabled=true;this._selectedTrip=null;this._overview=null;this._arrowRuns=[];this._arrows?.clearLayers();this._layer?.clearLayers();root.querySelector('.all-trips').hidden=true;root.querySelector('.speed-legend').hidden=true;root.querySelector('.km').textContent='—';this._queryKey=queryKey;}
+      const serial=++this._serial;
       error.textContent='';root.querySelector('.summary').setAttribute('aria-busy','true');
       root.querySelector('.loading-status').textContent='Загрузка истории поездок…';
       const perfKey=`gwm-trips:${this._config.entity}:${start}:${end}:${serial}`;
@@ -243,7 +423,9 @@
             this._map=L.map(root.querySelector('.map'),{scrollWheelZoom:true,dragging:true,touchZoom:true,tap:true}).setView([20,0],2);
             this._map.attributionControl.setPrefix(false);
             this._layer=L.featureGroup().addTo(this._map);
-            this._map.on('zoomend moveend',()=>this._drawChevrons());
+            // One shared canvas renderer for every non-interactive route line.
+            this._paths=typeof L.canvas==='function'?L.canvas({padding:.35}):null;
+            this._map.on('zoomend moveend',()=>{this._forgetProjections();this._queueChevrons();});
           }
           await this._setBasemap(L,serial);
           mark('map-ready');
@@ -296,18 +478,38 @@
           const label=document.createElement('div');label.style.whiteSpace='pre-line';
           label.textContent=`Стоянка ${parking.label}\nНачало: ${tripTime(parkingStart,this._hass.config.time_zone,showDates)}${parking.show_end?`\nКонец: ${tripTime(parkingEnd,this._hass.config.time_zone,showDates)}`:''}`;
           for(const gap of parking.interruptions || [])label.textContent+=`\nНет данных: ${tripTime(gap[0],this._hass.config.time_zone,true)} — ${tripTime(gap[1],this._hass.config.time_zone,true)}`;
-          // Repeated visits can differ by just a few metres. A shared badge
-          // preserves their order and location without one letter hiding another.
-          let marker=parkingMarkers.find(item=>this._map.distance(item.point,[latitude,longitude])<=30);
-          if(!marker){marker={point:[latitude,longitude],labels:[],descriptions:[]};parkingMarkers.push(marker);}
-          marker.labels.push(parking.label);marker.descriptions.push(label.textContent);
+          // Every stop keeps its own circle and its own letter, even when the car
+          // returned to the same driveway: one shared badge hid the second letter
+          // behind the first, and the user could not tell two stops from one.
+          // Stops of one cluster are spread along a row in pixels, in
+          // chronological order, each keeping its own start and end in the tooltip.
+          let cluster=parkingMarkers.find(item=>this._map.distance(item.point,[latitude,longitude])<=30);
+          if(!cluster){cluster={point:[latitude,longitude],items:[]};parkingMarkers.push(cluster);}
+          cluster.items.push({point:[latitude,longitude],letter:parking.label,tooltip:label});
         }
-        for(const marker of parkingMarkers){
-          const text=marker.labels.join(' / '),width=Math.max(28,marker.labels.length*28);
-          const iconElement=document.createElement('div');iconElement.className='route-point';iconElement.textContent=text;iconElement.style.width=`${width}px`;iconElement.style.borderRadius='14px';
-          const label=document.createElement('div');label.style.whiteSpace='pre-line';label.textContent=marker.descriptions.join('\n\n');
-          const icon=L.divIcon({className:'',html:iconElement,iconSize:[width,28],iconAnchor:[width/2,14]});
-          L.marker(marker.point,{icon,keyboard:true,title:`Стоянка ${text}`}).bindTooltip(label,{direction:'top',offset:[0,-8]}).addTo(this._layer);
+        for(const cluster of parkingMarkers){
+          for(const [position,item] of cluster.items.entries()){
+            // The anchor shift moves the circle sideways without moving the point
+            // it belongs to: a 30 px row keeps letters of one address readable.
+            const shift=(position-(cluster.items.length-1)/2)*30;
+            const iconElement=document.createElement('div');iconElement.className='route-point';iconElement.textContent=item.letter;iconElement.style.width='28px';iconElement.style.borderRadius='14px';
+            const icon=L.divIcon({className:'',html:iconElement,iconSize:[28,28],iconAnchor:[14-shift,14]});
+            L.marker(item.point,{icon,keyboard:true,title:`Стоянка ${item.letter}`}).bindTooltip(item.tooltip,{direction:'top',offset:[0,-8]}).addTo(this._layer);
+          }
+        }
+        // A hole in the GPS record stays open by default: a line across it would
+        // draw a road nobody drove. The backend reports the holes the odometer
+        // proves were driven, so those, and only those, get a grey dashed link
+        // between the stop it left and the track it rejoined.
+        for(const link of Array.isArray(data.gap_links)?data.gap_links:[]){
+          const from=link?.from,to=link?.to;
+          if(!Array.isArray(from)||!Array.isArray(to))continue;
+          if(!from.concat(to).every(value=>Number.isFinite(Number(value))))continue;
+          const moved=Number(link.odometer_km),metres=this._map.distance(from,to);
+          if(!(metres>60)||!Number.isFinite(moved)||moved<0.1)continue;
+          const minutes=Math.max(1,Math.round((Number(link.seconds)||0)/60));
+          L.polyline([from,to],{color:'#94a3b8',weight:3,opacity:.9,dashArray:'5 7',lineCap:'round'})
+            .bindTooltip(`Нет GPS-точек ${minutes} мин · по одометру ${moved.toLocaleString('ru-RU')} км`,{sticky:true}).addTo(this._layer);
         }
         if(!this._layer.getLayers().length && start<=today && today<=end){
           const validPosition=value=>value && value.latitude!==null && value.longitude!==null && value.latitude!=='' && value.longitude!=='' && Number.isFinite(Number(value.latitude)) && Number.isFinite(Number(value.longitude)) && Math.abs(Number(value.latitude))<=90 && Math.abs(Number(value.longitude))<=180 && (Number(value.latitude)!==0 || Number(value.longitude)!==0);
@@ -320,17 +522,30 @@
           }
         }
         this._routeContext={L,data,start,end};
+        // The card re-reads the same window every minute. When the payload is
+        // unchanged the map is already correct: rebuilding thousands of vertices
+        // costs a frame and throws away the zoom the user just chose.
+        const fingerprint=this._payloadFingerprint(data,start,end);
+        if(this._trips&&fingerprint===this._fingerprint){
+          this._lastLoadAt=Date.now();
+          mark('render-ready');
+          try{performance.measure('gwm-trips:history-request',`${perfKey}:load-start`,`${perfKey}:history-ready`);performance.measure('gwm-trips:map-startup',`${perfKey}:load-start`,`${perfKey}:map-ready`);performance.measure('gwm-trips:render',`${perfKey}:history-ready`,`${perfKey}:render-ready`);performance.measure('gwm-trips:total',`${perfKey}:load-start`,`${perfKey}:render-ready`);}catch{}
+          this._lastTimings={history_ms:historyMs,total_ms:Math.round(performance.now()-historyStarted),map_started_with_history:true,reused:true};
+          return;
+        }
+        this._fingerprint=fingerprint;
         this._gpxButton.disabled=!(data.segments||[]).some(segment=>segment.some(point=>point&&Number.isFinite(point[0])&&Number.isFinite(point[1])&&Math.abs(point[0])<=90&&Math.abs(point[1])<=180));
         this._overviewLayers=this._layer.getLayers().slice();
         this._buildTrips(data);
         this._renderTrips();
+        this._lastLoadAt=Date.now();
         if(this._layer.getLayers().length){this._map.invalidateSize();const key=`${this._config.entity}|${start}|${end}`;if(this._fitKey!==key){this._map.fitBounds(this._layer.getBounds(),{padding:[25,25],maxZoom:16});this._fitKey=key;}}
         else {this._map.setView([20,0],2);this._fitKey=null;}
         mark('render-ready');
         try{performance.measure('gwm-trips:history-request',`${perfKey}:load-start`,`${perfKey}:history-ready`);performance.measure('gwm-trips:map-startup',`${perfKey}:load-start`,`${perfKey}:map-ready`);performance.measure('gwm-trips:render',`${perfKey}:history-ready`,`${perfKey}:render-ready`);performance.measure('gwm-trips:total',`${perfKey}:load-start`,`${perfKey}:render-ready`);}catch{}
         this._lastTimings={history_ms:historyMs,total_ms:Math.round(performance.now()-historyStarted),map_started_with_history:true};
       }catch(err){if(serial===this._serial)error.textContent=err.message || 'Не удалось загрузить историю. Проверьте выбранную сущность.';}
-      finally{clearTimeout(timeout);if(serial===this._serial){root.querySelector('.summary').setAttribute('aria-busy','false');root.querySelector('.loading-status').textContent='';}}
+      finally{clearTimeout(timeout);if(serial===this._serial){root.querySelector('.summary').setAttribute('aria-busy','false');root.querySelector('.loading-status').textContent='';this._scheduleRefresh();}}
     }
     _buildTrips(data){
       const stops=(data.parking_spots||[]).filter(p=>Number.isFinite(Number(p.start))).slice().sort((a,b)=>a.start-b.start);
@@ -371,8 +586,8 @@
           const a=segment[i-1],b=segment[i];
           if(!groups.has(key))groups.set(key,{key,index,from,to,unclassified,runs:[]});
           const group=groups.get(key);
-          if(!run||run.key!==key||lastEdge!==i-1){run={key,points:[a],speeds:[],kinds:[]};group.runs.push(run);}
-          run.points.push(b);run.speeds.push(data.segment_speeds_kmh?.[s]?.[i-1]);run.kinds.push(data.segment_kinds?.[s]?.[i-1]);lastEdge=i;
+          if(!run||run.key!==key||lastEdge!==i-1){run={key,points:[a],speeds:[],kinds:[],times:[Number.isFinite(times[i-1])?times[i-1]:stamp]};group.runs.push(run);}
+          run.points.push(b);run.speeds.push(data.segment_speeds_kmh?.[s]?.[i-1]);run.kinds.push(data.segment_kinds?.[s]?.[i-1]);run.times.push(nextStamp);lastEdge=i;
         }
       }
       this._trips=[...groups.values()];
@@ -405,27 +620,53 @@
         // Round caps turn a run of identical parked fixes into a stray colored
         // dot. Parking markers already represent these stationary observations.
         const common={lineCap:'round',lineJoin:'round',smoothFactor:.6,bubblingMouseEvents:false};
-        L.polyline(run.points,{...common,color:'#fff',weight:9,opacity:.85,interactive:false}).addTo(this._routeLayer);
+        // Painted geometry is non-interactive, so it shares one canvas renderer:
+        // Leaflet then strokes it instead of rebuilding an SVG path for every
+        // remaining vertex on each zoom. The invisible hit line stays on the
+        // default SVG renderer because it must catch clicks and be focusable.
+        const painted={...common,renderer:this._paths,interactive:false};
+        const addLine=(points,options)=>L.polyline(points,{...painted,...options}).addTo(this._routeLayer);
+        // One simplification per run feeds the casing, the coloured line, the
+        // arrow grid and the invisible 20 px corridor. Simplifying per layer ran
+        // the same recursion three times per render, and the corridor kept a
+        // full second copy of the run in the DOM for every fix.
+        run.drawn=simplifyPath(run.points);
+        addLine(run.drawn,{color:'#fff',weight:9,opacity:.85});
         const title=trip.unclassified?'Участок с неуточнёнными границами стоянки':`Участок ${trip.index+1}`;
-        if(!focused)L.polyline(run.points,{...common,color:TRIP_COLORS[trip.index%TRIP_COLORS.length],weight:6,opacity:.95,interactive:false}).addTo(this._routeLayer);
+        if(!focused)addLine(run.drawn,{color:TRIP_COLORS[trip.index%TRIP_COLORS.length],weight:6,opacity:.95});
         else {
+          // Speed bands ride on the simplified vertices: a kept vertex carries
+          // the band of the edge leaving it, so a band boundary stays exactly
+          // where the drive crossed a threshold instead of being re-thinned
+          // inside its own short slice.
+          const shade=index=>{
+            const speed=run.speeds[index],valid=speed!=null&&Number.isFinite(Number(speed))&&Number(speed)>0&&run.kinds[index]!=='unknown'&&run.kinds[index]!=='stationary';
+            return !valid?'#88949f':speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
+          };
+          const shaded=simplifyPath(run.points.map((point,index)=>[point[0],point[1],shade(index)]));
+          // Bands are grouped by edge, not by vertex: a vertex-only batch throws
+          // away a band that is a single edge long, which silently lost a short
+          // red or green stretch at the start of a run.
           let batch=[],lastColor;
-          const flush=()=>{if(batch.length>1)L.polyline(batch,{...common,color:lastColor,weight:6,opacity:.95,interactive:false}).addTo(this._routeLayer);};
-          for(let i=1;i<run.points.length;i++){
-            const speed=run.speeds[i-1],valid=speed!=null&&Number.isFinite(Number(speed))&&Number(speed)>0&&run.kinds[i-1]!=='unknown'&&run.kinds[i-1]!=='stationary';
-            const color=!valid?'#88949f':speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
-            if(color!==lastColor){flush();batch=[run.points[i-1]];lastColor=color;}batch.push(run.points[i]);
+          const flush=()=>{if(batch.length>1)addLine(batch,{color:lastColor,weight:6,opacity:.95});};
+          for(let index=0;index<shaded.length-1;index++){
+            const color=shaded[index][2];
+            if(color!==lastColor){flush();batch=[[shaded[index][0],shaded[index][1]]];lastColor=color;}
+            batch.push([shaded[index+1][0],shaded[index+1][1]]);
           }flush();
         }
-        const hit=L.polyline(run.points,{...common,color:'#000',weight:20,opacity:0,className:'route-hit'}).bindTooltip(focused?`${title} · цвет показывает скорость`:`${title} · нажмите для просмотра скорости`).addTo(this._routeLayer);
+        const hit=L.polyline(run.drawn,{...common,color:'#000',weight:20,opacity:0,className:'route-hit'}).bindTooltip(focused?`${title} · цвет показывает скорость`:`${title} · нажмите для просмотра скорости`).addTo(this._routeLayer);
         hit.on('click',()=>{if(!focused)this._selectTrip(trip.key);});
         if(focused)hit.on('mousemove',event=>{
           const cursor=this._map.latLngToContainerPoint(event.latlng);let nearest=Infinity,edge=0;
+          // Projected once per view: a mousemove fires dozens of times per
+          // second and projecting every fix for each of them stalled the map.
+          const projected=this._projected(run);
           for(let i=1;i<run.points.length;i++){
-            const a=this._map.latLngToContainerPoint(run.points[i-1]),b=this._map.latLngToContainerPoint(run.points[i]);
-            const dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy;
-            const fraction=length?Math.max(0,Math.min(1,((cursor.x-a.x)*dx+(cursor.y-a.y)*dy)/length)):0;
-            const distance=(cursor.x-a.x-fraction*dx)**2+(cursor.y-a.y-fraction*dy)**2;
+            const ax=projected[(i-1)*2],ay=projected[(i-1)*2+1],bx=projected[i*2],by=projected[i*2+1];
+            const dx=bx-ax,dy=by-ay,length=dx*dx+dy*dy;
+            const fraction=length?Math.max(0,Math.min(1,((cursor.x-ax)*dx+(cursor.y-ay)*dy)/length)):0;
+            const distance=(cursor.x-ax-fraction*dx)**2+(cursor.y-ay-fraction*dy)**2;
             if(distance<nearest){nearest=distance;edge=i-1;}
           }
           const speed=run.speeds[edge],known=speed!=null&&Number.isFinite(Number(speed))&&Number(speed)>=0&&run.kinds[edge]!=='unknown';
@@ -433,11 +674,21 @@
           hit.openTooltip(event.latlng);
         });
         const path=hit.getElement?.();if(path&&!focused){path.setAttribute('tabindex','0');path.setAttribute('role','button');path.setAttribute('aria-label',`${title}: показать скорость`);path.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this._selectTrip(trip.key);}});}
-        this._arrowRuns.push(run.points);
+        this._arrowRuns.push(run.drawn);
         }
       }
+      let stopCount=0;
       if(focused&&trips.length){
         const trip=trips[0],runs=trip.runs.filter(isDrawable);
+        // Stop dots belong to the drawn run, not to the parking windows: a red
+        // light never leaves a gap in the track, so nothing else would mark it.
+        for(const run of runs){
+          for(const stop of briefStops(run)){
+            stopCount++;
+            L.circleMarker(stop.point,{radius:3.5,color:'#fff',weight:1.5,fillColor:'#475569',fillOpacity:1,className:'route-stop',bubblingMouseEvents:false})
+              .bindTooltip(`Остановка ${Math.round(stop.seconds/10)*10} с`).addTo(this._routeLayer);
+          }
+        }
         if(runs.length){
           const gapBoundary=(point,text)=>L.circleMarker(point,{radius:4,color:'#64748b',weight:2,fillColor:'#fff',fillOpacity:1}).bindTooltip(text).addTo(this._routeLayer);
           const endpoints=[[trip.from,runs[0].points[0],'Начальная стоянка'],[trip.to,runs.at(-1).points.at(-1),'Конечная стоянка']];
@@ -455,6 +706,7 @@
       this.shadowRoot.querySelector('.all-trips').hidden=!focused;
       this.shadowRoot.querySelector('.trip-caption').hidden=true;
       this.shadowRoot.querySelector('.speed-legend').hidden=!focused;
+      this.shadowRoot.querySelector('.stops-legend').hidden=!focused||!stopCount;
       this._drawChevrons();
     }
     _drawChevrons(){
@@ -479,7 +731,7 @@
           remaining=((remaining-length)%38+38)%38||38;if(paths.length>=1600)break;
         }if(paths.length>=1600)break;
       }
-      if(paths.length)L.polyline(paths,{color:'#fff',weight:1.8,opacity:.95,interactive:false,lineCap:'round',lineJoin:'round',smoothFactor:0}).addTo(this._arrows);
+      if(paths.length)L.polyline(paths,{color:'#fff',weight:1.8,opacity:.95,interactive:false,lineCap:'round',lineJoin:'round',smoothFactor:0,renderer:this._paths}).addTo(this._arrows);
     }
     _diagnosticText(data,start,end){
       const info=data.diagnostics||{},counts=info.source_counts||data.source_counts||{},app=Number(counts.app)||0,cloud=Number(counts.cloud)||0;

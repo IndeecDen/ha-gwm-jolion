@@ -1,0 +1,218 @@
+"""Offline access probes: never use real credentials or perform writes."""
+import asyncio
+import json
+
+import pytest
+from aiohttp import ClientError
+
+import test_locator  # Install the lightweight integration package used by tests.
+from locator_test_package import locator_yandex as disk
+
+TOKEN = 'synthetic-secret-token'
+FOLDER = '/PrivateSyntheticFolder'
+
+
+class Response:
+    def __init__(self, status=200, payload=None, headers=None):
+        self.status = status
+        self.body = json.dumps(payload or {}).encode()
+        self.headers = headers or {}
+        self.content = self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    async def iter_chunked(self, size):
+        yield self.body
+
+
+class Session:
+    def __init__(self, *responses):
+        self.responses = iter(responses)
+        self.calls = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        response = next(self.responses)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+
+def relay(session):
+    return disk.PublicDiskRelay(None, session, 'https://disk.yandex.ru/d/synthetic',
+                                'synthetic-key', 'jolion', token=TOKEN, folder=FOLDER)
+
+
+@pytest.mark.parametrize('url', [
+    'https://downloader.disk.yandex.ru/file',
+    'https://yandex.ru/file',
+    'https://cloud-api.yandex.net.evil.test/v1/disk/resources',
+    'https://cloud-api.yandex.net/v1/disk/resources?redirect=elsewhere',
+])
+def test_oauth_never_sent_outside_exact_resources_endpoint(url):
+    session = Session(Response(204))
+    with pytest.raises(ValueError):
+        asyncio.run(relay(session).auth_request('DELETE', url))
+    assert session.calls == []
+
+
+def test_access_success_is_read_only_sanitized_and_cached():
+    session = Session(*(Response(payload={'type': 'dir', 'path': FOLDER}) for _ in range(3)))
+    client = relay(session)
+    assert client.last_diagnostics is None
+    result = asyncio.run(client.check_access())
+    assert result == {'status': 'ok', 'token': 'ok', 'folder': 'ok',
+                      'public_folder': 'ok', 'write_access': 'not_checked'}
+    assert client.last_diagnostics == result
+    assert [call[:2] for call in session.calls] == [
+        ('GET', disk.FILES_API), ('GET', disk.FILES_API), ('GET', disk.API)]
+    assert session.calls[0][2]['params'] == {'path': 'disk:/', 'fields': 'type'}
+    assert session.calls[1][2]['params'] == {'path': 'disk:' + FOLDER, 'fields': 'type'}
+    assert session.calls[2][2]['params'] == {'public_key': client.public_url, 'fields': 'type'}
+    for _, url, kwargs in session.calls:
+        assert kwargs['allow_redirects'] is False
+        assert kwargs.get('headers', {}).get('Authorization') == (
+            'OAuth ' + TOKEN if url == disk.FILES_API else None)
+    for private in (TOKEN, FOLDER, client.public_url, client.key):
+        assert private not in json.dumps(result)
+    assert client.cleanup_deleted == 0 and not client.cleanup_enabled
+
+
+@pytest.mark.parametrize('http, expected, overall, attempts', [
+    (401, 'unauthorized', 'auth_error', 1), (403, 'forbidden', 'auth_error', 1),
+    (404, 'not_found', 'error', 1), (429, 'throttled', 'transient_error', 3),
+    (500, 'unavailable', 'transient_error', 3), (503, 'unavailable', 'transient_error', 3),
+    (302, 'unexpected_response', 'error', 1), (400, 'unexpected_response', 'error', 1),
+])
+@pytest.mark.parametrize('stage', ['token', 'folder', 'public_folder'])
+def test_http_failures_are_classified_without_following_redirects(http, expected, overall, attempts, stage, monkeypatch):
+    monkeypatch.setattr(disk, 'uniform', lambda a, b: 0, raising=False)
+    good = lambda: Response(payload={'type': 'dir'})
+    bad = lambda: Response(http, {'error': TOKEN + FOLDER}, {'Location': 'https://evil.test/'})
+    responses = {'token': [bad() for _ in range(attempts)] + [good()],
+                 'folder': [good()] + [bad() for _ in range(attempts)] + [good()],
+                 'public_folder': [good(), good()] + [bad() for _ in range(attempts)]}[stage]
+    session = Session(*responses)
+    client = relay(session)
+    result = asyncio.run(client.check_access())
+    assert result[stage] == expected
+    assert result['status'] == overall
+    if stage == 'token':
+        assert result['folder'] == 'not_checked'
+    if stage != 'public_folder':
+        assert result['public_folder'] == 'ok'
+    assert len(session.calls) == len(responses)
+    assert client.last_diagnostics == result
+    assert TOKEN not in json.dumps(result) and FOLDER not in json.dumps(result)
+    assert client.throttle_until == 0 and not client.cleanup_blocked
+
+
+@pytest.mark.parametrize('token, folder, token_state, folder_state, calls', [
+    ('', FOLDER, 'not_configured', 'not_checked', 1),
+    ('bad', FOLDER, 'not_configured', 'not_checked', 1),
+    (TOKEN, '/a/../private', 'ok', 'invalid_config', 2),
+])
+def test_missing_or_invalid_config_still_checks_public_folder(token, folder, token_state, folder_state, calls):
+    session = Session(*(Response(payload={'type': 'dir'}) for _ in range(calls)))
+    client = disk.PublicDiskRelay(None, session, 'https://disk.yandex.ru/d/synthetic',
+                                 'synthetic-key', 'jolion', token=token, folder=folder)
+    result = asyncio.run(client.check_access())
+    assert result['token'] == token_state
+    assert result['folder'] == folder_state
+    assert result['public_folder'] == 'ok'
+    assert result['status'] == 'error'
+    assert len(session.calls) == calls
+
+
+@pytest.mark.parametrize('error', [TimeoutError(TOKEN), OSError(FOLDER), ClientError(TOKEN)])
+def test_transport_failures_are_transient_and_do_not_expose_details(error, monkeypatch):
+    monkeypatch.setattr(disk, 'uniform', lambda a, b: 0, raising=False)
+    session = Session(error, error, error, Response(payload={'type': 'dir'}))
+    client = relay(session)
+    result = asyncio.run(client.check_access())
+    assert result['status'] == 'transient_error'
+    assert result['token'] == ('timeout' if isinstance(error, TimeoutError) else 'network_error')
+    assert result['public_folder'] == 'ok'
+    assert len(session.calls) == 4
+    assert TOKEN not in json.dumps(result) and FOLDER not in json.dumps(result)
+
+
+def test_throttled_probe_recovers_within_one_budget(monkeypatch):
+    monkeypatch.setattr(disk, 'uniform', lambda a, b: 0, raising=False)
+    session = Session(Response(429), Response(payload={'type': 'dir'}),
+                      Response(payload={'type': 'dir'}), Response(payload={'type': 'dir'}))
+    result = asyncio.run(relay(session).check_access())
+    assert result == {'status': 'ok', 'token': 'ok', 'folder': 'ok',
+                      'public_folder': 'ok', 'write_access': 'not_checked'}
+    assert len(session.calls) == 4
+
+
+def test_retries_stop_at_the_attempt_limit(monkeypatch):
+    monkeypatch.setattr(disk, 'uniform', lambda a, b: 0, raising=False)
+    session = Session(Response(500), Response(500), Response(500),
+                      Response(payload={'type': 'dir'}))
+    client = relay(session)
+    result = asyncio.run(client.check_access())
+    assert result['token'] == 'unavailable' and result['status'] == 'transient_error'
+    assert len(session.calls) == 4  # three token attempts, then the public probe
+
+
+def test_each_probe_has_a_deadline_including_body_read(monkeypatch):
+    class Stalled(Response):
+        async def iter_chunked(self, size):
+            await asyncio.Event().wait()
+            yield b''
+    monkeypatch.setattr(disk, 'ACCESS_TIMEOUT', 0.01, raising=False)
+    client = relay(Session(Stalled(), Stalled()))
+    async def run():
+        return await asyncio.wait_for(client.check_access(), timeout=1)
+    result = asyncio.run(run())
+    assert result['token'] == result['public_folder'] == 'timeout'
+    assert result['status'] == 'transient_error'
+
+
+@pytest.mark.parametrize('body, expected', [
+    (b'not json containing synthetic-secret-token', 'invalid_response'),
+    (b'[]', 'invalid_response'), (b'null', 'invalid_response'),
+    (b'{}', 'invalid_response'), (b'{"type": "file"}', 'not_folder'),
+    (b'{"type": "unexpected"}', 'invalid_response'),
+    (json.dumps({'type': 'dir', 'padding': 'x' * disk.MAX_FILE}).encode(), 'invalid_response'),
+])
+def test_untrusted_metadata_is_bounded_and_sanitized(body, expected):
+    bad = Response()
+    bad.body = body
+    client = relay(Session(Response(payload={'type': 'dir'}), bad,
+                           Response(payload={'type': 'dir'})))
+    result = asyncio.run(client.check_access())
+    assert result['folder'] == expected
+    assert result['status'] == 'error'
+    assert result['public_folder'] == 'ok'
+    assert TOKEN not in json.dumps(result)
+
+
+def test_cancellation_preserves_last_completed_diagnostics():
+    async def run():
+        entered = asyncio.Event()
+        class Stalled(Response):
+            async def iter_chunked(self, size):
+                entered.set()
+                await asyncio.Event().wait()
+                yield b''
+        session = Session(*(Response(payload={'type': 'dir'}) for _ in range(3)), Stalled())
+        client = relay(session)
+        completed = await client.check_access()
+        completed['token'] = 'caller-mutated'
+        assert client.last_diagnostics['token'] == 'ok'
+        previous = client.last_diagnostics.copy()
+        task = asyncio.create_task(client.check_access())
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert client.last_diagnostics == previous
+        assert len(session.calls) == 4
+    asyncio.run(run())

@@ -12,8 +12,10 @@ import hashlib
 import json
 import re
 import time
+from random import uniform
 from urllib.parse import urlsplit
 
+from aiohttp import ClientError
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .locator_protocol import validate
@@ -21,6 +23,9 @@ from .locator_protocol import validate
 API = 'https://cloud-api.yandex.net/v1/disk/public/resources'
 FILES_API = 'https://cloud-api.yandex.net/v1/disk/resources'
 MAX_FILE = 400000
+ACCESS_TIMEOUT = 5  # Per probe, shared by its retries; three probes take 15 seconds.
+ACCESS_ATTEMPTS = 3  # Read-only probes may retry twice on throttling or 5xx.
+ACCESS_RETRY_STATES = frozenset({'throttled', 'unavailable', 'timeout', 'network_error'})
 # Option keys live in locator.py; this module only needs the behaviour defaults.
 DEFAULT_FOLDER = '/JolionLocator'
 DEFAULT_GRACE_HOURS = 24
@@ -132,6 +137,71 @@ class PublicDiskRelay:
         self.throttle_until=0.0
         self.archive=archive_pattern(vehicle)
         self.latest=latest_pattern(vehicle)
+        self.last_diagnostics=None
+
+    async def _access_probe(self, url, params):
+        """Retry read-only probes within one deadline; retain no exception text or URLs."""
+        deadline=time.monotonic()+ACCESS_TIMEOUT
+        verdict='timeout'
+        for attempt in range(ACCESS_ATTEMPTS):
+            remaining=deadline-time.monotonic()
+            if remaining<=0:break
+            try:
+                async with asyncio.timeout(remaining):
+                    verdict=await self._read_access_metadata(url, params)
+            except TimeoutError:
+                verdict='timeout'
+            except (ClientError, OSError):
+                verdict='network_error'
+            if verdict not in ACCESS_RETRY_STATES:
+                return verdict
+            if attempt+1<ACCESS_ATTEMPTS:
+                # Equal jitter; a pause that would overrun the deadline ends the probe.
+                ceiling=min(1.0,0.3*2**attempt)
+                delay=uniform(ceiling/2,ceiling)
+                if delay>=deadline-time.monotonic():break
+                await asyncio.sleep(delay)
+        return verdict
+
+    async def _read_access_metadata(self, url, params):
+        """Read only minimal metadata; never return provider data."""
+        headers={'Authorization': 'OAuth '+self.token} if url == FILES_API else {}
+        async with self.session.request('GET', url, params=params, headers=headers,
+                                        allow_redirects=False) as response:
+            if response.status == 401:return 'unauthorized'
+            if response.status == 403:return 'forbidden'
+            if response.status == 404:return 'not_found'
+            if response.status == 429:return 'throttled'
+            if 500 <= response.status < 600:return 'unavailable'
+            if response.status != 200:return 'unexpected_response'
+            body=bytearray()
+            async for block in response.content.iter_chunked(16384):
+                body.extend(block)
+                if len(body) > MAX_FILE:return 'invalid_response'
+            try:
+                metadata=json.loads(body)
+            except (ValueError, RecursionError):
+                return 'invalid_response'
+            if not isinstance(metadata, dict) or metadata.get('type') not in ('dir', 'file'):
+                return 'invalid_response'
+            return 'ok' if metadata['type'] == 'dir' else 'not_folder'
+
+    async def check_access(self):
+        """Check read access only; this does not prove upload/delete permissions."""
+        result={'status': 'ok', 'token': 'not_checked', 'folder': 'not_checked',
+                'public_folder': 'not_checked', 'write_access': 'not_checked'}
+        result['token']=(await self._access_probe(FILES_API, {'path': 'disk:/', 'fields': 'type'})
+                         if self.token else 'not_configured')
+        if result['token'] == 'ok':
+            result['folder']=(await self._access_probe(FILES_API, {'path': 'disk:'+self.folder, 'fields': 'type'})
+                              if self.folder else 'invalid_config')
+        result['public_folder']=await self._access_probe(API, {'public_key': self.public_url, 'fields': 'type'})
+        states={result[name] for name in ('token', 'folder', 'public_folder')}
+        if states & {'unauthorized', 'forbidden'}:result['status']='auth_error'
+        elif states & {'throttled', 'unavailable', 'timeout', 'network_error'}:result['status']='transient_error'
+        elif states != {'ok'}:result['status']='error'
+        self.last_diagnostics=result.copy()
+        return result
 
     def close(self):
         self.closed=True
@@ -167,7 +237,8 @@ class PublicDiskRelay:
     async def auth_request(self,method,url,params=None):
         """Own-files API call. The token is only sent to the verified Disk host."""
         if not self.token:raise DiskUnauthorized
-        safe_download_url(url)
+        if url != FILES_API:
+            raise ValueError('Untrusted authenticated endpoint')
         headers={'Authorization':'OAuth '+self.token}
         async with self.session.request(method,url,params=params,headers=headers,allow_redirects=False) as response:
             if response.status in (401,403):raise DiskUnauthorized
@@ -228,7 +299,6 @@ class PublicDiskRelay:
                 receipt=self._receipt(name,fingerprint_of(item))
                 seen=await self.history.hass.async_add_executor_job(self.history.app_archive.relay_seen,receipt)
                 if not seen:continue
-                # Both path parts are regex-validated, so no traversal is possible.
                 # Both path parts are regex-validated, so no traversal is possible.
                 await self.auth_request('DELETE',FILES_API,{'path':'disk:'+self.folder+'/'+name})
             except DiskThrottled:

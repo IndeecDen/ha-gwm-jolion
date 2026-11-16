@@ -197,7 +197,9 @@ class GwmJolionOptionsFlow(config_entries.OptionsFlowWithReload):
             options[CONF_ENABLE_REMOTE_CONTROLS] = user_input.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)
             options[CONF_COMMAND_COOLDOWN] = user_input.get(CONF_COMMAND_COOLDOWN, DEFAULT_COMMAND_COOLDOWN)
             options[CONF_PROTOCOL_CAPTURE] = bool(user_input.get(CONF_PROTOCOL_CAPTURE, DEFAULT_PROTOCOL_CAPTURE))
-            if user_input.get(CONF_SECURITY_PIN):
+            # Blank password controls mean "keep", not "delete". These remain
+            # native ConfigEntry options; a password selector is not encryption.
+            if user_input.get(CONF_SECURITY_PIN, "").strip():
                 options[CONF_SECURITY_PIN] = user_input[CONF_SECURITY_PIN]
             if user_input.get(CLEAR_SECURITY_PIN):
                 options.pop(CONF_SECURITY_PIN, None)
@@ -207,19 +209,19 @@ class GwmJolionOptionsFlow(config_entries.OptionsFlowWithReload):
                 return self.async_create_entry(title="", data=options)
 
         current = {**self.config_entry.options, **(user_input or {})}
-        has_pin = bool(current.get(CONF_SECURITY_PIN))
+        has_pin = bool(self.config_entry.options.get(CONF_SECURITY_PIN))
         feature_defaults = resolve_manual_capabilities(dict(current))
         schema: dict[vol.Marker, Any] = {
             vol.Optional(LOCATOR_ENABLED, default=current.get(LOCATOR_ENABLED, False)): bool,
             vol.Optional("golion_locator_transport", default=current.get("golion_locator_transport","https")): vol.In({"https":"Напрямую HTTPS","yandex_disk":"Яндекс.Диск (публичная папка)"}),
             vol.Optional("golion_locator_yandex_public_url", default=current.get("golion_locator_yandex_public_url","")): str,
-            vol.Optional(TOKEN, default=current.get(TOKEN, "")): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
+            vol.Optional(TOKEN): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
             vol.Optional(FOLDER, default=current.get(FOLDER, "/JolionLocator")): str,
             vol.Optional(CLEANUP, default=bool(current.get(CLEANUP, False))): bool,
             vol.Optional(CLEANUP_GRACE_HOURS, default=current.get(CLEANUP_GRACE_HOURS, 24)): vol.All(int, vol.Range(min=1, max=168)),
             vol.Optional(DISK_RELAY_INTERVAL, default=current.get(DISK_RELAY_INTERVAL, DEFAULT_RELAY_INTERVAL)): vol.All(int, vol.Range(min=MIN_RELAY_INTERVAL, max=MAX_RELAY_INTERVAL)),
             vol.Optional(LOCATOR_ID, default=current.get(LOCATOR_ID, "jolion")): str,
-            vol.Optional(LOCATOR_KEY, default=current.get(LOCATOR_KEY, "")): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
+            vol.Optional(LOCATOR_KEY): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
             vol.Optional(CONF_GPS_INTERVAL, default=current.get(CONF_GPS_INTERVAL, current.get(CONF_POLL_INTERVAL, self.config_entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)))): GPS_INTERVAL_SELECTOR,
             vol.Optional(CONF_POLL_INTERVAL, default=current.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)): POLL_INTERVAL_SELECTOR,
             vol.Optional(CONF_ENABLE_REMOTE_CONTROLS, default=current.get(CONF_ENABLE_REMOTE_CONTROLS, DEFAULT_ENABLE_REMOTE_CONTROLS)): bool,

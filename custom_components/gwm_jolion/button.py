@@ -25,6 +25,8 @@ async def async_setup_entry(
 ) -> None:
     coordinator: GwmJolionCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[ButtonEntity] = [GwmJolionRefreshButton(coordinator)]
+    if getattr(getattr(coordinator, "trip_history", None), "relay", None) is not None:
+        entities.append(GwmJolionCheckDiskButton(coordinator))
     if coordinator.enable_remote_controls and coordinator.security_pin:
         entities.append(GwmJolionStartSelectedProfileButton(coordinator))
         entities.extend(
@@ -82,6 +84,39 @@ class GwmJolionRefreshButton(GwmJolionEntity, ButtonEntity):
             "protocol_capture_last_marker": self.coordinator.protocol_capture_last_marker,
             "protocol_capture_last_error": self.coordinator.protocol_capture_last_error,
         }
+
+
+class GwmJolionCheckDiskButton(GwmJolionEntity, ButtonEntity):
+    """Read-only access check, independent of cloud vehicle availability."""
+
+    _attr_name = "Проверить доступ к Яндекс.Диску"
+    _attr_icon = "mdi:cloud-check-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry_id}_check_yandex_disk"
+
+    @property
+    def _relay(self):
+        return getattr(getattr(self.coordinator, "trip_history", None), "relay", None)
+
+    @property
+    def available(self):
+        relay = self._relay
+        return relay is not None and not relay.closed
+
+    @property
+    def extra_state_attributes(self):
+        result = getattr(self._relay, "last_diagnostics", None)
+        return {"access_check": dict(result) if result is not None else None}
+
+    async def async_press(self):
+        relay = self._relay
+        if relay is None or relay.closed:
+            return
+        await relay.check_access()
+        self.async_write_ha_state()
 
 
 class GwmJolionStartSelectedProfileButton(GwmJolionEntity, ButtonEntity):

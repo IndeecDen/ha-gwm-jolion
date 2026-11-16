@@ -2,12 +2,14 @@
 import ast
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 from functools import partial
 from datetime import timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -15,6 +17,46 @@ ROOT = Path(__file__).resolve().parents[1] / "custom_components/gwm_jolion"
 spec = importlib.util.spec_from_file_location("trip_history", ROOT / "trips.py")
 trips = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(trips)
+
+
+def ws_scope(**overrides):
+    """Exec the trip websocket handler with its helpers, constants and stubs.
+
+    Home Assistant imports this module inside a running instance, so the tests pull
+    the handler out of the source and drive it with a fake hass. Shared by every
+    test that exercises get_trips, so the module itself carries no test hooks.
+    """
+    source = ast.parse((ROOT / "trips_ws.py").read_text(encoding="utf-8"))
+    functions = {"_closed_window", "_timed_recorder_read", "get_trips"}
+    constants = {"RECORDER_TIMEOUT", "_INFLIGHT", "_RESULT_CACHE", "_RESULT_CACHE_TTL", "_RESULT_CACHE_MAX"}
+    body = []
+    for node in source.body:
+        targets = getattr(node, "targets", None) or [getattr(node, "target", None)]
+        names = {target.id for target in targets if isinstance(target, ast.Name)}
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and names & constants:
+            body.append(node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in functions:
+            node.decorator_list = []
+            body.append(node)
+    scope = {
+        "__name__": "trips_ws",
+        "DOMAIN": "gwm_jolion",
+        "POLICY_READ": "read",
+        "asyncio": asyncio,
+        "time": time,
+        "logging": logging,
+        "_LOGGER": logging.getLogger("gwm_jolion.trips_ws"),
+        "er": SimpleNamespace(async_get=lambda hass: None),
+        "dt_util": SimpleNamespace(
+            parse_date=lambda text: datetime.fromisoformat(text).date(),
+            get_time_zone=lambda name: ZoneInfo(name) if isinstance(name, str) else name,
+            now=lambda zone=None: datetime.now(zone),
+        ),
+        "read_history": None,
+    }
+    scope.update(overrides)
+    exec(compile(ast.Module(body=body, type_ignores=[]), "trips_ws.py", "exec"), scope)
+    return scope
 
 
 def stamp(value):
@@ -182,6 +224,29 @@ def test_route_simplification_preserves_speed_edge_alignment():
         assert all(kind=="moving" for kind in kinds)
 
 
+def test_route_payload_stays_compact_and_keeps_short_stops(monkeypatch):
+    """The map asks for the same window every minute, so the payload ships whole
+    seconds and metres-precise coordinates instead of float noise, and a short
+    standstill survives the route cap as its own stationary edge."""
+    base=stamp("2026-09-16T12:00:00+00:00")
+    rows=[(base+index,55+index*.0001,37,None) for index in range(40)]
+    rows[10:13]=[(base+10,55.0009,37,None),(base+11,55.0009,37,None),(base+12,55.0009,37,None)]
+    monkeypatch.setattr(trips,"MAX_ROUTE_POINTS",10)
+    result=trips.summarize(rows,"2026-09-16","2026-09-16","UTC")
+
+    timestamps=result["segment_timestamps"][0]
+    assert all(isinstance(value,int) for value in timestamps),"timestamps travel as whole seconds"
+    assert timestamps[0]==int(base),"the first fix keeps its second"
+    assert timestamps[-1]==int(base+39)
+    points=result["segments"][0]
+    assert all(value==round(value,6) for point in points for value in point),"coordinates travel at metre precision"
+    assert points[0]==[round(rows[0][1],6),37] and points[-1]==[round(rows[-1][1],6),37],"route endpoints survive the cap"
+    assert result["simplified"] and len(points)<=trips.MAX_ROUTE_POINTS
+    for speeds,kinds in zip(result["segment_speeds_kmh"],result["segment_kinds"]):
+        assert len(speeds)==len(kinds)
+    assert any(kind=="stationary" for kinds in result["segment_kinds"] for kind in kinds),"a three-second standstill is not averaged away"
+
+
 def test_persistence_retention_and_vehicle_isolation(tmp_path):
     async def run():
         async def executor(fn,*args): return fn(*args)
@@ -214,11 +279,8 @@ def test_local_query_uses_previous_gps_baseline_for_parking(tmp_path):
 
 
 def test_history_permission_and_entry_binding():
-    node=next(n for n in ast.parse((ROOT/"trips_ws.py").read_text(encoding="utf-8")).body if isinstance(n,ast.AsyncFunctionDef))
-    node.decorator_list=[]
     entry=SimpleNamespace(config_entry_id="car",platform="gwm_jolion")
-    scope={"DOMAIN":"gwm_jolion","POLICY_READ":"read","er":SimpleNamespace(async_get=lambda hass:SimpleNamespace(async_get=lambda entity:entry))}
-    exec(compile(ast.Module(body=[node],type_ignores=[]),"ws","exec"),scope)
+    scope=ws_scope(er=SimpleNamespace(async_get=lambda hass:SimpleNamespace(async_get=lambda entity:entry)))
     async def run():
         calls=[];errors=[];results=[]
         async def query(*args): calls.append(args);return {"samples":2}
@@ -256,14 +318,11 @@ def test_archive_only_and_overlap_do_not_double_count():
 
 
 def test_app_only_websocket_keeps_recorder_and_passes_source_flags():
-    node=next(n for n in ast.parse((ROOT/'trips_ws.py').read_text()).body if isinstance(n,ast.AsyncFunctionDef))
-    node.decorator_list=[]
     entry=SimpleNamespace(config_entry_id='car',platform='gwm_jolion')
     async def read_history(*args, **kwargs):
         return None
-    scope={'DOMAIN':'gwm_jolion','POLICY_READ':'read','read_history':read_history,
-           'er':SimpleNamespace(async_get=lambda hass:SimpleNamespace(async_get=lambda entity:entry,async_get_entity_id=lambda *args:'sensor.car_odometer'))}
-    exec(compile(ast.Module(body=[node],type_ignores=[]),'ws','exec'),scope)
+    scope=ws_scope(read_history=read_history,
+        er=SimpleNamespace(async_get=lambda hass:SimpleNamespace(async_get=lambda entity:entry,async_get_entity_id=lambda *args:'sensor.car_odometer')))
     async def run():
         calls=[];results=[];errors=[]
         async def query(*args,**kwargs):
@@ -360,21 +419,15 @@ def test_previous_day_baseline_counts_first_morning_trip(tmp_path):
 
 
 def test_slow_recorder_falls_back_to_local_history():
-    node=next(n for n in ast.parse((ROOT/"trips_ws.py").read_text(encoding="utf-8")).body if isinstance(n,ast.AsyncFunctionDef))
-    node.decorator_list=[]
-    class InjectRecorder(ast.NodeTransformer):
-        def visit_ImportFrom(self,node):
-            return ast.copy_location(ast.Pass(),node)
-    node=InjectRecorder().visit(node)
     entry=SimpleNamespace(config_entry_id="car",platform="gwm_jolion")
     registry=SimpleNamespace(async_get=lambda entity:entry,async_get_entity_id=lambda *args:None)
     cancelled=[]
     async def slow(*args):
         try: await asyncio.sleep(100)
         finally: cancelled.append(True)
-    scope={"DOMAIN":"gwm_jolion","POLICY_READ":"read","er":SimpleNamespace(async_get=lambda hass:registry),
-           "read_history":slow,"asyncio":SimpleNamespace(timeout=lambda seconds:asyncio.timeout(0.01)),"_LOGGER":logging.getLogger(__name__)}
-    exec(compile(ast.Module(body=[node],type_ignores=[]),"ws","exec"),scope)
+    scope=ws_scope(read_history=slow,
+        asyncio=SimpleNamespace(timeout=lambda seconds:asyncio.timeout(0.01),ensure_future=asyncio.ensure_future),
+        er=SimpleNamespace(async_get=lambda hass:registry))
     async def run():
         results=[];errors=[]
         async def query(*args):return {"km":84}
@@ -530,3 +583,31 @@ def test_today_overnight_parking_with_short_missing_fix_has_one_marker(missing_a
     assert len(trips.summarize(moved,"2026-09-24","2026-09-25","Europe/Moscow")["parking_spots"])==2
     unknown=[(ts,lat,lon,None) for ts,lat,lon,odo in rows]
     assert len(trips.summarize(unknown,"2026-09-24","2026-09-25","Europe/Moscow")["parking_spots"])==2
+
+
+
+def test_two_cards_asking_at_once_share_one_recorder_read():
+    """Two tabs opening the same window must not queue two Recorder queries."""
+    reads=[]
+    async def read_history(hass,entity_id,odometer,start,end,engine):
+        reads.append((entity_id,start,end))
+        await asyncio.sleep(0.05)
+        return None
+    entry=SimpleNamespace(config_entry_id="car",platform="gwm_jolion")
+    scope=ws_scope(read_history=read_history,_LOGGER=SimpleNamespace(warning=lambda *args:None),
+        er=SimpleNamespace(async_get=lambda hass:SimpleNamespace(async_get=lambda entity:entry,async_get_entity_id=lambda *args:"sensor.car_odometer")))
+    async def run():
+        results=[];errors=[]
+        async def query(*args,**kwargs):
+            return {"samples":0,"segments":[],"source_counts":{"app":0,"cloud":0}}
+        parent=SimpleNamespace(trip_history=SimpleNamespace(query=query,enabled=True,retention=90))
+        hass=SimpleNamespace(data={"gwm_jolion":{"car":parent}},config=SimpleNamespace(time_zone="UTC",components={"recorder"}))
+        connection=SimpleNamespace(user=SimpleNamespace(permissions=SimpleNamespace(check_entity=lambda *args:True)),
+                                   send_error=lambda *args:errors.append(args),send_result=lambda *args:results.append(args))
+        def msg(request_id):
+            return {"id":request_id,"entity_id":"device_tracker.car","start":"2026-09-16","end":"2026-09-16"}
+        await asyncio.gather(scope["get_trips"](hass,connection,msg(1)),scope["get_trips"](hass,connection,msg(2)))
+        assert len(reads)==1, reads
+        assert sorted(result[0] for result in results)==[1,2] and not errors
+        assert not scope["_INFLIGHT"]
+    asyncio.run(run())

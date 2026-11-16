@@ -146,7 +146,7 @@ def summarize(rows, start, end, zone):
     stops = [stop for stop in join_parking_observations(stops, parking_rows)
              if stop["observed_until"] >= low]
     stop_index = 0
-    days, segments, segment_edges, gaps = {}, [], [], []
+    days, segments, segment_edges, gaps, gap_links = {}, [], [], [], []
     previous = None
     last_fix = None
     odometer = None
@@ -204,6 +204,13 @@ def summarize(rows, start, end, zone):
                 segment_edges.append(edges)
                 if last_fix and (lat, lon) != (last_fix[1], last_fix[2]):
                     gaps.append([[last_fix[1], last_fix[2]], [lat, lon]])
+                    moved = (round(row[3] - last_fix[3], 2)
+                             if row[3] is not None and last_fix[3] is not None
+                             and row[3] >= last_fix[3] else None)
+                    gap_links.append({"from": [last_fix[1], last_fix[2]], "to": [lat, lon],
+                                      "seconds": int(stamp - last_fix[0]),
+                                      "distance_km": round(distance(last_fix, row), 2),
+                                      "odometer_km": moved})
             segment.append([lat, lon])
             last_fix = row
         else:
@@ -242,7 +249,7 @@ def summarize(rows, start, end, zone):
     return {"km":round(total, 2), "method":next(iter(methods)) if len(methods)==1 else "mixed",
             "days":list(days.values()), "segments":routes[:5000],
             "segment_speeds_kmh":route_speeds[:5000], "segment_kinds":route_kinds[:5000],
-            "gaps":gaps[:5000], "parking_spots":stops[:1000],
+            "gaps":gaps[:5000], "gap_links":gap_links[:5000], "parking_spots":stops[:1000],
             "samples":sum(day["samples"] for day in days.values()),
             "moving_seconds":sum(day["moving_seconds"] for day in days.values()),
             "first":rows[0][0] if rows else None, "last":rows[-1][0] if rows else None,

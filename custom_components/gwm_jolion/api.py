@@ -81,6 +81,11 @@ class GwmJolionApiClient:
         self._country_code = country_code
         self._access_token: str | None = None
         self._login_lock = asyncio.Lock()
+        # The account's vehicle list changes when the car changes, not between two
+        # polls; caching it removes one authenticated round trip from every poll.
+        self._vehicles_cache: list[dict[str, Any]] | None = None
+        self._vehicles_cached_at = 0.0
+        self._vehicles_ttl = 1800.0
 
     async def async_login(self, *, failed_token: str | None = None) -> None:
         async with self._login_lock:
@@ -103,11 +108,14 @@ class GwmJolionApiClient:
                 "isEncrypt": False,
             }
             payload = await self._request("POST", ENDPOINT_LOGIN, body=body, with_token=False)
-            data = payload.get("data") or {}
-            token = data.get("accessToken")
-            if not token:
-                raise GwmJolionApiError("GWM login did not return accessToken")
-            self._access_token = str(token)
+            data = payload.get("data")
+            token = data.get("accessToken") if isinstance(data, dict) else None
+            if not isinstance(token, str) or not token.strip():
+                raise GwmJolionApiError(
+                    "GWM login returned an invalid accessToken", endpoint=ENDPOINT_LOGIN,
+                    category="invalid_structure",
+                )
+            self._access_token = token
 
     async def async_get_location(self, vin: str) -> dict[str, Any]:
         """Read coordinates without vehicle discovery or extra telemetry calls."""
@@ -118,7 +126,7 @@ class GwmJolionApiClient:
 
     async def async_update(self) -> dict[str, Any]:
         await self._ensure_login()
-        vehicles = await self._get_vehicles()
+        vehicles = await self._cached_vehicles()
         if not vehicles:
             raise GwmJolionApiError("No vehicles returned by GWM account")
 
@@ -132,13 +140,25 @@ class GwmJolionApiClient:
             raise GwmJolionApiError("Vehicle does not contain VIN")
         vin = str(vin)
 
-        status = await self._get_last_status(vin)
+        # These three reads are independent GETs against the same account; awaiting
+        # them one by one tripled the latency of every poll. They are gathered and
+        # each optional read keeps its own diagnostics when it fails.
+        has_tbox = bool(imsi and vehicle_id)
+        status_result, tbox_result, basics_result = await asyncio.gather(
+            self._get_last_status(vin),
+            self._find_status(str(imsi), str(vehicle_id), vin) if has_tbox else asyncio.sleep(0),
+            self._get_vehicle_basics_payload(vin),
+            return_exceptions=True,
+        )
+        if isinstance(status_result, BaseException):
+            raise status_result
+        status = status_result
         tbox: dict[str, Any] = {}
-        if imsi and vehicle_id:
-            try:
-                tbox = await self._find_status(str(imsi), str(vehicle_id), vin)
-            except GwmJolionApiError as err:
-                _LOGGER.debug("findStatus unavailable: %s", err)
+        if has_tbox:
+            if isinstance(tbox_result, BaseException):
+                _LOGGER.debug("findStatus unavailable: %s", tbox_result)
+            elif isinstance(tbox_result, dict):
+                tbox = tbox_result
 
         basics: dict[str, Any] = {}
         basics_diagnostics: dict[str, Any] = {
@@ -147,8 +167,19 @@ class GwmJolionApiClient:
             "description": None,
             "response_structure": None,
         }
-        try:
-            basics_payload = await self._get_vehicle_basics_payload(vin)
+        if isinstance(basics_result, BaseException):
+            text = str(basics_result)
+            lowered = text.lower()
+            unsupported_markers = ("unsupported", "not support", "not supported", "не поддерж")
+            basics_diagnostics = {
+                "status": "unsupported" if any(marker in lowered for marker in unsupported_markers) else "error",
+                "response_code": getattr(basics_result, "code", None),
+                "description": text,
+                "response_structure": None,
+            }
+            _LOGGER.debug("vehicleBasicsInfo unavailable: %s", basics_result)
+        else:
+            basics_payload = basics_result if isinstance(basics_result, dict) else {}
             raw_data = basics_payload.get("data")
             basics = raw_data if isinstance(raw_data, dict) else {}
             has_data = raw_data not in (None, {}, [])
@@ -159,17 +190,6 @@ class GwmJolionApiClient:
                 "data_type": type(raw_data).__name__,
                 "response_structure": describe_structure(basics_payload),
             }
-        except GwmJolionApiError as err:
-            text = str(err)
-            lowered = text.lower()
-            unsupported_markers = ("unsupported", "not support", "not supported", "не поддерж")
-            basics_diagnostics = {
-                "status": "unsupported" if any(marker in lowered for marker in unsupported_markers) else "error",
-                "response_code": err.code,
-                "description": text,
-                "response_structure": None,
-            }
-            _LOGGER.debug("vehicleBasicsInfo unavailable: %s", err)
 
         state = build_state(status, tbox, basics)
         location = {
@@ -258,73 +278,49 @@ class GwmJolionApiClient:
         timeout: int = 300,
         interval: int = 1,
     ) -> dict[str, Any]:
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            await asyncio.sleep(interval)
-            try:
-                payload = await self._request(
-                    "GET",
-                    ENDPOINT_T5_CTRL_RESULT,
-                    params={"seqNo": seq_no},
-                    vin_header=vin,
-                )
-            except GwmJolionApiError:
-                continue
+        # One monotonic budget includes retry delays, body reads and sleeps.
+        try:
+            async with asyncio.timeout(timeout):
+                while True:
+                    await asyncio.sleep(interval)
+                    try:
+                        payload = await self._request(
+                            "GET", ENDPOINT_T5_CTRL_RESULT,
+                            params={"seqNo": seq_no}, vin_header=vin,
+                        )
+                    except GwmJolionApiError:
+                        continue
 
-            data = payload.get("data")
-            if not isinstance(data, list):
-                continue
-            matched = [
-                item
-                for item in data
-                if str(item.get("remoteType") or "") == expected_remote_type
-            ]
-            if not matched:
-                continue
-
-            for item in matched:
-                result_code = str(item.get("resultCode", ""))
-                if classify_t5_result_code(result_code) == "success":
-                    _LOGGER.debug(
-                        "T5 command succeeded: remoteType=%s code=%s msg=%s",
-                        expected_remote_type,
-                        result_code,
-                        item.get("resultMsg") or "",
-                    )
-                    return item
-
-            terminal_errors = [
-                item
-                for item in matched
-                if classify_t5_result_code(item.get("resultCode")) == "error"
-            ]
-            if terminal_errors:
-                item = terminal_errors[-1]
-                result_code = str(item.get("resultCode", ""))
-                result_msg = str(item.get("resultMsg") or "")
-                _LOGGER.debug(
-                    "T5 terminal error: remoteType=%s code=%s msg=%s",
-                    expected_remote_type,
-                    result_code,
-                    result_msg,
-                )
-                raise GwmJolionApiError(
-                    f"Команда GWM завершилась с ошибкой: {result_msg}"
-                    if result_msg
-                    else f"Команда GWM завершилась с кодом {result_code}",
-                    code=result_code or "error",
-                )
-
-            _LOGGER.debug(
-                "T5 command still pending: remoteType=%s codes=%s",
-                expected_remote_type,
-                [str(item.get("resultCode", "")) for item in matched],
-            )
-
-        raise GwmJolionApiError(
-            "GWM не подтвердил выполнение команды за 300 секунд",
-            code="timeout",
-        )
+                    data = payload.get("data")
+                    if not isinstance(data, list):
+                        continue
+                    matched = [
+                        item for item in data
+                        if isinstance(item, dict)
+                        and str(item.get("remoteType") or "") == expected_remote_type
+                    ]
+                    for item in matched:
+                        if classify_t5_result_code(item.get("resultCode")) == "success":
+                            _LOGGER.debug("T5 command confirmed successful")
+                            return item
+                    terminal_errors = [
+                        item for item in matched
+                        if classify_t5_result_code(item.get("resultCode")) == "error"
+                    ]
+                    if terminal_errors:
+                        # Server text can contain identifiers/credentials; don't log it.
+                        result_code = str(terminal_errors[-1].get("resultCode", ""))
+                        raise GwmJolionApiError(
+                            "Команда GWM отклонена сервером",
+                            code=result_code or "error",
+                            endpoint=ENDPOINT_T5_CTRL_RESULT,
+                            category="command_rejected",
+                        )
+        except TimeoutError:
+            raise GwmJolionApiError(
+                f"GWM не подтвердил выполнение команды за {timeout} секунд",
+                code="timeout", endpoint=ENDPOINT_T5_CTRL_RESULT, category="timeout",
+            ) from None
 
     async def _ensure_login(self) -> None:
         if not self._access_token:
@@ -334,6 +330,29 @@ class GwmJolionApiClient:
         payload = await self._request("GET", ENDPOINT_VEHICLES)
         data = payload.get("data") or []
         return data if isinstance(data, list) else []
+
+    async def _cached_vehicles(self) -> list[dict[str, Any]]:
+        """Return the vehicle list, refetching it when its TTL expired.
+
+        The list changes when the car changes, so re-reading it every poll only
+        added one authenticated round trip to the critical path. On a transient
+        failure the cached list is reused instead of failing the whole poll: the
+        car did not disappear because one GET timed out.
+        """
+        now = time.monotonic()
+        cached = self._vehicles_cache
+        if cached and now - self._vehicles_cached_at < self._vehicles_ttl:
+            return cached
+        try:
+            vehicles = await self._get_vehicles()
+        except GwmJolionApiError as err:
+            if cached:
+                _LOGGER.debug("vehicle list refresh failed (%s); keeping the cached list", err)
+                return cached
+            raise
+        self._vehicles_cache = vehicles
+        self._vehicles_cached_at = time.monotonic()
+        return vehicles
 
     async def _get_last_status(self, vin: str) -> dict[str, Any]:
         payload = await self._request(
@@ -378,23 +397,46 @@ class GwmJolionApiClient:
         body_json = json.dumps(body, ensure_ascii=False, separators=(",", ":")) if body is not None else ""
         query = urlencode(params, doseq=False)
         url = BASE_URL + path + ("?" + query if query else "")
-        request_token = self._access_token
-        headers = self._headers(method, path, url, body_json, with_token, vin_header)
-        try:
-            async with self._session.request(
-                method,
-                url,
-                headers=headers,
-                data=body_json.encode("utf-8") if body is not None else None,
-                timeout=30,
-            ) as response:
-                text = await response.text()
-                status = response.status
-        except (ClientError, TimeoutError) as err:
-            raise GwmJolionApiError("Cannot connect to GWM RU", endpoint=path,
-                                    category="timeout" if isinstance(err, TimeoutError) else "network") from err
-        if status == 429 or status >= 500:
-            raise GwmJolionApiError(f"GWM temporarily unavailable (HTTP {status})", code=str(status), endpoint=path, category="http", http_status=status)
+        from random import uniform
+
+        # A lost response does not mean a vehicle command was rejected. Only
+        # reads and session creation may be replayed after ambiguous failures.
+        safe_to_retry = method.upper() == "GET" or (
+            method.upper() == "POST" and path == ENDPOINT_LOGIN and not with_token
+        )
+        attempts = 3 if safe_to_retry else 1
+        for attempt in range(attempts):
+            request_token = self._access_token
+            # Each attempt needs a fresh signature and the current session token.
+            headers = self._headers(method, path, url, body_json, with_token, vin_header)
+            try:
+                async with self._session.request(
+                    method,
+                    url,
+                    headers=headers,
+                    data=body_json.encode("utf-8") if body is not None else None,
+                    timeout=30,
+                ) as response:
+                    text = await response.text()
+                    status = response.status
+            except (ClientError, TimeoutError) as err:
+                if attempt == attempts - 1:
+                    raise GwmJolionApiError(
+                        "Cannot connect to GWM RU", endpoint=path,
+                        category="timeout" if isinstance(err, TimeoutError) else "network",
+                    ) from err
+            else:
+                if status != 429 and status < 500:
+                    break
+                if attempt == attempts - 1:
+                    raise GwmJolionApiError(
+                        f"GWM temporarily unavailable (HTTP {status})", code=str(status),
+                        endpoint=path, category="http", http_status=status,
+                    )
+            # Equal jitter avoids synchronized retries and bounds total backoff
+            # to 1.5 seconds (0.25–0.5 then 0.5–1.0) for three attempts.
+            ceiling = min(4.0, 0.5 * 2 ** attempt)
+            await asyncio.sleep(uniform(ceiling / 2, ceiling))
         try:
             payload = {"code": "401"} if status == 401 else json.loads(text)
         except json.JSONDecodeError as err:

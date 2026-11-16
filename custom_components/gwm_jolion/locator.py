@@ -18,7 +18,7 @@ from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN
 from .locator_merge import cloud_point, choose_live, fuse
 from .locator_protocol import Archive, validate, analyze, distance
-from .trips import TripHistory, period, with_archive, summarize, playback
+from .trips import TripHistory, period, with_archive, summarize, playback, stale_run_indices
 from .locator_filter import filter_display
 
 _LOGGER = logging.getLogger(__name__)
@@ -246,6 +246,14 @@ class HybridHistory(TripHistory):
             with self.app_archive.connect() as db:
                 cloud={t:p for t,p in cloud.items() if not db.execute('SELECT 1 FROM points WHERE timestamp_ms BETWEEN ? AND ? LIMIT 1',(t-30000,t+30000)).fetchone()}
         merged = fuse(app, list(cloud.values()))
+        # The Recorder replays the fused position of the live entity, so one cached
+        # cloud coordinate arrives here thousands of times a day. Drop it before
+        # the display filter, the route, the playback and the parking detector all
+        # read it: on the field day this one run was 4148 of the 15153 points and
+        # the two jumps around it accounted for 219 of the day's 230 km.
+        stale = stale_run_indices([(p["timestamp_ms"]/1000, p["latitude"], p["longitude"]) for p in merged])
+        if stale:
+            merged = [p for index, p in enumerate(merged) if index not in stale]
         # Everything fetched is returned. A caller asks for a window wider than the
         # day it draws, and summarize() reads PARKING_BASELINE_SECONDS back to keep
         # a parking that began the day before. Clipping here dropped exactly those

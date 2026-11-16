@@ -631,6 +631,9 @@ class GwmJolionCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if action in ("create", "copy"):
                 profile = profiles[-1]
                 await self.async_save_card_settings({**profile["settings"], "selected_profile": profile["id"], "comfort_start": True})
+            if action == "update" and self.card_settings.get("selected_profile") == profile_id:
+                profile = next(p for p in profiles if p["id"] == profile_id)
+                await self.async_save_card_settings(profile["settings"])
             if action == "delete" and self.card_settings.get("selected_profile") == profile_id:
                 await self.async_save_card_settings({"selected_profile": ""})
             self.async_update_listeners()

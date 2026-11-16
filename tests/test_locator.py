@@ -326,8 +326,9 @@ def test_options_validate_pairing_preserve_key_and_unrelated_options():
         paired=await method(flow,{locator.ENABLED:True,locator.VEHICLE_ID:'remembered',locator.UPLOAD_KEY:KEY})
         entry.options=paired['data']
         reopened=await method(flow)
-        defaults={marker.schema:marker.default() for marker in reopened['data_schema'].schema if marker.schema in (locator.VEHICLE_ID,locator.UPLOAD_KEY)}
-        assert defaults=={locator.VEHICLE_ID:'remembered',locator.UPLOAD_KEY:KEY}
+        defaults={marker.schema:marker.default() if callable(marker.default) else marker.default for marker in reopened['data_schema'].schema if marker.schema in (locator.VEHICLE_ID,locator.UPLOAD_KEY)}
+        assert defaults=={locator.VEHICLE_ID:'remembered',locator.UPLOAD_KEY:vol.UNDEFINED}
+        assert entry.options[locator.UPLOAD_KEY] == KEY
         disk=await method(flow,{locator.ENABLED:True,locator.VEHICLE_ID:'remembered',locator.UPLOAD_KEY:KEY,'golion_locator_transport':'yandex_disk','golion_locator_yandex_public_url':'https://disk.yandex.ru/d/test'})
         assert disk['type']=='create' and disk['data']['golion_locator_transport']=='yandex_disk'
         invalid=await method(flow,{locator.ENABLED:True,locator.UPLOAD_KEY:KEY,'golion_locator_transport':'yandex_disk','golion_locator_yandex_public_url':'http://localhost/private'})

@@ -50,6 +50,24 @@ def _redact(value: Any) -> Any:
     return value
 
 
+def _access_check(probe: Any) -> dict[str, Any] | None:
+    """Re-shape a cached relay probe so redaction cannot swallow its verdicts.
+
+    The probe's own key "token" holds a status word, not the token, but generic
+    redaction treats that key name as sensitive; renamed keys keep the verdicts
+    readable next to "has_write_token".
+    """
+    if not isinstance(probe, dict):
+        return None
+    return {
+        "status": probe.get("status"),
+        "token_access": probe.get("token"),
+        "folder_access": probe.get("folder"),
+        "public_folder_access": probe.get("public_folder"),
+        "write_access": probe.get("write_access"),
+    }
+
+
 def _base_diagnostics_payload(
     entry: ConfigEntry,
     coordinator: GwmJolionCoordinator,
@@ -105,6 +123,8 @@ def _base_diagnostics_payload(
             "cleanup_deleted_last_cycle": relay.cleanup_deleted,
             "cleanup_grace_hours": relay.grace_seconds // 3600,
             "throttled_until": round(relay.throttle_until, 3),
+            # Last read-only probe from the diagnostic button; None until pressed.
+            "access_check": _access_check(getattr(relay, "last_diagnostics", None)),
         },
         "last_remote_command": {
             "name": coordinator.last_command_name,

@@ -133,7 +133,8 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
    const colors=card._routeLayer.getLayers().filter(l=>l.options.weight===6).map(l=>l.options.color);
    window.overviewZoom=card._map.getZoom();window.overviewCenter=card._map.getCenter();
    card._routeLayer.getLayers().filter(l=>l.options.className==='route-hit')[1].fire('click');
-   return {colors,selected:card._selectedTrip,runs:card._arrowRuns.length,legend:!card.shadowRoot.querySelector('.speed-legend').hidden};
+   const hasRed=card._routeLayer.getLayers().some(l=>l.options.color==='#c62828');
+   return {colors,hasRed,selected:card._selectedTrip,runs:card._arrowRuns.length,legend:!card.shadowRoot.querySelector('.speed-legend').hidden};
   });
   assert.equal(new Set(overview.colors).size,2,'different parking-to-parking legs have different colors');
   const refresh=await page.evaluate(async()=>{
@@ -146,12 +147,27 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
    const retained=card._routeLayer===before&&card._layer.hasLayer(before);
    finish({...structuredClone(sample),diagnostics:{...sample.diagnostics,recorder_configured:true}});await loading;
    await new Promise(resolve=>setTimeout(resolve,30));
+   const unchanged={retained,requests,renders};
+   // The same window one minute later usually carries the same fixes: the
+   // painted snapshot must survive a refresh that changes nothing on the map.
+   requests=0;renders=0;
+   const moved=[sample.segments[0].concat([[55.005,37.005]])];
+   const grown={...sample,segments:moved,
+    segment_timestamps:[sample.segment_timestamps[0].concat([150])],
+    segment_speeds_kmh:[sample.segment_speeds_kmh[0].concat([40])],
+    segment_kinds:[sample.segment_kinds[0].concat(['moving'])]};
+   hass.callWS=async()=>{requests++;return structuredClone(grown);};
+   await card._load();
+   await new Promise(resolve=>setTimeout(resolve,30));
+   const after={drawnFix:card._trips.some(t=>t.runs.some(r=>r.points.some(p=>p[0]===55.005&&p[1]===37.005)))};
    hass.callWS=async()=>structuredClone(sample);card._renderTrips=render;
-   return {retained,requests,renders};
+   return {unchanged,moved:{requests,renders},after};
   });
-  assert.deepEqual(refresh,{retained:true,requests:1,renders:1},'refresh retains previous route then renders exactly one full snapshot');
+  assert.deepEqual(refresh.unchanged,{retained:true,requests:1,renders:0},'an unchanged refresh keeps the painted snapshot and redraws nothing');
+  assert.deepEqual(refresh.moved,{requests:1,renders:1},'a refresh carrying a new fix renders exactly one full snapshot');
   assert.equal(overview.selected,'1');assert.equal(overview.runs,1);assert(overview.legend);
-  assert.equal(await page.evaluate(()=>card._routeLayer.getLayers().some(l=>l.options.color==='#c62828')),true);
+  assert.equal(overview.hasRed,true,'the 120 km/h edge is painted in the top band');
+  assert.deepEqual(refresh.after.drawnFix,true,'the appended fix reached the painted route');
   await page.evaluate(async()=>{await card._load();});
   assert.equal(await page.evaluate(()=>card._selectedTrip),'1','refresh preserves selection');
   await page.locator('.all-trips').click();
@@ -218,12 +234,15 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
    await card._load();
    const hits=card._routeLayer.getLayers().filter(l=>l.options.className==='route-hit');
    hits[0].fire('click');
-   return {groups:card._trips.length,hits:hits.length,selected:card._selectedTrip,points:card._arrowRuns[0],speeds:card._trips[0].runs[0].speeds,focusedHits:card._routeLayer.getLayers().filter(l=>l.options.className==='route-hit').length};
+   return {groups:card._trips.length,hits:hits.length,selected:card._selectedTrip,points:card._arrowRuns[0],raw:card._trips[0].runs.map(r=>({n:r.points.length})),speeds:card._trips[0].runs[0].speeds,focusedHits:card._routeLayer.getLayers().filter(l=>l.options.className==='route-hit').length};
   });
   assert.equal(delayedDeparture.groups,1,'parking interval is excluded from selectable trips');
   assert.equal(delayedDeparture.focusedHits,1);
   assert.equal(delayedDeparture.selected,'1');
-  assert.equal(delayedDeparture.points.length,3,'selected trip starts after parking and retains its departure');
+  assert.equal(delayedDeparture.raw[0].n,3,'the trip keeps its departure fix after the parking window');
+  // The middle fix sits on the same meridian, so the drawn line drops it; the
+  // departure point must survive because it is where the car actually left.
+  assert.deepEqual(delayedDeparture.points,[[55.001,37],[55.003,37]],'the drawn run starts at the departure fix');
   assert.deepEqual(delayedDeparture.speeds,[40,50]);
   const stationary=await page.evaluate(async()=>{
    sample={...sample,segments:[[[55,37],[55,37],[55,37]]],segment_timestamps:[[100,110,120]],parking_spots:[]};
@@ -262,10 +281,27 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
      {latitude:55,longitude:37,start:t-600,end:t+600,observed_until:t+600},
      {latitude:55.011,longitude:37,start:t+800,end:t+1600,observed_until:t+1600}]};
     card._range=['2026-10-14','2026-10-14'];await card._load();card._selectTrip(null);
-    return card._overviewLayers.map(l=>({title:l.options.title,text:l.getTooltip?.()?.getContent()?.textContent}));
+    return card._overviewLayers.map(l=>({title:l.options.title,text:l.getTooltip?.()?.getContent()?.textContent,anchor:l.options.icon?.options?.iconAnchor?.[0]}));
    });
-   assert.deepEqual(repeatedVisits.map(m=>m.title),['Стоянка A / C','Стоянка B'],'chronological labels for returning visits remain readable at the same location');
-   assert.match(repeatedVisits[0].text,/Стоянка A[\s\S]*Стоянка C/,'each visit keeps its own time in the shared marker');
+   assert.deepEqual(repeatedVisits.map(m=>m.title),['Стоянка A','Стоянка C','Стоянка B'],'every stop keeps its own circle even at one address');
+   assert.match(repeatedVisits[0].text,/Стоянка A[\s\S]*Начало:/,'each circle carries its own start');
+   assert.match(repeatedVisits[1].text,/Стоянка C[\s\S]*Начало:/,'the returning visit keeps its own start and end');
+   assert.notEqual(repeatedVisits[0].anchor,repeatedVisits[1].anchor,'circles of one address are spread so no letter hides another');
+   // A hole the odometer proves was driven is the only gap allowed to draw.
+   const gapLinks=await page.evaluate(async()=>{
+    const t=1791176400;
+    sample={...sample,segments:[[[55,37],[55,37]],[[55.01,37],[55.01,37]]],segment_timestamps:[[t,t+60],[t+960,t+1020]],segment_kinds:[['stopped'],['moving']],segment_speeds_kmh:[[0],[20]],
+     gaps:[[[55,37],[55.01,37]],[[55,37],[55.02,37]],[[55,37],[55.03,37]]],
+     gap_links:[{from:[55,37],to:[55.01,37],seconds:900,odometer_km:4.2,distance_km:1.11},
+      {from:[55,37],to:[55.02,37],seconds:900,odometer_km:0,distance_km:2.22},
+      {from:[55,37],to:[55.03,37],seconds:900,odometer_km:null,distance_km:3.33}],
+     parking_spots:[{start:t-600,end:t+10,observed_until:t+10,latitude:55,longitude:37}]};
+    card._range=['2026-10-05','2026-10-05'];await card._load();card._selectTrip(null);
+    return card._overviewLayers.filter(l=>l.options.dashArray).map(l=>({color:l.options.color,tip:l.getTooltip?.()?.getContent()}));
+   });
+   assert.equal(gapLinks.length,1,'only a hole with an odometer reading is drawn');
+   assert.equal(gapLinks[0].color,'#94a3b8','the driven hole is drawn grey');
+   assert.match(gapLinks[0].tip,/Нет GPS-точек 15 мин[\s\S]*по одометру 4,2 км/,'the link reports duration and odometer distance');
   const downloadPromise=page.waitForEvent('download');
   await page.getByRole('button',{name:'Скачать точки',exact:true}).click();
   const download=await downloadPromise;
@@ -294,6 +330,31 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
   }
   await page.evaluate(async()=>{card._range=['2026-01-01','2026-01-01'];sample={...sample,samples:0,segments:[],gaps:[],diagnostics:{locator_enabled:true,recorder_available:true,retention_days:90}};await card._load();});
   assert.match(await page.locator('.diagnostics').textContent(),/история за этот период уже удалена/i);
+   await page.evaluate(async()=>{
+    card._selectTrip(null);
+    sample={...sample,samples:5,method:'mixed',
+     segments:[[[55,37],[55.001,37.001],[55.0012,37.0012],[55.0013,37.0013],[55.003,37.003]]],
+     segment_timestamps:[[1791046800,1791046860,1791046920,1791046980,1791047040]],
+     segment_speeds_kmh:[[60,0,0,55]],segment_kinds:[['moving','stationary','stationary','moving']],
+     gaps:[],parking_spots:[],source_counts:{app:3,cloud:2},
+     diagnostics:{locator_enabled:true,recorder_available:true,source_counts:{app:3,cloud:2},retention_days:90}};
+    card._range=['2026-10-03','2026-10-03'];await card._load();card._selectTrip(card._trips[0].key);
+   });
+   const briefStop=await page.evaluate(()=>({
+    markers:card._routeLayer.getLayers().filter(layer=>layer.options.className==='route-stop').map(layer=>[layer.getLatLng().lat,layer.getLatLng().lng]),
+    legend:card.shadowRoot.querySelector('.stops-legend').textContent
+   }));
+   assert.deepEqual(briefStop.markers,[[55.001,37.001]],'остановка внутри поездки отмечается на треке');
+   assert.match(briefStop.legend,/остановк/i);
+   assert.equal(await page.locator('.stops-legend').isVisible(),true);
+   // A stationary stretch this long is a real stop, not a traffic light: no dot.
+   await page.evaluate(async()=>{
+    sample={...sample,segment_timestamps:[[1791046800,1791046860,1791049360,1791049420,1791049480]]};
+    await card._load();card._selectTrip(card._trips[0].key);
+   });
+   assert.equal(await page.evaluate(()=>card._routeLayer.getLayers().filter(layer=>layer.options.className==='route-stop').length),0,'долгая стоянка не рисуется как короткая остановка');
+   assert.equal(await page.locator('.stops-legend').isVisible(),false);
+   await page.evaluate(()=>card._selectTrip(null));
    // Optional local exports reproduce field failures without committing private GPS data.
    for(const file of process.argv.slice(2)){
     const exported=JSON.parse(fs.readFileSync(file,'utf8'));

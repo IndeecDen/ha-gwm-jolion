@@ -11,6 +11,7 @@ import asyncio
 import sqlite3
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -149,11 +150,11 @@ def test_websocket_exposes_server_phase_timings():
     from types import SimpleNamespace
 
     root=Path(__file__).resolve().parents[1]/"custom_components/gwm_jolion/trips_ws.py"
-    node=next(n for n in ast.parse(root.read_text(encoding="utf-8")).body if isinstance(n,ast.AsyncFunctionDef))
+    node=next(n for n in ast.parse(root.read_text(encoding="utf-8")).body if isinstance(n,ast.AsyncFunctionDef) and n.name=="get_trips")
     node.decorator_list=[]
     scope={"DOMAIN":"gwm_jolion","POLICY_READ":"read","er":SimpleNamespace(
         async_get=lambda hass:SimpleNamespace(async_get=lambda entity:SimpleNamespace(config_entry_id="car",platform="gwm_jolion"),async_get_entity_id=lambda *args:None)),
-        "asyncio":asyncio,"perf_counter":iter(range(100)).__next__,"_LOGGER":SimpleNamespace(warning=lambda *args:None)}
+        "asyncio":asyncio,"time":time,"_LOGGER":SimpleNamespace(warning=lambda *args:None)}
     exec(compile(ast.Module(body=[node],type_ignores=[]),"trips_ws","exec"),scope)
     async def scenario():
         async def query(*args):return {"samples":4,"segments":[[[55,37],[55.1,37.1]]],"source_counts":{"app":2,"cloud":2}}
@@ -164,7 +165,7 @@ def test_websocket_exposes_server_phase_timings():
         await scope["get_trips"](hass,connection,{"id":1,"entity_id":"device_tracker.car","start":"2023-11-14","end":"2023-11-14"})
         assert not errors
         timings=results[0][1]["server_timings"]
-        assert set(timings)=={"recorder_ms","history_processing_ms","total_ms"}
-        assert all(isinstance(value,int) and value>=0 for value in timings.values())
+        assert set(timings)=={"recorder_ms","history_processing_ms","total_ms","cached"}
+        assert all(isinstance(timings[name],int) and timings[name]>=0 for name in ("recorder_ms","history_processing_ms","total_ms"))
         assert results[0][1]["diagnostics"]["source_counts"]=={"app":2,"cloud":2}
     asyncio.run(scenario())

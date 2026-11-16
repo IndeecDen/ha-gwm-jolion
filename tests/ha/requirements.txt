@@ -1,3 +1,5 @@
 # Python 3.14. Linux is the authoritative full HA runtime.
+# Windows cannot run this harness: the plugin imports homeassistant.runner,
+# which needs fcntl (Unix-only) — use the ha-setup CI job instead.
 pytest-homeassistant-custom-component==0.13.368
 home-assistant-frontend==20260930.0

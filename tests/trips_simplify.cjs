@@ -101,19 +101,24 @@ const straight = [[55, 37], [55.0005, 37], [55.001, 37], [55.0015, 37]];
 if (simplifyPath(straight).length !== 2) fail("a straight line was not reduced");
 
 // Wiring: without this the test above would still pass after the calls were
-// removed, which is exactly the change that brings the sawtooth back. The
-// stationary wander and the GPS gap lines are deliberately left raw - the first
-// is part 1's verified behaviour, the second means "no data here".
-// Wiring: without this the test above would still pass after the calls were
-// removed, which is exactly the change that brings the sawtooth back. The route is
-// handed to the map surface as `addLine(simplifyPath(...))`; the stationary wander
-// and the GPS gap lines are deliberately left raw - the first is part 1's verified
-// behaviour, the second means "no data here".
-const simplifiedDraws = source.match(/addLine\(simplifyPath\(/g) || [];
-if (simplifiedDraws.length < 2) {
-  fail(`expected the speed bands and the plain route to be simplified, got ${simplifiedDraws.length}`);
+// removed, which is exactly the change that brings the sawtooth back. A run is
+// simplified once (`run.drawn`) and that geometry feeds the casing, the
+// coloured line and the invisible 20 px click corridor; the speed bands ride on
+// the simplified vertices. The stationary wander and the GPS gap lines are
+// deliberately left raw - the first is part 1's verified behaviour, the second
+// means "no data here".
+if (!/run\.drawn=simplifyPath\(run\.points\)/.test(source)) {
+  fail("the run is no longer simplified once into run.drawn");
 }
-if (/addLine\((run|segment)\b/.test(source)) {
+const drawnStrokes = source.match(/addLine\(run\.drawn,/g) || [];
+const drawnCorridor = source.match(/L\.polyline\(run\.drawn,/g) || [];
+if (drawnStrokes.length < 2 || drawnCorridor.length < 1) {
+  fail(`expected the casing, the plain route and the corridor to use the simplified run, got ${drawnStrokes.length} strokes and ${drawnCorridor.length} corridors`);
+}
+if (!/const shaded=simplifyPath\(/.test(source) || !/addLine\(batch,/.test(source)) {
+  fail("the speed bands are no longer drawn from the simplified vertices");
+}
+if (/addLine\((run|segment)\.points|L\.polyline\((run|segment)\.points/.test(source)) {
   fail("a route polyline is handed to the surface without simplification");
 }
 

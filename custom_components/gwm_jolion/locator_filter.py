@@ -136,7 +136,11 @@ def _leg(points):
             plausible=(speed is None or speed>=1.5 or uncertain_speed(p) or precise_creep(p)) and accuracy<=35
             if plausible:pending.append(i)
             else:pending=[]
-            pending=pending[-20:]
+            # Keep a time window as well as the sparse-fix minimum. At high
+            # sampling rates 20 fixes cannot span even confirmed()'s minimum
+            # duration, so genuine slow departures would stay pinned forever.
+            while len(pending)>20 and p['timestamp_ms']-points[pending[0]]['timestamp_ms']>20000:
+                pending.pop(0)
             if confirmed([points[j] for j in pending]):
                 # pending[0] is the first fix that leaves the hold. It was never
                 # checked against the anchor, and that is where a false fix used to

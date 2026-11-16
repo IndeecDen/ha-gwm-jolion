@@ -34,6 +34,14 @@ LONG_STOP_SECONDS = 300
 # treated as separate stops. A phone that sleeps wakes up often, so the cuts it
 # causes can be tens of minutes apart while the car never moved.
 PARKING_SESSION_SECONDS = 3600
+# A position that stays frozen for half an hour and can only be entered and left
+# with a jump no car can drive is a cached cloud reading, not travel. The field
+# case: 4148 identical fixes 107 km from home, entered 460 s after the car parked
+# and left the same way, while the odometer never moved. The run used to become a
+# 109 km leg in each direction - one 230 km "trip" for a day the car drove 11 km -
+# and it hid the parking that spans it.
+FROZEN_RADIUS_M = 30
+FROZEN_MIN_SECONDS = 1800
 
 
 def number(value):
@@ -66,12 +74,108 @@ def gps_jump(km, seconds):
     return seconds > 0 and km > seconds / 3600 * MAX_GPS_SPEED_KMH + 0.1
 
 
+def stale_run_indices(rows):
+    """Indices of a frozen position that no car could have reached or left.
+
+    The T-Box keeps repeating the last coordinate it knew while the car stands
+    still, then jumps back to the real one. Both jumps look like 109 km drives at
+    a speed nothing on the road drives, and the run between them looks like a
+    parking far from home. Dropping the run leaves the real hole in the
+    observations, which the route, the parking detector and the trip windows
+    already understand.
+    """
+    total = len(rows)
+    drop = set()
+    index = 0
+    while index < total:
+        first = rows[index]
+        if first[1] is None or first[2] is None:
+            index += 1
+            continue
+        last = index
+        while (last + 1 < total and rows[last + 1][1] is not None
+               and rows[last + 1][2] is not None
+               and distance(first, rows[last + 1]) * 1000 <= FROZEN_RADIUS_M):
+            last += 1
+        if last > index and rows[last][0] - first[0] >= FROZEN_MIN_SECONDS:
+            before_index = index - 1
+            while before_index >= 0 and (rows[before_index][1] is None or rows[before_index][2] is None):
+                before_index -= 1
+            after_index = last + 1
+            while after_index < total and (rows[after_index][1] is None or rows[after_index][2] is None):
+                after_index += 1
+            before = rows[before_index] if before_index >= 0 else None
+            after = rows[after_index] if after_index < total else None
+            entered = before is not None and gps_jump(distance(before, first), first[0] - before[0])
+            left = after is not None and gps_jump(distance(rows[last], after), after[0] - rows[last][0])
+            # A run that can be reached plausibly is a real place; a run that ends
+            # in the same direction it was reached from is a real departure.
+            # Requiring both jumps keeps a car that was towed or carried overnight
+            # (no run at all, only a large plausible gap) and a real parking.
+            if entered and (after is None or left):
+                drop.update(range(index, last + 1))
+        index = last + 1
+    return drop
+
+
+ROUTE_TOLERANCE_M = 4.0
+
+
+def line_offset_m(anchor, end, point):
+    """Distance in metres from point to the straight line anchor->end."""
+    scale = math.cos(math.radians(anchor[0])) * 111320.0
+    bx, by = (end[1] - anchor[1]) * scale, (end[0] - anchor[0]) * 110540.0
+    px, py = (point[1] - anchor[1]) * scale, (point[0] - anchor[0]) * 110540.0
+    length = bx * bx + by * by
+    if not length:
+        return math.hypot(px, py)
+    return abs(px * by - py * bx) / math.sqrt(length)
+
+
+def thin_route(points, kinds, budget, tolerance=ROUTE_TOLERANCE_M):
+    """Return the indices worth drawing for one run of fixes.
+
+    Uniform stride sampling kept every N-th fix, so a turn that fell between two
+    samples was drawn as a straight diagonal and a short standstill - three
+    vertices wide - thinned down to a single point and disappeared. Deviation
+    thinning drops only the fixes that repeat what their neighbours already
+    describe and keeps every vertex that actually bends the line. Kind changes are
+    kept unconditionally for the same reason: a standstill is one vertex wide.
+    """
+    count = len(points)
+    if count <= 2 or budget >= count:
+        return list(range(count))
+    floors = {0, count - 1}
+    for index in range(1, len(kinds)):
+        if kinds[index] != kinds[index - 1]:
+            floors.update((index, index + 1))
+    keep = [0]
+    anchor = 0
+    for index in range(1, count - 1):
+        if index in floors or line_offset_m(points[anchor], points[index + 1], points[index]) > tolerance:
+            keep.append(index)
+            anchor = index
+    keep.append(count - 1)
+    if len(keep) > budget:
+        # The payload cap wins over fidelity only when even the bent vertices do
+        # not fit; the run is then sampled evenly, which still keeps its ends.
+        step = math.ceil((len(keep) - 1) / max(1, budget - 1))
+        keep = sorted(set(keep[::step]) | {0, count - 1})
+    return keep
+
+
 def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS, measured_speeds=None):
-    """Keep confirmed stops; never infer parking across missing observations."""
+    """Keep confirmed stops; never infer parking across missing observations.
+
+    The one exception is a hole the odometer proves the car sat through: the run
+    continues across it and the hole is reported as an interruption, so one
+    parking stays one marker with its real start and end.
+    """
     spots = []
     anchor = previous = None
     anchor_odometer = None
     trusted = True
+    interruptions = []
     # Running mean of the stationary run: it does not drift the way a single fix does.
     lat_sum = lon_sum = 0.0
     count = 0
@@ -82,14 +186,18 @@ def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS, measured_speeds=Non
     def restart(row):
         nonlocal lat_sum, lon_sum, count
         lat_sum, lon_sum, count = row[1], row[2], 1
+        interruptions.clear()
 
     def finish(ended):
         if trusted and anchor is not None and previous[0] - anchor[0] >= minimum_seconds:
             latitude, longitude = mean()
-            spots.append({"latitude":latitude, "longitude":longitude,
-                          "start":anchor[0], "end":ended,
-                          "observed_until":previous[0],
-                          "duration":int(previous[0] - anchor[0])})
+            spot = {"latitude":latitude, "longitude":longitude,
+                    "start":anchor[0], "end":ended,
+                    "observed_until":previous[0],
+                    "duration":int(previous[0] - anchor[0])}
+            if interruptions:
+                spot["interruptions"] = list(interruptions)
+            spots.append(spot)
 
     for row in rows:
         if row[1] is None or row[2] is None:
@@ -114,6 +222,24 @@ def parking_spots(rows, minimum_seconds=MIN_PARKING_SECONDS, measured_speeds=Non
             trusted = False
             continue
         if delta > 600:
+            # A hole in the observations is not a departure by itself. When the
+            # position reappears where the run already stood and a real odometer
+            # reading did not move across the hole, the car stood there all along:
+            # continue the run, so one parking keeps its real start and end
+            # instead of ending where the receiver went quiet. Without that
+            # reading missing time stays missing - a position alone cannot tell a
+            # car that was towed from a fix that was cached.
+            latitude, longitude = mean()
+            returned = distance((anchor[0], latitude, longitude, None), row) <= DEPARTURE_RADIUS_KM
+            unchanged = (anchor_odometer is not None and row[3] is not None
+                         and row[3] - anchor_odometer <= 0.1)
+            if trusted and returned and unchanged and row[0] - anchor[0] >= minimum_seconds:
+                interruptions.append([previous[0], row[0]])
+                lat_sum += row[1]
+                lon_sum += row[2]
+                count += 1
+                previous = row
+                continue
             finish(None)
             anchor = previous = row
             anchor_odometer = row[3]
@@ -187,6 +313,11 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
     """Count cumulative mileage independently of delayed or missing GPS fixes."""
     tz = ZoneInfo(zone)
     low, high = period(start, end, zone)
+    # One cached coordinate is not a day of travel. Drop such a run before it can
+    # become a segment, a trip window or a parking far from home.
+    stale = stale_run_indices(rows)
+    if stale:
+        rows = [row for index, row in enumerate(rows) if index not in stale]
     # Read preceding observations to keep a stop's observed start across midnight.
     parking_rows = [row for row in rows if low - PARKING_BASELINE_SECONDS <= row[0] < high]
     stationary_runs = parking_spots(parking_rows, MIN_STATIONARY_SECONDS, measured_speeds)
@@ -199,6 +330,10 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
     stops = [stop for stop in stops if stop["observed_until"] >= low]
     stop_index = 0
     days, segments, segment_edges, gaps, segment_timestamps = {}, [], [], [], []
+    # A hole with odometer readings on both sides is travel the receiver missed:
+    # the card draws it as a grey dashed link instead of leaving two tracks that
+    # look unrelated. Coordinates alone never justify the link.
+    gap_links = []
     previous = None
     last_fix = None
     odometer = None
@@ -262,6 +397,14 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
                 segment_timestamps.append([])
                 if last_fix and not explicit_break and (lat, lon) != (last_fix[1], last_fix[2]):
                     gaps.append([[last_fix[1], last_fix[2]], [lat, lon]])
+                    travelled = distance(last_fix, row)
+                    moved = (round(row[3] - last_fix[3], 2)
+                             if row[3] is not None and last_fix[3] is not None
+                             and row[3] >= last_fix[3] else None)
+                    gap_links.append({"from": [last_fix[1], last_fix[2]], "to": [lat, lon],
+                                      "seconds": int(stamp - last_fix[0]),
+                                      "distance_km": round(travelled, 2),
+                                      "odometer_km": moved})
             segment.append([lat, lon])
             segment_timestamps[-1].append(stamp)
             last_fix = row
@@ -280,30 +423,40 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
     trip_windows = []
     active = []
     previous_trip = None
+
+    def close_trip():
+        if len(active) > 1:
+            trip_windows.append({"start":active[0][0], "end":active[-1][0],
+                                 "seconds":int(active[-1][0]-active[0][0]),
+                                 "km":round(sum(distance(a,b) for a,b in zip(active,active[1:])),2)})
+
     for row in rows:
         stamp, lat, lon, _ = row
         if stamp < low or stamp >= high or lat is None or lon is None:
             continue
-        if previous_trip and stamp - previous_trip[0] > 600:
-            if len(active) > 1:
-                trip_windows.append({"start":active[0][0], "end":active[-1][0],
-                                     "seconds":int(active[-1][0]-active[0][0]),
-                                     "km":round(sum(distance(a,b) for a,b in zip(active,active[1:])),2)})
-            active = []
+        if previous_trip is not None:
+            step = stamp - previous_trip[0]
+            # A position no car can reach in the time given is not travel: it
+            # neither joins two windows nor adds its own distance to either. The
+            # field case was one 230 km "trip" for a day the car drove 11 km.
+            if step > 600 or gps_jump(distance(previous_trip, row), step):
+                close_trip()
+                active.clear()
         active.append(row)
         previous_trip = row
-    if len(active) > 1:
-        trip_windows.append({"start":active[0][0], "end":active[-1][0],
-                             "seconds":int(active[-1][0]-active[0][0]),
-                             "km":round(sum(distance(a,b) for a,b in zip(active,active[1:])),2)})
-    # Limit route payload while preserving segment boundaries and endpoints.
-    stride = max(1, math.ceil(sum(map(len, segments)) / MAX_ROUTE_POINTS))
+    close_trip()
+    # Bound the drawn payload while keeping the shape of the route.
+    total_fixes = sum(map(len, segments))
     routes, route_speeds, route_kinds, route_times = [], [], [], []
     for points, edges, timestamps in zip(segments, segment_edges, segment_timestamps):
-        indices = list(range(0, len(points), stride))
-        if indices[-1] != len(points) - 1:
-            indices.append(len(points) - 1)
-        reduced = [points[index] for index in indices]
+        if total_fixes > MAX_ROUTE_POINTS:
+            budget = max(2, MAX_ROUTE_POINTS * len(points) // total_fixes)
+            indices = thin_route(points, [edge[1] for edge in edges], budget)
+        else:
+            indices = list(range(len(points)))
+        # Whole seconds and metres: the client draws and labels the route, so the
+        # float noise of the cloud timestamps only made the JSON bigger.
+        reduced = [[round(points[index][0], 6), round(points[index][1], 6)] for index in indices]
         reduced_speeds, reduced_kinds = [], []
         for start_index, end_index in zip(indices, indices[1:]):
             grouped = edges[start_index:end_index]
@@ -320,16 +473,16 @@ def summarize(rows, start, end, zone, measured_speeds=None, break_before=None):
         routes.append(reduced)
         route_speeds.append(reduced_speeds)
         route_kinds.append(reduced_kinds)
-        route_times.append([timestamps[index] for index in indices])
+        route_times.append([int(timestamps[index]) for index in indices])
     return {"km":round(total, 2), "method":next(iter(methods)) if len(methods)==1 else "mixed",
             "days":list(days.values()), "segments":routes[:5000],
             "segment_speeds_kmh":route_speeds[:5000], "segment_kinds":route_kinds[:5000],
             "segment_timestamps":route_times[:5000], "trips":trip_windows,
-            "gaps":gaps[:5000], "parking_spots":stops[:1000],
+            "gaps":gaps[:5000], "gap_links":gap_links[:5000], "parking_spots":stops[:1000],
             "samples":sum(day["samples"] for day in days.values()),
             "moving_seconds":sum(day["moving_seconds"] for day in days.values()),
             "first":rows[0][0] if rows else None, "last":rows[-1][0] if rows else None,
-            "simplified":stride > 1 or len(routes)>MAX_ROUTE_POINTS, "timezone":zone,
+            "simplified":sum(map(len, routes))<total_fixes or len(routes)>MAX_ROUTE_POINTS, "timezone":zone,
             "start":start, "end":end}
 
 
@@ -368,6 +521,11 @@ def with_archive(rows, archive, start, end, zone, measured_speeds=None, break_be
                 merged[key] = row
         return sorted(merged.values())
     route = merge(gps, [(r[0], r[1], r[2], None) for r in rows], 1)
+    # The playback and the last position are built from this route, so the cached
+    # run has to leave it here as well: summarize() drops its own copy below.
+    stale = stale_run_indices(route)
+    if stale:
+        route = [row for index, row in enumerate(route) if index not in stale]
     local_odo = [(r[0], None, None, r[3]) for r in rows if r[3] is not None]
     mileage = merge(odo, local_odo, 3)
     # Attach the latest known odometer without using future readings.

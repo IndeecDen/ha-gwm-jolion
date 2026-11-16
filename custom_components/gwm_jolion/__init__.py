@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -154,8 +155,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         protocol_capture_enabled=capture_enabled,
         protocol_capture_path=capture_path,
     )
-    await coordinator.async_load_card_settings()
-    await coordinator.async_load_profiles()
+    # Card settings, saved profiles and the stored locator vehicle are independent
+    # store reads; ran one after another they delayed the first poll for nothing.
+    await asyncio.gather(coordinator.async_load_card_settings(), coordinator.async_load_profiles())
     if options.get(LOCATOR_ENABLED):
         coordinator.trip_history = HybridHistory(hass, entry, options.get("trip_retention_days", 90))
         await coordinator.trip_history.initialize()
@@ -163,8 +165,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.async_on_unload(coordinator.trip_history.relay.close)
         # Local GPS must stay usable when GWM is unavailable during HA restart.
         vehicle_store = Store(hass, 1, f"gwm_jolion_{entry.entry_id}_locator_vehicle")
-        saved_vehicle = await vehicle_store.async_load() or {}
-        await coordinator.async_refresh()
+        # Reading the stored vehicle and the first cloud refresh do not depend on each
+        # other, and both used to be awaited in series before the entry was ready.
+        saved_vehicle = (await asyncio.gather(vehicle_store.async_load(), coordinator.async_refresh()))[0] or {}
         if coordinator.last_update_success and coordinator.data:
             await vehicle_store.async_save({"vin":coordinator.data.get("vin"), "vehicle_name":coordinator.data.get("vehicle_name"), "state":{}})
             # Seed the tracker before entities are created; otherwise it stays
@@ -197,14 +200,18 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     if not available_assets:
         return
 
+    # Every URL below is version-keyed (``?v=``), so it is safe to let the browser
+    # keep it: without the long cache Home Assistant revalidates the card and the
+    # 1 MB of vendored map code on every dashboard load, which is most of the time
+    # the trips card spends before its first paint.
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(static_url, str(path), False) for path, static_url, _ in available_assets]
+        [StaticPathConfig(static_url, str(path), True) for path, static_url, _ in available_assets]
         + [
-            StaticPathConfig("/gwm-jolion/leaflet/leaflet.js", str(FRONTEND_DIR / "leaflet/leaflet.js"), False),
-            StaticPathConfig("/gwm-jolion/leaflet/leaflet.css", str(FRONTEND_DIR / "leaflet/leaflet.css"), False),
-            StaticPathConfig("/gwm-jolion/maplibre/maplibre-gl.js", str(FRONTEND_DIR / "maplibre/maplibre-gl.js"), False),
-            StaticPathConfig("/gwm-jolion/maplibre/maplibre-gl.css", str(FRONTEND_DIR / "maplibre/maplibre-gl.css"), False),
-            StaticPathConfig("/gwm-jolion/maplibre/leaflet-maplibre-gl.js", str(FRONTEND_DIR / "maplibre/leaflet-maplibre-gl.js"), False),
+            StaticPathConfig("/gwm-jolion/leaflet/leaflet.js", str(FRONTEND_DIR / "leaflet/leaflet.js"), True),
+            StaticPathConfig("/gwm-jolion/leaflet/leaflet.css", str(FRONTEND_DIR / "leaflet/leaflet.css"), True),
+            StaticPathConfig("/gwm-jolion/maplibre/maplibre-gl.js", str(FRONTEND_DIR / "maplibre/maplibre-gl.js"), True),
+            StaticPathConfig("/gwm-jolion/maplibre/maplibre-gl.css", str(FRONTEND_DIR / "maplibre/maplibre-gl.css"), True),
+            StaticPathConfig("/gwm-jolion/maplibre/leaflet-maplibre-gl.js", str(FRONTEND_DIR / "maplibre/leaflet-maplibre-gl.js"), True),
         ]
     )
     # Dashboard resources are awaited by Lovelace before it creates cards.
