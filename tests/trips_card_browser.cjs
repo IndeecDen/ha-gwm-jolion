@@ -274,6 +274,32 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
    assert(parkingEndpoints.tooltips.includes('Конец GPS-участка: дальнейший путь не записан'));
    assert(parkingEndpoints.tooltips.includes('Возобновление GPS-записи: предыдущий путь неизвестен'));
    assert.equal(await page.evaluate(()=>card._routeLayer.getLayers().filter(l=>l.options.dashArray).length),0,'parking offsets and GPS gaps never draw invented paths');
+   const nearStopJoin=await page.evaluate(async()=>{
+    const t=1791176400;
+    // The stop sits ~80 m off the last fix and ~120 m off the first one: the
+    // cloud reports again only after the car has already rolled.
+    sample={...sample,segments:[[[55,37],[55.001,37.001]],[[55.003,37.003],[55.004,37.004]]],segment_timestamps:[[t,t+20],[t+40,t+60]],segment_kinds:[['moving'],['moving']],segment_speeds_kmh:[[30],[30]],
+     parking_spots:[{start:t-600,end:t+5,observed_until:t+5,latitude:55.0007,longitude:37.0007},{start:t+60,end:null,observed_until:t+800,latitude:55.0051,longitude:37.0051}]};
+    card._range=['2026-10-05','2026-10-05'];await card._load();card._selectTrip('1');
+    const joins=card._routeLayer.getLayers().filter(l=>l.options.weight===4&&!l.options.className);
+    return {joins:joins.length,colors:joins.map(l=>l.options.color),ends:joins.map(l=>l.getLatLngs().map(p=>[p.lat,p.lng])),
+     boundary:card._routeLayer.getLayers().map(l=>l.getTooltip?.()?.getContent()).filter(Boolean).some(text=>String(text).includes('путь до стоянки не записан'))};
+   });
+   assert.equal(nearStopJoin.joins,2,'both ends of the trip are extended to their own stop');
+   assert.deepEqual(nearStopJoin.ends[0],[[55.0007,37.0007],[55,37]],'the line starts on the stop and ends on the first measured fix');
+   assert.deepEqual(nearStopJoin.ends[1],[[55.004,37.004],[55.0051,37.0051]],'the line continues from the last measured fix to the stop');
+   assert.deepEqual(nearStopJoin.colors,['#88949f','#88949f'],'a hop with no measured speed is drawn as unknown speed, not a speed band');
+   assert.equal(nearStopJoin.boundary,false,'a joined hop is not also labelled as an unrecorded path');
+   const farStopGap=await page.evaluate(async()=>{
+    const t=1791176400;
+    const far={start:t-600,end:t+5,observed_until:t+5,latitude:55.01,longitude:37.01};
+    sample={...sample,segments:[[[55,37],[55.001,37.001]]],segment_timestamps:[[t,t+20]],segment_kinds:[['moving']],segment_speeds_kmh:[[30]],parking_spots:[far]};
+    card._range=['2026-10-05','2026-10-05'];await card._load();card._selectTrip('1');
+    return {joins:card._routeLayer.getLayers().filter(l=>l.options.weight===4&&!l.options.className).length,
+     boundary:card._routeLayer.getLayers().map(l=>l.getTooltip?.()?.getContent()).filter(Boolean).some(text=>String(text).includes('путь до стоянки не записан'))};
+   });
+   assert.equal(farStopGap.joins,0,'a stop a kilometre away is a real drive and is never joined by an invented line');
+   assert.equal(farStopGap.boundary,true,'a stop beyond the join radius keeps its unrecorded-path boundary');
    const repeatedVisits=await page.evaluate(async()=>{
     const t=Date.parse('2026-10-14T00:00:00+03:00')/1000;
     sample={...sample,segments:[[[55,37],[55,37]],[[55.01,37],[55.011,37]]],segment_timestamps:[[t,t+600],[t+700,t+800]],parking_spots:[

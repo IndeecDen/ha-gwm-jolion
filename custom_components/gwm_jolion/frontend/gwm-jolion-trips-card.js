@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.2.7 */
+/* GWM Jolion Trips Card v0.2.8 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -8,6 +8,13 @@
   // indistinguishable from a bend in the road unless it is marked as such.
   const BRIEF_STOP_SECONDS=15,BRIEF_STOP_MAX_SECONDS=600,BRIEF_STOP_NOISE_M=60;
   const TRIP_COLORS=['#2563eb','#9333ea','#0891b2','#ea580c','#db2777','#0d9488','#6366f1','#a16207'];
+  // A stop's coordinate is a measured position, and the backend usually only
+  // reports the next fix once the car has already rolled a couple of hundred
+  // metres. Left alone the parking circle floats beside the end of the line, so
+  // the track is extended to it. A longer hop is a real drive: it stays
+  // unjoined unless the odometer proves the distance, which is what the grey
+  // gap link is for.
+  const NEAR_STOP_M=300;
   const DEFAULT_SPEED_LIMITS = {green:80,red:110};
   function speedLimits(config={}){
     const limit=(value,fallback)=>{const number=Number(value);return value!==null&&value!==undefined&&value!==''&&Number.isFinite(number)?Math.max(1,Math.min(300,Math.round(number))):fallback;};
@@ -616,7 +623,6 @@
         // for the dashed connector either. Otherwise a sequence of cloud/app
         // fragments produces several short zig-zag dashes through a gap.
         const drawableRuns=trip.runs.filter(isDrawable);
-        for(const run of drawableRuns){
         // Round caps turn a run of identical parked fixes into a stray colored
         // dot. Parking markers already represent these stationary observations.
         const common={lineCap:'round',lineJoin:'round',smoothFactor:.6,bubblingMouseEvents:false};
@@ -626,6 +632,15 @@
         // default SVG renderer because it must catch clicks and be focusable.
         const painted={...common,renderer:this._paths,interactive:false};
         const addLine=(points,options)=>L.polyline(points,{...painted,...options}).addTo(this._routeLayer);
+        // Speed bands ride on the simplified vertices: a kept vertex carries
+        // the band of the edge leaving it, so a band boundary stays exactly
+        // where the drive crossed a threshold instead of being re-thinned
+        // inside its own short slice.
+        const band=(run,index)=>{
+          const speed=run.speeds[index],valid=speed!=null&&Number.isFinite(Number(speed))&&Number(speed)>0&&run.kinds[index]!=='unknown'&&run.kinds[index]!=='stationary';
+          return !valid?'#88949f':speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
+        };
+        for(const run of drawableRuns){
         // One simplification per run feeds the casing, the coloured line, the
         // arrow grid and the invisible 20 px corridor. Simplifying per layer ran
         // the same recursion three times per render, and the corridor kept a
@@ -635,15 +650,7 @@
         const title=trip.unclassified?'Участок с неуточнёнными границами стоянки':`Участок ${trip.index+1}`;
         if(!focused)addLine(run.drawn,{color:TRIP_COLORS[trip.index%TRIP_COLORS.length],weight:6,opacity:.95});
         else {
-          // Speed bands ride on the simplified vertices: a kept vertex carries
-          // the band of the edge leaving it, so a band boundary stays exactly
-          // where the drive crossed a threshold instead of being re-thinned
-          // inside its own short slice.
-          const shade=index=>{
-            const speed=run.speeds[index],valid=speed!=null&&Number.isFinite(Number(speed))&&Number(speed)>0&&run.kinds[index]!=='unknown'&&run.kinds[index]!=='stationary';
-            return !valid?'#88949f':speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
-          };
-          const shaded=simplifyPath(run.points.map((point,index)=>[point[0],point[1],shade(index)]));
+          const shaded=simplifyPath(run.points.map((point,index)=>[point[0],point[1],band(run,index)]));
           // Bands are grouped by edge, not by vertex: a vertex-only batch throws
           // away a band that is a single edge long, which silently lost a short
           // red or green stretch at the start of a run.
@@ -676,6 +683,29 @@
         const path=hit.getElement?.();if(path&&!focused){path.setAttribute('tabindex','0');path.setAttribute('role','button');path.setAttribute('aria-label',`${title}: показать скорость`);path.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this._selectTrip(trip.key);}});}
         this._arrowRuns.push(run.drawn);
         }
+        // A stop can sit a few dozen metres off the last measured fix: the cloud
+        // reports again only once the car has already rolled. A circle floating
+        // unattached beside the line reads as a broken track, so a short hop is
+        // joined in the trip colour. Past NEAR_STOP_M the hop is a real drive and
+        // stays open, which is what the odometer-proven grey link is for.
+        if(!trip.unclassified&&drawableRuns.length){
+          // Drawn in travel direction: outward from the departure stop, inward
+          // to the arrival stop.
+          const join=(stop,fix,outward)=>{
+            if(!stop)return;
+            const point=[Number(stop.latitude),Number(stop.longitude)];
+            if(!Number.isFinite(point[0])||!Number.isFinite(point[1]))return;
+            const metres=this._map.distance(point,fix);
+            if(!(metres>3)||metres>NEAR_STOP_M)return;
+            const line=outward?[point,fix]:[fix,point];
+            // No speed was measured on this hop, so focused view paints it in
+            // the same grey as an unknown-speed edge instead of inventing a band.
+            addLine(line,{color:'#fff',weight:7,opacity:.85});
+            addLine(line,{color:focused?'#88949f':TRIP_COLORS[trip.index%TRIP_COLORS.length],weight:4,opacity:.9});
+          };
+          join(trip.from,drawableRuns[0].points[0],true);
+          join(trip.to,drawableRuns.at(-1).points.at(-1),false);
+        }
       }
       let stopCount=0;
       if(focused&&trips.length){
@@ -694,7 +724,9 @@
           const endpoints=[[trip.from,runs[0].points[0],'Начальная стоянка'],[trip.to,runs.at(-1).points.at(-1),'Конечная стоянка']];
           for(const [stop,fix,text] of endpoints){
             const point=stop?[Number(stop.latitude),Number(stop.longitude)]:fix;
-            if(stop&&this._map.distance(point,fix)>3)gapBoundary(fix,'Граница GPS-записи: путь до стоянки не записан');
+            // The hop to a nearby stop is drawn as a joined line, so the
+            // "unrecorded path" boundary would contradict it.
+            if(stop&&this._map.distance(point,fix)>NEAR_STOP_M)gapBoundary(fix,'Граница GPS-записи: путь до стоянки не записан');
             L.circleMarker(point,{radius:6,color:'#fff',weight:3,fillColor:'#334155',fillOpacity:1}).bindTooltip(stop?text:'Граница доступной GPS-записи').addTo(this._routeLayer);
           }
           for(let i=1;i<runs.length;i++){
