@@ -16,6 +16,7 @@ from homeassistant.auth.permissions.const import POLICY_READ
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
+from .disk_notify import notify_access
 from .locator_merge import cloud_point, choose_live, fuse
 from .locator_protocol import Archive, validate, analyze, distance
 from .trips import TripHistory, period, with_archive, summarize, playback, stale_run_indices
@@ -168,6 +169,9 @@ class HybridHistory(TripHistory):
             _LOGGER.info("Яндекс.Диск доступен: %s", result.get('summary'))
         else:
             _LOGGER.warning("Яндекс.Диск: %s Подсказка: %s", result.get('summary'), result.get('hint') or '—')
+            # При старте сообщаем только о проблеме: успешная проверка не новость,
+            # а вот недоступный Диск пользователь должен увидеть сам.
+            notify_access(self.hass, result)
         return result
 
     def _app_latest(self):

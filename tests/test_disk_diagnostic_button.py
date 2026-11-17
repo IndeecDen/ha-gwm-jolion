@@ -9,16 +9,21 @@ ROOT = Path(__file__).resolve().parents[1] / "custom_components/gwm_jolion"
 
 
 def button_class():
+    notified = []
+
     class Entity:
-        def __init__(self, coordinator): self.coordinator = coordinator
+        def __init__(self, coordinator):
+            self.coordinator = coordinator
+            self.hass = SimpleNamespace(notified=notified)
         def async_write_ha_state(self): self.written = True
     class Button: pass
     tree = ast.parse((ROOT / 'button.py').read_text(encoding='utf-8'))
     node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'GwmJolionCheckDiskButton')
     scope = {'GwmJolionEntity': Entity, 'ButtonEntity': Button,
-             'EntityCategory': SimpleNamespace(DIAGNOSTIC='diagnostic')}
+             'EntityCategory': SimpleNamespace(DIAGNOSTIC='diagnostic'),
+             'notify_access': lambda hass, result: hass.notified.append(result)}
     exec(compile(ast.Module(body=[node], type_ignores=[]), 'button.py', 'exec'), scope)
-    return scope[node.name]
+    return scope[node.name], notified
 
 
 def test_disk_button_checks_only_disk_and_exposes_cached_result():
@@ -28,7 +33,8 @@ def test_disk_button_checks_only_disk_and_exposes_cached_result():
         return relay.last_diagnostics.copy()
     relay.check_access = AsyncMock(side_effect=check)
     coordinator = SimpleNamespace(entry_id='test', trip_history=SimpleNamespace(relay=relay))
-    button = button_class()(coordinator)
+    cls, notified = button_class()
+    button = cls(coordinator)
     assert button.available
     assert button.extra_state_attributes == {'access_check': None}
     asyncio.run(button.async_press())
@@ -41,7 +47,9 @@ def test_disk_button_checks_only_disk_and_exposes_cached_result():
 
 
 def test_disk_button_unavailable_without_relay():
-    button = button_class()(SimpleNamespace(entry_id='test', trip_history=SimpleNamespace(relay=None)))
+    cls, notified = button_class()
+    button = cls(SimpleNamespace(entry_id='test', trip_history=SimpleNamespace(relay=None)))
     assert not button.available
     assert button.extra_state_attributes == {'access_check': None}
     asyncio.run(button.async_press())
+    assert notified == []

@@ -269,3 +269,21 @@ def test_forbidden_and_unauthorized_get_different_advice():
     assert 'недействителен' not in forbidden['hint']
     assert 'отозван' in unauthorized['hint']
     assert forbidden['hint'] != unauthorized['hint']
+
+
+def test_notification_text_tells_the_user_what_to_do():
+    ok = {'status': 'ok', 'token': 'ok', 'folder': 'ok', 'write_access': 'ok', 'public_folder': 'ok',
+          'summary': 'Все проверки пройдены: токен, папка, запись и публичная папка доступны.', 'hint': ''}
+    title, body = disk.notify_text(ok)
+    assert title == 'Яндекс.Диск: доступ есть'
+    assert 'Что сделать' not in body
+
+    failed = {'status': 'auth_error', 'token': 'forbidden', 'folder': 'not_checked',
+              'write_access': 'not_checked', 'public_folder': 'ok',
+              'summary': 'Диск отклонил доступ: токен — нет прав.', 'hint': 'Перевыпустите токен.'}
+    title, body = disk.notify_text(failed)
+    assert title == 'Яндекс.Диск: доступа нет'
+    assert 'Диск отклонил доступ' in body and 'Что сделать: Перевыпустите токен.' in body
+
+    title, body = disk.notify_text(None)
+    assert title == 'Яндекс.Диск: проверка не удалась' and 'журнале' in body

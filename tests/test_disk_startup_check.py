@@ -23,13 +23,15 @@ def check_method():
                if isinstance(n, ast.ClassDef) and n.name == "HybridHistory")
     node = next(n for n in cls.body
                 if isinstance(n, ast.AsyncFunctionDef) and n.name == "check_disk_access")
-    scope = {"asyncio": asyncio, "_LOGGER": LOGGER}
+    scope = {"asyncio": asyncio, "_LOGGER": LOGGER,
+             "notify_access": lambda hass, result: hass.notified.append(result)}
     exec(compile(ast.Module(body=[node], type_ignores=[]), "locator.py", "exec"), scope)
     return scope["check_disk_access"]
 
 
 def run(result=None, error=None):
     calls = []
+    notified = []
 
     async def check_access():
         calls.append(True)
@@ -37,37 +39,43 @@ def run(result=None, error=None):
             raise error
         return result
 
-    history = SimpleNamespace(relay=SimpleNamespace(check_access=check_access))
+    history = SimpleNamespace(relay=SimpleNamespace(check_access=check_access),
+                              hass=SimpleNamespace(notified=notified))
     method = check_method()
-    return lambda: method(history), calls
+    return lambda: method(history), calls, notified
 
 
 def test_successful_startup_probe_is_logged_and_returned(caplog):
     result = {"status": "ok", "summary": "Все проверки пройдены.", "hint": ""}
-    method, calls = run(result)
+    method, calls, notified = run(result)
     with caplog.at_level(logging.INFO, logger="gwm_jolion.locator"):
         outcome = asyncio.run(method())
     assert outcome == result and calls == [True]
     assert "Яндекс.Диск доступен" in caplog.text
+    # A healthy Disk stays silent: no notification for a passing check.
+    assert notified == []
 
 
 def test_failed_startup_probe_logs_summary_and_hint_without_secrets(caplog):
     result = {"status": "auth_error", "token": "unauthorized",
               "summary": "Диск отклонил доступ: токен — токен отклонён.",
               "hint": "Токен недействителен или отозван."}
-    method, _ = run(result)
+    method, _, notified = run(result)
     with caplog.at_level(logging.WARNING, logger="gwm_jolion.locator"):
         outcome = asyncio.run(method())
     assert outcome == result
     assert "Диск отклонил доступ" in caplog.text and "Подсказка: Токен" in caplog.text
     assert "OAuth" not in caplog.text and "unauthorized" not in caplog.text
+    # A broken Disk must reach the user without them hunting through attributes.
+    assert notified == [result]
 
 
 def test_failing_probe_never_breaks_setup(caplog):
-    method, _ = run(error=RuntimeError("synthetic oauth crash"))
+    method, _, notified = run(error=RuntimeError("synthetic oauth crash"))
     with caplog.at_level(logging.ERROR, logger="gwm_jolion.locator"):
         assert asyncio.run(method()) is None
     assert "Проверка доступа к Яндекс.Диску завершилась сбоем" in caplog.text
+    assert notified == []
 
 
 def test_probe_is_skipped_without_a_yandex_relay():

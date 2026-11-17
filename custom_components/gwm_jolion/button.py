@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .commands import COMMANDS
 from .const import DOMAIN
 from .coordinator import GwmJolionCoordinator
+from .disk_notify import notify_access
 from .entity import GwmJolionEntity
 from .entity_surface import PUBLIC_COMMAND_BUTTON_KEYS
 
@@ -123,8 +124,11 @@ class GwmJolionCheckDiskButton(GwmJolionEntity, ButtonEntity):
         relay = self._relay
         if relay is None or relay.closed:
             return
-        await relay.check_access()
+        result = await relay.check_access()
         self.async_write_ha_state()
+        # Показываем вердикт уведомлением: по одной кнопке иначе не понять,
+        # есть доступ или нет, без раскрытия атрибутов.
+        notify_access(self.hass, result)
 
 
 class GwmJolionStartSelectedProfileButton(GwmJolionEntity, ButtonEntity):

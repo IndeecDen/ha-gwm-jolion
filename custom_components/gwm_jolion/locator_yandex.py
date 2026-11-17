@@ -65,6 +65,20 @@ HINTS = {
 ORDER = ('token', 'folder', 'write_access', 'public_folder')
 
 
+def notify_text(result):
+    """Turn a probe result into a notification title and body for the UI."""
+    if not isinstance(result, dict) or 'status' not in result:
+        return ('Яндекс.Диск: проверка не удалась',
+                'Проверка доступа не завершилась — подробности в журнале Home Assistant.')
+    if result.get('status') == 'ok':
+        return ('Яндекс.Диск: доступ есть',
+                'Токен, папка, право записи и публичная папка доступны.')
+    lines = [result.get('summary') or 'Проверка доступа не прошла.']
+    if result.get('hint'):
+        lines.append(f'Что сделать: {result["hint"]}')
+    return ('Яндекс.Диск: доступа нет', '\n\n'.join(lines))
+
+
 def describe_access(result):
     """Turn verdict codes into a short Russian summary plus one actionable hint."""
     status = result.get('status')
