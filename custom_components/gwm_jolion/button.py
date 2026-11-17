@@ -109,7 +109,15 @@ class GwmJolionCheckDiskButton(GwmJolionEntity, ButtonEntity):
     @property
     def extra_state_attributes(self):
         result = getattr(self._relay, "last_diagnostics", None)
-        return {"access_check": dict(result) if result is not None else None}
+        if result is None:
+            return {"access_check": None}
+        return {
+            "access_check": dict(result),
+            # Top-level copy so the verdict and the fix are visible without expanding.
+            "access_status": result.get("status"),
+            "access_summary": result.get("summary"),
+            "access_hint": result.get("hint"),
+        }
 
     async def async_press(self):
         relay = self._relay

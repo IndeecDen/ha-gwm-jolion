@@ -24,6 +24,24 @@ def iso_time(value):
     return datetime.fromtimestamp(value, timezone.utc).isoformat() if value else None
 
 
+def disk_access(history):
+    """Verdict of the last Disk probe, safe to show in entities and diagnostics."""
+    relay = getattr(history, "relay", None)
+    probe = getattr(relay, "last_diagnostics", None)
+    if not isinstance(probe, dict):
+        return None
+    return {
+        "status": probe.get("status"),
+        "checked_at": iso_time(probe.get("checked_at")),
+        "summary": probe.get("summary"),
+        "hint": probe.get("hint"),
+        "token_access": probe.get("token"),
+        "folder_access": probe.get("folder"),
+        "write_access": probe.get("write_access"),
+        "public_folder_access": probe.get("public_folder"),
+    }
+
+
 def snapshot(coordinator, now=None):
     now = time.time() if now is None else now
     history = getattr(coordinator, "trip_history", None)
@@ -54,4 +72,5 @@ def snapshot(coordinator, now=None):
         "locator_receive_age_seconds": max(0, int(now - received_ms / 1000)) if received_ms else None,
         "locator_transport": ("yandex_disk" if getattr(history, "relay", None) else "https") if enabled else None,
         "locator_relay_status": getattr(getattr(history, "relay", None), "status", None),
+        "locator_disk_access": disk_access(history),
     }

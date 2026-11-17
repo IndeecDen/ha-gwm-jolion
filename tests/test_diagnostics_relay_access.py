@@ -80,15 +80,20 @@ def payload_for(relay):
 
 def test_access_check_is_reported_with_readable_status_names():
     probe = {"status": "ok", "token": "ok", "folder": "ok",
-             "public_folder": "ok", "write_access": "not_checked"}
+             "public_folder": "ok", "write_access": "ok", "checked_at": 1762000000,
+             "summary": "Все проверки пройдены: токен, папка, запись и публичная папка доступны.",
+             "hint": ""}
     relay = fake_relay(last_diagnostics=dict(probe))
     _, payload = payload_for(relay)
     assert payload["locator_relay"]["access_check"] == {
         "status": "ok",
+        "checked_at": 1762000000,
+        "summary": probe["summary"],
+        "hint": "",
         "token_access": "ok",
         "folder_access": "ok",
         "public_folder_access": "ok",
-        "write_access": "not_checked",
+        "write_access": "ok",
     }
     # The payload owns its copy: a downstream edit must not corrupt the cache.
     payload["locator_relay"]["access_check"]["status"] = "tampered"

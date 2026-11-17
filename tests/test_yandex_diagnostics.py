@@ -10,6 +10,7 @@ from locator_test_package import locator_yandex as disk
 
 TOKEN = 'synthetic-secret-token'
 FOLDER = '/PrivateSyntheticFolder'
+VERDICTS = ('status', 'token', 'folder', 'public_folder', 'write_access')
 
 
 class Response:
@@ -61,22 +62,30 @@ def test_oauth_never_sent_outside_exact_resources_endpoint(url):
 
 
 def test_access_success_is_read_only_sanitized_and_cached():
-    session = Session(*(Response(payload={'type': 'dir', 'path': FOLDER}) for _ in range(3)))
+    session = Session(*(Response(payload={'type': 'dir'}) for _ in range(4)))
     client = relay(session)
     assert client.last_diagnostics is None
     result = asyncio.run(client.check_access())
-    assert result == {'status': 'ok', 'token': 'ok', 'folder': 'ok',
-                      'public_folder': 'ok', 'write_access': 'not_checked'}
+    assert {k: result[k] for k in VERDICTS} == {
+        'status': 'ok', 'token': 'ok', 'folder': 'ok',
+        'public_folder': 'ok', 'write_access': 'ok'}
+    assert isinstance(result['checked_at'], int) and result['checked_at'] > 0
+    assert result['summary'] and 'доступн' in result['summary'].lower()
+    assert result['hint'] == ''
     assert client.last_diagnostics == result
     assert [call[:2] for call in session.calls] == [
-        ('GET', disk.FILES_API), ('GET', disk.FILES_API), ('GET', disk.API)]
+        ('GET', disk.FILES_API), ('GET', disk.FILES_API), ('GET', disk.WRITE_API),
+        ('GET', disk.API)]
     assert session.calls[0][2]['params'] == {'path': 'disk:/', 'fields': 'type'}
     assert session.calls[1][2]['params'] == {'path': 'disk:' + FOLDER, 'fields': 'type'}
-    assert session.calls[2][2]['params'] == {'public_key': client.public_url, 'fields': 'type'}
+    # The write probe asks for an upload link and never follows it, so nothing is created.
+    assert session.calls[2][2]['params'] == {
+        'path': 'disk:' + FOLDER + '/.gwm-jolion-probe', 'overwrite': 'false'}
+    assert session.calls[3][2]['params'] == {'public_key': client.public_url, 'fields': 'type'}
     for _, url, kwargs in session.calls:
         assert kwargs['allow_redirects'] is False
         assert kwargs.get('headers', {}).get('Authorization') == (
-            'OAuth ' + TOKEN if url == disk.FILES_API else None)
+            'OAuth ' + TOKEN if url in (disk.FILES_API, disk.WRITE_API) else None)
     for private in (TOKEN, FOLDER, client.public_url, client.key):
         assert private not in json.dumps(result)
     assert client.cleanup_deleted == 0 and not client.cleanup_enabled
@@ -93,9 +102,10 @@ def test_http_failures_are_classified_without_following_redirects(http, expected
     monkeypatch.setattr(disk, 'uniform', lambda a, b: 0, raising=False)
     good = lambda: Response(payload={'type': 'dir'})
     bad = lambda: Response(http, {'error': TOKEN + FOLDER}, {'Location': 'https://evil.test/'})
+    # write probe only runs when token and folder are readable, so only that stage sees it
     responses = {'token': [bad() for _ in range(attempts)] + [good()],
                  'folder': [good()] + [bad() for _ in range(attempts)] + [good()],
-                 'public_folder': [good(), good()] + [bad() for _ in range(attempts)]}[stage]
+                 'public_folder': [good(), good(), good()] + [bad() for _ in range(attempts)]}[stage]
     session = Session(*responses)
     client = relay(session)
     result = asyncio.run(client.check_access())
@@ -103,12 +113,44 @@ def test_http_failures_are_classified_without_following_redirects(http, expected
     assert result['status'] == overall
     if stage == 'token':
         assert result['folder'] == 'not_checked'
+        assert result['write_access'] == 'not_checked'
+    if stage == 'folder':
+        assert result['write_access'] == 'not_checked'
     if stage != 'public_folder':
         assert result['public_folder'] == 'ok'
     assert len(session.calls) == len(responses)
     assert client.last_diagnostics == result
     assert TOKEN not in json.dumps(result) and FOLDER not in json.dumps(result)
     assert client.throttle_until == 0 and not client.cleanup_blocked
+    # Every failure is described in plain language with one actionable hint.
+    assert result['summary'] and disk.PROBE_LABELS[stage] in result['summary']
+
+
+@pytest.mark.parametrize('http, expected, overall', [
+    (403, 'forbidden', 'auth_error'), (401, 'unauthorized', 'auth_error'),
+    (507, 'no_space', 'error'), (302, 'unexpected_response', 'error'),
+])
+def test_write_scope_is_verified_without_creating_files(http, expected, overall, monkeypatch):
+    monkeypatch.setattr(disk, 'uniform', lambda a, b: 0, raising=False)
+    session = Session(Response(payload={'type': 'dir'}), Response(payload={'type': 'dir'}),
+                      Response(http), Response(payload={'type': 'dir'}))
+    result = asyncio.run(relay(session).check_access())
+    assert result['write_access'] == expected
+    assert result['status'] == overall
+    assert result['token'] == result['folder'] == result['public_folder'] == 'ok'
+    assert [call[1] for call in session.calls][2] == disk.WRITE_API
+    # No PUT/POST is ever issued: the upload link is only requested.
+    assert all(call[0] == 'GET' for call in session.calls)
+    assert result['hint'], 'write failures must explain what to fix'
+    assert TOKEN not in json.dumps(result)
+
+
+def test_write_probe_is_skipped_when_read_access_fails():
+    session = Session(Response(403), Response(payload={'type': 'dir'}))
+    result = asyncio.run(relay(session).check_access())
+    assert result['token'] == 'forbidden'
+    assert result['write_access'] == 'not_checked'
+    assert len(session.calls) == 2
 
 
 @pytest.mark.parametrize('token, folder, token_state, folder_state, calls', [
@@ -143,12 +185,12 @@ def test_transport_failures_are_transient_and_do_not_expose_details(error, monke
 
 def test_throttled_probe_recovers_within_one_budget(monkeypatch):
     monkeypatch.setattr(disk, 'uniform', lambda a, b: 0, raising=False)
-    session = Session(Response(429), Response(payload={'type': 'dir'}),
-                      Response(payload={'type': 'dir'}), Response(payload={'type': 'dir'}))
+    session = Session(Response(429), *(Response(payload={'type': 'dir'}) for _ in range(4)))
     result = asyncio.run(relay(session).check_access())
-    assert result == {'status': 'ok', 'token': 'ok', 'folder': 'ok',
-                      'public_folder': 'ok', 'write_access': 'not_checked'}
-    assert len(session.calls) == 4
+    assert {k: result[k] for k in VERDICTS} == {
+        'status': 'ok', 'token': 'ok', 'folder': 'ok',
+        'public_folder': 'ok', 'write_access': 'ok'}
+    assert len(session.calls) == 5
 
 
 def test_retries_stop_at_the_attempt_limit(monkeypatch):
@@ -202,7 +244,7 @@ def test_cancellation_preserves_last_completed_diagnostics():
                 entered.set()
                 await asyncio.Event().wait()
                 yield b''
-        session = Session(*(Response(payload={'type': 'dir'}) for _ in range(3)), Stalled())
+        session = Session(*(Response(payload={'type': 'dir'}) for _ in range(4)), Stalled())
         client = relay(session)
         completed = await client.check_access()
         completed['token'] = 'caller-mutated'
@@ -214,5 +256,16 @@ def test_cancellation_preserves_last_completed_diagnostics():
         with pytest.raises(asyncio.CancelledError):
             await task
         assert client.last_diagnostics == previous
-        assert len(session.calls) == 4
+        assert len(session.calls) == 5
     asyncio.run(run())
+
+
+def test_forbidden_and_unauthorized_get_different_advice():
+    """A 403 means the token is known to Yandex but lacks Disk scope — not an expired token."""
+    forbidden = asyncio.run(relay(Session(Response(403), Response(payload={'type': 'dir'}))).check_access())
+    unauthorized = asyncio.run(relay(Session(Response(401), Response(payload={'type': 'dir'}))).check_access())
+    assert forbidden['status'] == unauthorized['status'] == 'auth_error'
+    assert 'перевыпуст' in forbidden['hint'] and 'Диск' in forbidden['hint']
+    assert 'недействителен' not in forbidden['hint']
+    assert 'отозван' in unauthorized['hint']
+    assert forbidden['hint'] != unauthorized['hint']

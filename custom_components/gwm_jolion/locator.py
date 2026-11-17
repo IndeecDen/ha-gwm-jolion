@@ -148,6 +148,27 @@ class HybridHistory(TripHistory):
             from homeassistant.helpers.aiohttp_client import async_get_clientsession
             from .locator_yandex import PublicDiskRelay
             self.relay=PublicDiskRelay(self,async_get_clientsession(self.hass),self.entry.options.get('golion_locator_yandex_public_url',''),self.entry.options.get(UPLOAD_KEY,''),self.entry.options.get(VEHICLE_ID,'jolion'),token=self.entry.options.get(DISK_OAUTH,''),folder=self.entry.options.get(DISK_FOLDER,DEFAULT_DISK_FOLDER),cleanup=bool(self.entry.options.get(DISK_CLEANUP,False)),grace_hours=self.entry.options.get(DISK_CLEANUP_GRACE_HOURS,24))
+            # Доступ к Диску проверяется сразу после старта: иначе диагноз виден
+            # только тому, кто вручную нажмёт кнопку проверки.
+            self.hass.async_create_background_task(self.check_disk_access(), 'gwm jolion disk access check')
+
+    async def check_disk_access(self):
+        """Probe the Disk once, log the verdict and cache it for diagnostics."""
+        relay=getattr(self,'relay',None)
+        if relay is None or not hasattr(relay,'check_access'):
+            return None
+        try:
+            result=await relay.check_access()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception("Проверка доступа к Яндекс.Диску завершилась сбоем")
+            return None
+        if result.get('status') == 'ok':
+            _LOGGER.info("Яндекс.Диск доступен: %s", result.get('summary'))
+        else:
+            _LOGGER.warning("Яндекс.Диск: %s Подсказка: %s", result.get('summary'), result.get('hint') or '—')
+        return result
 
     def _app_latest(self):
         point = self.app_archive.latest()

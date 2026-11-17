@@ -22,6 +22,9 @@ from .locator_protocol import validate
 
 API = 'https://cloud-api.yandex.net/v1/disk/public/resources'
 FILES_API = 'https://cloud-api.yandex.net/v1/disk/resources'
+# No side effect: this endpoint only asks whether an upload link would be issued,
+# so it proves delete/write scope without creating or overwriting a file.
+WRITE_API = FILES_API + '/upload'
 MAX_FILE = 400000
 ACCESS_TIMEOUT = 5  # Per probe, shared by its retries; three probes take 15 seconds.
 ACCESS_ATTEMPTS = 3  # Read-only probes may retry twice on throttling or 5xx.
@@ -32,6 +35,51 @@ DEFAULT_GRACE_HOURS = 24
 MAX_FILE_DELETES = 25
 THROTTLE_MIN_MS = 60000
 THROTTLE_MAX_MS = 300000
+
+# Diagnostic verdicts are user-facing: Russian labels, first failing probe wins.
+PROBE_LABELS = {'token': 'токен', 'folder': 'папка', 'write_access': 'запись в папку',
+                'public_folder': 'публичная папка'}
+VERDICT_LABELS = {
+    'ok': 'доступен', 'not_configured': 'не настроен', 'invalid_config': 'некорректный путь',
+    'invalid_response': 'непонятный ответ', 'not_folder': 'это не папка',
+    'unauthorized': 'токен отклонён', 'forbidden': 'нет прав', 'not_found': 'не найдено',
+    'throttled': 'превышен лимит запросов', 'unavailable': 'сервис недоступен',
+    'timeout': 'таймаут', 'network_error': 'сеть недоступна',
+    'unexpected_response': 'неожиданный ответ', 'no_space': 'нет места', 'not_checked': 'не проверено'}
+HINTS = {
+    'not_configured': 'Сохраните OAuth-токен Яндекс.Диска в настройках интеграции.',
+    'unauthorized': 'Токен недействителен или отозван — получите новый и сохраните в настройках.',
+    'forbidden': 'Токен принят Яндексом, но у него нет прав на Диск: перевыпустите токен для OAuth-приложения с доступом к Яндекс.Диску (чтение и запись) и сохраните заново.',
+    'not_found': 'Папки нет на Диске — создайте её или измените путь в настройках.',
+    'invalid_config': 'Путь папки должен начинаться с «/» и не содержать «..».',
+    'not_folder': 'Указанный путь ведёт на файл, а не на папку.',
+    'no_space': 'На Диске закончилось место — освободите его или включите очистку старых файлов.',
+    'throttled': 'Диск ограничил частоту запросов — проверка повторится позже.',
+    'timeout': 'Проверка не уложилась в лимит времени — повторите позже.',
+    'network_error': 'Нет связи с cloud-api.yandex.net — проверьте интернет у Home Assistant.',
+    'unavailable': 'Сервис временно недоступен — повторите позже.',
+    'unexpected_response': 'Диск ответил неожиданно: проверьте, что путь и публичная ссылка верны.',
+    'invalid_response': 'Ответ Диска не распознан — вероятно, изменился формат API.',
+    'not_checked': 'Часть проверок пропущена: сначала устраните предыдущую ошибку.',
+}
+ORDER = ('token', 'folder', 'write_access', 'public_folder')
+
+
+def describe_access(result):
+    """Turn verdict codes into a short Russian summary plus one actionable hint."""
+    status = result.get('status')
+    failed = [name for name in ORDER if result.get(name) != 'ok']
+    if status == 'ok':
+        return ('Все проверки пройдены: токен, папка, запись и публичная папка доступны.', '')
+    if not failed:
+        return ('Проверка не завершена.', '')
+    first = failed[0]
+    # Skipped probes ('not_checked') are noise: they are only consequences of the first failure.
+    detail = ', '.join(f'{PROBE_LABELS[name]} — {VERDICT_LABELS.get(result.get(name), str(result.get(name)))}'
+                       for name in failed if result.get(name) != 'not_checked')
+    head = {'auth_error': 'Диск отклонил доступ', 'transient_error': 'Диск временно недоступен',
+            'error': 'Проверка доступа не прошла'}.get(status, 'Проверка не прошла')
+    return (f'{head}: {detail}.', HINTS.get(result.get(first), ''))
 
 
 class DiskThrottled(Exception):
@@ -139,7 +187,7 @@ class PublicDiskRelay:
         self.latest=latest_pattern(vehicle)
         self.last_diagnostics=None
 
-    async def _access_probe(self, url, params):
+    async def _access_probe(self, url, params, kind='read'):
         """Retry read-only probes within one deadline; retain no exception text or URLs."""
         deadline=time.monotonic()+ACCESS_TIMEOUT
         verdict='timeout'
@@ -148,7 +196,7 @@ class PublicDiskRelay:
             if remaining<=0:break
             try:
                 async with asyncio.timeout(remaining):
-                    verdict=await self._read_access_metadata(url, params)
+                    verdict=await self._read_access_metadata(url, params, kind)
             except TimeoutError:
                 verdict='timeout'
             except (ClientError, OSError):
@@ -163,17 +211,21 @@ class PublicDiskRelay:
                 await asyncio.sleep(delay)
         return verdict
 
-    async def _read_access_metadata(self, url, params):
+    async def _read_access_metadata(self, url, params, kind='read'):
         """Read only minimal metadata; never return provider data."""
-        headers={'Authorization': 'OAuth '+self.token} if url == FILES_API else {}
+        headers={'Authorization': 'OAuth '+self.token} if url in (FILES_API, WRITE_API) else {}
         async with self.session.request('GET', url, params=params, headers=headers,
                                         allow_redirects=False) as response:
             if response.status == 401:return 'unauthorized'
             if response.status == 403:return 'forbidden'
             if response.status == 404:return 'not_found'
             if response.status == 429:return 'throttled'
+            if response.status == 507:return 'no_space'
             if 500 <= response.status < 600:return 'unavailable'
             if response.status != 200:return 'unexpected_response'
+            if kind == 'upload':
+                # The link is never followed, so probing write scope creates nothing.
+                return 'ok'
             body=bytearray()
             async for block in response.content.iter_chunked(16384):
                 body.extend(block)
@@ -187,19 +239,26 @@ class PublicDiskRelay:
             return 'ok' if metadata['type'] == 'dir' else 'not_folder'
 
     async def check_access(self):
-        """Check read access only; this does not prove upload/delete permissions."""
+        """Probe token, folder, public folder and upload scope; never writes a file."""
         result={'status': 'ok', 'token': 'not_checked', 'folder': 'not_checked',
-                'public_folder': 'not_checked', 'write_access': 'not_checked'}
+                'public_folder': 'not_checked', 'write_access': 'not_checked',
+                'checked_at': int(time.time()), 'summary': '', 'hint': ''}
         result['token']=(await self._access_probe(FILES_API, {'path': 'disk:/', 'fields': 'type'})
                          if self.token else 'not_configured')
         if result['token'] == 'ok':
             result['folder']=(await self._access_probe(FILES_API, {'path': 'disk:'+self.folder, 'fields': 'type'})
                               if self.folder else 'invalid_config')
+        if result['token'] == 'ok' and result['folder'] == 'ok':
+            # Upload links are requested but never followed: no file appears on the Disk.
+            result['write_access']=await self._access_probe(
+                WRITE_API, {'path': 'disk:'+self.folder+'/.gwm-jolion-probe', 'overwrite': 'false'},
+                kind='upload')
         result['public_folder']=await self._access_probe(API, {'public_key': self.public_url, 'fields': 'type'})
-        states={result[name] for name in ('token', 'folder', 'public_folder')}
+        states={result[name] for name in ('token', 'folder', 'public_folder', 'write_access')}
         if states & {'unauthorized', 'forbidden'}:result['status']='auth_error'
         elif states & {'throttled', 'unavailable', 'timeout', 'network_error'}:result['status']='transient_error'
         elif states != {'ok'}:result['status']='error'
+        result['summary'],result['hint']=describe_access(result)
         self.last_diagnostics=result.copy()
         return result
 

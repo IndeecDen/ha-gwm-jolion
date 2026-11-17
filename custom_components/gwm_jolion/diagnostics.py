@@ -61,6 +61,9 @@ def _access_check(probe: Any) -> dict[str, Any] | None:
         return None
     return {
         "status": probe.get("status"),
+        "checked_at": probe.get("checked_at"),
+        "summary": probe.get("summary"),
+        "hint": probe.get("hint"),
         "token_access": probe.get("token"),
         "folder_access": probe.get("folder"),
         "public_folder_access": probe.get("public_folder"),
