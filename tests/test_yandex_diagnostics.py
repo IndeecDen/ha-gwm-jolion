@@ -44,8 +44,10 @@ class Session:
 
 
 def relay(session):
+    # cleanup=True: the access probes only run for a relay that will delete, and
+    # these tests exist to exercise those probes.
     return disk.PublicDiskRelay(None, session, 'https://disk.yandex.ru/d/synthetic',
-                                'synthetic-key', 'jolion', token=TOKEN, folder=FOLDER)
+                                'synthetic-key', 'jolion', token=TOKEN, folder=FOLDER, cleanup=True)
 
 
 @pytest.mark.parametrize('url', [
@@ -88,7 +90,8 @@ def test_access_success_is_read_only_sanitized_and_cached():
             'OAuth ' + TOKEN if url in (disk.FILES_API, disk.WRITE_API) else None)
     for private in (TOKEN, FOLDER, client.public_url, client.key):
         assert private not in json.dumps(result)
-    assert client.cleanup_deleted == 0 and not client.cleanup_enabled
+    # Probing access never deletes anything, whatever the cleanup settings say.
+    assert client.cleanup_deleted == 0 and all(method == 'GET' for method, _, _ in session.calls)
 
 
 @pytest.mark.parametrize('http, expected, overall, attempts', [
@@ -153,21 +156,38 @@ def test_write_probe_is_skipped_when_read_access_fails():
     assert len(session.calls) == 2
 
 
-@pytest.mark.parametrize('token, folder, token_state, folder_state, calls', [
-    ('', FOLDER, 'not_configured', 'not_checked', 1),
-    ('bad', FOLDER, 'not_configured', 'not_checked', 1),
-    (TOKEN, '/a/../private', 'ok', 'invalid_config', 2),
+@pytest.mark.parametrize('token, folder, cleanup, token_state, folder_state, status, calls', [
+    ('', FOLDER, False, 'not_required', 'not_checked', 'ok', 1),
+    ('bad', FOLDER, False, 'not_required', 'not_checked', 'ok', 1),
+    (TOKEN, FOLDER, False, 'not_required', 'not_checked', 'ok', 1),
+    ('', FOLDER, True, 'not_configured', 'not_checked', 'error', 1),
+    (TOKEN, '/a/../private', True, 'ok', 'invalid_config', 'error', 2),
 ])
-def test_missing_or_invalid_config_still_checks_public_folder(token, folder, token_state, folder_state, calls):
+def test_missing_or_invalid_config_still_checks_public_folder(token, folder, cleanup, token_state,
+                                                              folder_state, status, calls):
     session = Session(*(Response(payload={'type': 'dir'}) for _ in range(calls)))
     client = disk.PublicDiskRelay(None, session, 'https://disk.yandex.ru/d/synthetic',
-                                 'synthetic-key', 'jolion', token=token, folder=folder)
+                                 'synthetic-key', 'jolion', token=token, folder=folder, cleanup=cleanup)
     result = asyncio.run(client.check_access())
     assert result['token'] == token_state
     assert result['folder'] == folder_state
     assert result['public_folder'] == 'ok'
-    assert result['status'] == 'error'
+    assert result['status'] == status
     assert len(session.calls) == calls
+
+
+def test_read_only_mode_is_not_reported_as_a_failure():
+    """Only deletion needs the token, so a read-only relay stays healthy."""
+    session = Session(Response(payload={'type': 'dir'}))
+    result = asyncio.run(disk.PublicDiskRelay(None, session, 'https://disk.yandex.ru/d/synthetic',
+                                              'synthetic-key', 'jolion').check_access())
+    assert result['status'] == 'ok'
+    assert result['token'] == 'not_required'
+    assert result['public_folder'] == 'ok'
+    assert 'Токен не нужен' in result['summary']
+    assert result['hint'] == ''
+    title, body = disk.notify_text(result)
+    assert title == 'Яндекс.Диск: доступ есть' and 'Что сделать' not in body
 
 
 @pytest.mark.parametrize('error', [TimeoutError(TOKEN), OSError(FOLDER), ClientError(TOKEN)])

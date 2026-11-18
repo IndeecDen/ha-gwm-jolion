@@ -45,11 +45,15 @@ VERDICT_LABELS = {
     'unauthorized': 'токен отклонён', 'forbidden': 'нет прав', 'not_found': 'не найдено',
     'throttled': 'превышен лимит запросов', 'unavailable': 'сервис недоступен',
     'timeout': 'таймаут', 'network_error': 'сеть недоступна',
-    'unexpected_response': 'неожиданный ответ', 'no_space': 'нет места', 'not_checked': 'не проверено'}
+    'unexpected_response': 'неожиданный ответ', 'no_space': 'нет места', 'not_checked': 'не проверено',
+    'not_required': 'не требуется'}
 HINTS = {
     'not_configured': 'Сохраните OAuth-токен Яндекс.Диска в настройках интеграции.',
     'unauthorized': 'Токен недействителен или отозван — получите новый и сохраните в настройках.',
-    'forbidden': 'Токен принят Яндексом, но у него нет прав на Диск: перевыпустите токен для OAuth-приложения с доступом к Яндекс.Диску (чтение и запись) и сохраните заново.',
+    'forbidden': 'Токен принят Яндексом, но прав на Диск у него нет: перевыпустите токен для '
+                 'OAuth-приложения с разрешениями «Чтение» и «Запись» Яндекс.Диска (scope '
+                 'cloud_api:disk.read, cloud_api:disk.write). Либо выключите очистку старых файлов — '
+                 'чтение идёт через публичную папку и токена не требует.',
     'not_found': 'Папки нет на Диске — создайте её или измените путь в настройках.',
     'invalid_config': 'Путь папки должен начинаться с «/» и не содержать «..».',
     'not_folder': 'Указанный путь ведёт на файл, а не на папку.',
@@ -63,6 +67,9 @@ HINTS = {
     'not_checked': 'Часть проверок пропущена: сначала устраните предыдущую ошибку.',
 }
 ORDER = ('token', 'folder', 'write_access', 'public_folder')
+# Reading runs off the public folder alone, so a missing token is only a fault
+# when the user asked for cleanup.
+OK_STATES = frozenset({'ok', 'not_required'})
 
 
 def notify_text(result):
@@ -82,8 +89,10 @@ def notify_text(result):
 def describe_access(result):
     """Turn verdict codes into a short Russian summary plus one actionable hint."""
     status = result.get('status')
-    failed = [name for name in ORDER if result.get(name) != 'ok']
+    failed = [name for name in ORDER if result.get(name) not in OK_STATES]
     if status == 'ok':
+        if result.get('token') == 'not_required':
+            return ('Публичная папка доступна. Токен не нужен: очистка старых файлов выключена.', '')
         return ('Все проверки пройдены: токен, папка, запись и публичная папка доступны.', '')
     if not failed:
         return ('Проверка не завершена.', '')
@@ -257,21 +266,33 @@ class PublicDiskRelay:
         result={'status': 'ok', 'token': 'not_checked', 'folder': 'not_checked',
                 'public_folder': 'not_checked', 'write_access': 'not_checked',
                 'checked_at': int(time.time()), 'summary': '', 'hint': ''}
-        result['token']=(await self._access_probe(FILES_API, {'path': 'disk:/', 'fields': 'type'})
-                         if self.token else 'not_configured')
-        if result['token'] == 'ok':
+        if self.cleanup_wanted and self.token:
+            result['token']=await self._access_probe(FILES_API, {'path': 'disk:/', 'fields': 'type'})
+        elif self.cleanup_wanted:
+            result['token']='not_configured'
+        else:
+            # Nothing but deletion needs the token: the phone writes, Home
+            # Assistant reads through the public folder. A token left in the
+            # settings from an earlier attempt must not turn the check red.
+            result['token']='not_required'
+        if result['token']=='ok':
             result['folder']=(await self._access_probe(FILES_API, {'path': 'disk:'+self.folder, 'fields': 'type'})
                               if self.folder else 'invalid_config')
-        if result['token'] == 'ok' and result['folder'] == 'ok':
+        if result['token']=='ok' and result['folder']=='ok':
             # Upload links are requested but never followed: no file appears on the Disk.
             result['write_access']=await self._access_probe(
                 WRITE_API, {'path': 'disk:'+self.folder+'/.gwm-jolion-probe', 'overwrite': 'false'},
                 kind='upload')
         result['public_folder']=await self._access_probe(API, {'public_key': self.public_url, 'fields': 'type'})
-        states={result[name] for name in ('token', 'folder', 'public_folder', 'write_access')}
+        if result['token']=='not_required':
+            # Read-only relay: the private probes were skipped on purpose, only
+            # the public folder decides whether the check passed.
+            states={result['public_folder']}
+        else:
+            states={result[name] for name in ('token', 'folder', 'public_folder', 'write_access')}
         if states & {'unauthorized', 'forbidden'}:result['status']='auth_error'
         elif states & {'throttled', 'unavailable', 'timeout', 'network_error'}:result['status']='transient_error'
-        elif states != {'ok'}:result['status']='error'
+        elif not states <= OK_STATES:result['status']='error'
         result['summary'],result['hint']=describe_access(result)
         self.last_diagnostics=result.copy()
         return result
