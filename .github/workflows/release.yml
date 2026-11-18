@@ -71,14 +71,18 @@ jobs:
         run: |
           VERSION=$(python -c "import json; print(json.load(open('custom_components/gwm_jolion/manifest.json'))['version'])")
           python - "$VERSION" <<'PY'
-          import sys
+          import re, sys
           from pathlib import Path
           version = sys.argv[1]
           changelog = Path('CHANGELOG.md').read_text(encoding='utf-8')
-          heading = f'## {version}\n'
-          if heading not in changelog:
+          # heading may carry a suffix, e.g. "## 0.2.0 — первый стабильный выпуск"
+          pattern = re.compile(rf'^## {re.escape(version)}(?:\s+—.*)?$', flags=re.M)
+          match = pattern.search(changelog)
+          if not match:
               raise SystemExit(f'Missing changelog section for {version}')
-          Path('release-notes.md').write_text(changelog.split(heading, 1)[1].split('\n## ', 1)[0].strip() + '\n', encoding='utf-8')
+          rest = changelog[match.end():]
+          nxt = re.search(r'^## ', rest, flags=re.M)
+          Path('release-notes.md').write_text(rest[:nxt.start() if nxt else len(rest)].strip() + '\n', encoding='utf-8')
           PY
           FLAGS=(--latest)
           if [[ "$VERSION" == *-* ]]; then FLAGS=(--prerelease --latest=false); fi

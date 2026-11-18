@@ -2,7 +2,7 @@
 
 Jolion Locator записывает GPS на головном устройстве или телефоне с **Android 8.1 и новее** и передаёт точки в интеграцию GWM Jolion. Без приложения интеграция продолжает использовать облачные координаты GWM.
 
-**[Скачать APK 0.2.0](https://github.com/IndeecDen/ha-gwm-jolion/releases/download/0.2.0/Jolion.Locator.0.2.0.apk)** · [Все выпуски](https://github.com/IndeecDen/ha-gwm-jolion/releases) · [Настройка Яндекс.Диска](golion-locator-yandex.md)
+**[Скачать APK 0.2.0](https://github.com/IndeecDen/ha-gwm-jolion/releases/download/0.2.15/Jolion.Locator.0.2.0.apk)** · [Все выпуски](https://github.com/IndeecDen/ha-gwm-jolion/releases) · [Настройка Яндекс.Диска](golion-locator-yandex.md)
 
 ## Установка приложения
 
