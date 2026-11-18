@@ -1,6 +1,7 @@
 """Exercise the real options method offline, without importing Home Assistant."""
 import ast
 import asyncio
+import __future__
 import hashlib
 from pathlib import Path
 import re
@@ -50,11 +51,13 @@ def options_flow(monkeypatch):
     nodes = [n for n in ast.parse((ROOT / "locator_yandex.py").read_text(encoding="utf-8")).body
              if isinstance(n, ast.FunctionDef) and n.name in
              {"valid_disk_token", "valid_folder", "valid_public_url"}]
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "locator_yandex.py", "exec"), validators.__dict__)
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "locator_yandex.py", "exec",
+                 flags=__future__.annotations.compiler_flag), validators.__dict__)
     monkeypatch.setitem(sys.modules, validators.__name__, validators)
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "GwmJolionOptionsFlow")
     method = next(n for n in cls.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "async_step_init")
-    exec(compile(ast.Module(body=[method], type_ignores=[]), "config_flow.py", "exec"), scope)
+    exec(compile(ast.Module(body=[method], type_ignores=[]), "config_flow.py", "exec",
+                 flags=__future__.annotations.compiler_flag), scope)
     saved = {scope["TOKEN"]: "saved-oauth-token", scope["LOCATOR_KEY"]: "K" * 32,
              scope["LOCATOR_HASH"]: hashlib.sha256(b"K" * 32).hexdigest(),
              scope["CONF_SECURITY_PIN"]: "1234", "custom_preference": 42}
