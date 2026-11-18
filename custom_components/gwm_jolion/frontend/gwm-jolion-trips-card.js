@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.2.11 */
+/* GWM Jolion Trips Card v0.2.12 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -234,7 +234,18 @@
       this.shadowRoot.querySelector('#calendar').onclick=()=>this._calendar(this.shadowRoot.querySelector('.dates').hidden);
     }
     setConfig(config) {
-      this._config={...config}; this._serial++;this._fitKey=null;this._selectedTrip=null;this._overview=null;
+      // The payload fingerprint covers history data only: retuning the speed
+      // bands or any other setting leaves the answer identical, and the card
+      // would reuse the previous picture while the legend already showed the
+      // new thresholds. Every config change therefore invalidates that cache.
+      this._fingerprint=null;
+      const previous=this._config||{};
+      // Only another data source invalidates the view. A settings edit has to
+      // repaint the trip the user has open instead of dropping it back to the
+      // overview, and must keep the zoom they chose.
+      const sourceChanged=previous.entity!==config.entity||(previous.odometer_entity||'')!==(config.odometer_entity||'');
+      this._config={...config}; this._serial++;
+      if(sourceChanged||!this._trips){this._fitKey=null;this._selectedTrip=null;this._overview=null;}
       this._exportButton.hidden=config.show_download_points===false;
       this._gpxButton.hidden=config.show_download_gpx!==true;
       this._routeContext=null;this._gpxButton.disabled=true;
@@ -636,9 +647,19 @@
         // the band of the edge leaving it, so a band boundary stays exactly
         // where the drive crossed a threshold instead of being re-thinned
         // inside its own short slice.
-        const band=(run,index)=>{
-          const speed=run.speeds[index],valid=speed!=null&&Number.isFinite(Number(speed))&&Number(speed)>0&&run.kinds[index]!=='unknown'&&run.kinds[index]!=='stationary';
-          return !valid?'#88949f':speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
+        const colorOf=speed=>speed==null?'#88949f':speed<limits.green?SPEED_COLORS.low:speed<limits.red?SPEED_COLORS.medium:SPEED_COLORS.high;
+        const validSpeed=(run,index)=>{
+          const speed=run.speeds[index];
+          return speed!=null&&Number.isFinite(Number(speed))&&Number(speed)>0&&run.kinds[index]!=='unknown'&&run.kinds[index]!=='stationary'?Number(speed):null;
+        };
+        // A simplified stretch keeps only its shape-carrying vertices, so the
+        // band of a dropped edge would disappear with it. The fastest measured
+        // edge inside the stretch wins: a short red overtake on an otherwise
+        // straight road stays red instead of taking the colour of its first fix.
+        const spanColor=(run,from,to)=>{
+          let peak=null;
+          for(let index=from;index<to;index++){const speed=validSpeed(run,index);if(speed!=null&&(peak==null||speed>peak))peak=speed;}
+          return colorOf(peak);
         };
         for(const run of drawableRuns){
         // One simplification per run feeds the casing, the coloured line, the
@@ -650,7 +671,11 @@
         const title=trip.unclassified?'Участок с неуточнёнными границами стоянки':`Участок ${trip.index+1}`;
         if(!focused)addLine(run.drawn,{color:TRIP_COLORS[trip.index%TRIP_COLORS.length],weight:6,opacity:.95});
         else {
-          const shaded=simplifyPath(run.points.map((point,index)=>[point[0],point[1],band(run,index)]));
+          const kept=simplifyPath(run.points),at=new Map(run.points.map((point,index)=>[point,index]));
+          const shaded=kept.map((point,position)=>{
+            const from=at.get(point),next=position+1<kept.length?at.get(kept[position+1]):run.points.length-1;
+            return [point[0],point[1],next>from?spanColor(run,from,next):colorOf(validSpeed(run,from))];
+          });
           // Bands are grouped by edge, not by vertex: a vertex-only batch throws
           // away a band that is a single edge long, which silently lost a short
           // red or green stretch at the start of a run.

@@ -104,9 +104,10 @@ if (simplifyPath(straight).length !== 2) fail("a straight line was not reduced")
 // removed, which is exactly the change that brings the sawtooth back. A run is
 // simplified once (`run.drawn`) and that geometry feeds the casing, the
 // coloured line and the invisible 20 px click corridor; the speed bands ride on
-// the simplified vertices. The stationary wander and the GPS gap lines are
-// deliberately left raw - the first is part 1's verified behaviour, the second
-// means "no data here".
+// the same simplified vertices, so a dropped vertex keeps its colour only
+// through the fastest edge of the stretch it spans. The stationary wander and
+// the GPS gap lines are deliberately left raw - the first is part 1's verified
+// behaviour, the second means "no data here".
 if (!/run\.drawn=simplifyPath\(run\.points\)/.test(source)) {
   fail("the run is no longer simplified once into run.drawn");
 }
@@ -115,7 +116,7 @@ const drawnCorridor = source.match(/L\.polyline\(run\.drawn,/g) || [];
 if (drawnStrokes.length < 2 || drawnCorridor.length < 1) {
   fail(`expected the casing, the plain route and the corridor to use the simplified run, got ${drawnStrokes.length} strokes and ${drawnCorridor.length} corridors`);
 }
-if (!/const shaded=simplifyPath\(/.test(source) || !/addLine\(batch,/.test(source)) {
+if (!/const kept=simplifyPath\(run\.points\)/.test(source) || !/const shaded=kept\.map\(/.test(source) || !/addLine\(batch,/.test(source)) {
   fail("the speed bands are no longer drawn from the simplified vertices");
 }
 if (/addLine\((run|segment)\.points|L\.polyline\((run|segment)\.points/.test(source)) {
