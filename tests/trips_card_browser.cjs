@@ -410,6 +410,28 @@ const html=`<style>body{margin:0;background:#eef2f3;color:#183340;font:15px Aria
    await page.evaluate(()=>card.setConfig({...card._config,speed_green_max:70,speed_red_min:110}));
    await page.waitForFunction(()=>!card._routeLayer.getLayers().some(layer=>layer.options?.color==='#c62828'),null,{timeout:5000});
    assert.equal((await bandState()).counts.high,0,'возврат порогов вверх тоже перекрашивает трек');
+  // A single short burst must not repaint its slow neighbours: the colour under
+  // the cursor has to match the speed the tooltip reports for that edge.
+  const bleed=await page.evaluate(async()=>{
+   const t=1791050000,pts=[],speeds=[];
+   for(let i=0;i<60;i++){pts.push([55+i*0.0002,37]);speeds.push(i>=20&&i<23?70:17);}
+   sample={...sample,samples:pts.length,method:'app',segments:[pts],segment_timestamps:[pts.map((_,i)=>t+i*60)],
+    segment_speeds_kmh:[speeds],segment_kinds:[speeds.map(()=>'moving')],gaps:[],parking_spots:[],
+    source_counts:{app:pts.length,cloud:0},
+    diagnostics:{locator_enabled:true,recorder_available:true,source_counts:{app:pts.length,cloud:0},retention_days:90}};
+   card._range=['2026-10-04','2026-10-04'];card.setConfig({...card._config,speed_green_max:60,speed_red_min:110});
+   await card._load();card._selectTrip(card._trips[0].key);
+   const extent={low:0,medium:0,high:0,other:0};
+   for(const layer of card._routeLayer.getLayers()){
+    if(layer.options?.weight!==6)continue;
+    const lat=layer.getLatLngs().map(point=>point.lat);
+    const key=layer.options.color==='#2e7d32'?'low':layer.options.color==='#f9a825'?'medium':layer.options.color==='#c62828'?'high':'other';
+    extent[key]+=Math.max(...lat)-Math.min(...lat);
+   }
+   return extent;
+  });
+  assert(bleed.medium>0,'короткий быстрый участок должен остаться цветным');
+  assert(bleed.medium<bleed.low/4,`разгон в три точки не должен перекрашивать весь медленный участок (${JSON.stringify(bleed)})`);
    await page.evaluate(()=>card._selectTrip(null));
    // Optional local exports reproduce field failures without committing private GPS data.
    for(const file of process.argv.slice(2)){

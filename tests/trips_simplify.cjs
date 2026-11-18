@@ -116,8 +116,8 @@ const drawnCorridor = source.match(/L\.polyline\(run\.drawn,/g) || [];
 if (drawnStrokes.length < 2 || drawnCorridor.length < 1) {
   fail(`expected the casing, the plain route and the corridor to use the simplified run, got ${drawnStrokes.length} strokes and ${drawnCorridor.length} corridors`);
 }
-if (!/const kept=simplifyPath\(run\.points\)/.test(source) || !/const shaded=kept\.map\(/.test(source) || !/addLine\(batch,/.test(source)) {
-  fail("the speed bands are no longer drawn from the simplified vertices");
+if (!/const slices=\[\]/.test(source) || !/simplifyPath\(run\.points\.slice\(start,end\+2\)\)/.test(source) || !/addLine\(batch,/.test(source)) {
+  fail("the speed bands are no longer drawn from per-band simplified slices");
 }
 if (/addLine\((run|segment)\.points|L\.polyline\((run|segment)\.points/.test(source)) {
   fail("a route polyline is handed to the surface without simplification");

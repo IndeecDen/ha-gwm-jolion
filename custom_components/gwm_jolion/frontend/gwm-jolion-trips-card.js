@@ -1,4 +1,4 @@
-/* GWM Jolion Trips Card v0.2.12 */
+/* GWM Jolion Trips Card v0.2.13 */
 (() => {
   let leaflet;
   const STYLES = {positron:'Светлая · OpenFreeMap',dark:'Тёмная · OpenFreeMap',liberty:'Стандартная · OpenFreeMap',osm:'OpenStreetMap'};
@@ -652,15 +652,6 @@
           const speed=run.speeds[index];
           return speed!=null&&Number.isFinite(Number(speed))&&Number(speed)>0&&run.kinds[index]!=='unknown'&&run.kinds[index]!=='stationary'?Number(speed):null;
         };
-        // A simplified stretch keeps only its shape-carrying vertices, so the
-        // band of a dropped edge would disappear with it. The fastest measured
-        // edge inside the stretch wins: a short red overtake on an otherwise
-        // straight road stays red instead of taking the colour of its first fix.
-        const spanColor=(run,from,to)=>{
-          let peak=null;
-          for(let index=from;index<to;index++){const speed=validSpeed(run,index);if(speed!=null&&(peak==null||speed>peak))peak=speed;}
-          return colorOf(peak);
-        };
         for(const run of drawableRuns){
         // One simplification per run feeds the casing, the coloured line, the
         // arrow grid and the invisible 20 px corridor. Simplifying per layer ran
@@ -671,11 +662,34 @@
         const title=trip.unclassified?'Участок с неуточнёнными границами стоянки':`Участок ${trip.index+1}`;
         if(!focused)addLine(run.drawn,{color:TRIP_COLORS[trip.index%TRIP_COLORS.length],weight:6,opacity:.95});
         else {
-          const kept=simplifyPath(run.points),at=new Map(run.points.map((point,index)=>[point,index]));
-          const shaded=kept.map((point,position)=>{
-            const from=at.get(point),next=position+1<kept.length?at.get(kept[position+1]):run.points.length-1;
-            return [point[0],point[1],next>from?spanColor(run,from,next):colorOf(validSpeed(run,from))];
-          });
+          // The tooltip reads the speed of the original edge under the cursor,
+          // so the colour has to agree with it. Simplifying the run as a whole
+          // would bridge a threshold and paint a slow stretch in the band of a
+          // faster neighbour - 17 км/ч under an orange line. The run is cut into
+          // slices of one band each and every slice is simplified on its own:
+          // a slice keeps its own endpoints, so no band is lost and none bleeds
+          // into the next. A change has to outlast BAND_HOLD edges before it
+          // opens a slice, otherwise a speed hovering on a threshold would
+          // stripe the line with alternating colours.
+          const BAND_HOLD=3,edges=Math.max(0,run.points.length-1);
+          const bandAt=index=>colorOf(validSpeed(run,index));
+          const holds=(index,target)=>{
+            for(let step=0;step<BAND_HOLD;step++){
+              if(index+step>=edges||bandAt(index+step)!==target)return false;
+            }
+            return true;
+          };
+          const slices=[];
+          let bandStart=0,band=edges?bandAt(0):null;
+          for(let index=1;index<edges;index++){
+            const next=bandAt(index);
+            if(next!==band&&holds(index,next)){slices.push([bandStart,index-1,band]);bandStart=index;band=next;}
+          }
+          if(edges)slices.push([bandStart,edges-1,band]);
+          const shaded=[];
+          for(const [start,end,color] of slices){
+            for(const point of simplifyPath(run.points.slice(start,end+2)))shaded.push([point[0],point[1],color]);
+          }
           // Bands are grouped by edge, not by vertex: a vertex-only batch throws
           // away a band that is a single edge long, which silently lost a short
           // red or green stretch at the start of a run.
